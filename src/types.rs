@@ -880,6 +880,62 @@ impl core::fmt::Display for TimeInForce {
     }
 }
 
+/// Resting liquidity at one price level, summed over the orders at that price.
+/// Written through by the order mutators so an L2 read never has to visit an
+/// `Order` record. Absence of the key is the sole representation of an empty
+/// level: once `order_count` reaches zero the row is deleted rather than
+/// stored zeroed, so a scan yields exactly the occupied prices.
+///
+/// Every transition is checked; `None` means the caller's bookkeeping is
+/// inconsistent with the level and the transaction must abort rather than
+/// persist a level that disagrees with its orders.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LevelAggregate {
+    pub total_quantity: u64,
+    pub order_count: u32,
+}
+
+impl LevelAggregate {
+    /// One order joins the level carrying `quantity` remaining.
+    pub fn added(self, quantity: u64) -> Option<Self> {
+        Some(Self {
+            total_quantity: self.total_quantity.checked_add(quantity)?,
+            order_count: self.order_count.checked_add(1)?,
+        })
+    }
+
+    /// One order leaves the level, withdrawing its `quantity` remaining.
+    pub fn removed(self, quantity: u64) -> Option<Self> {
+        Some(Self {
+            total_quantity: self.total_quantity.checked_sub(quantity)?,
+            order_count: self.order_count.checked_sub(1)?,
+        })
+    }
+
+    /// An order at the level is partially filled; it keeps its slot.
+    pub fn reduced(self, quantity: u64) -> Option<Self> {
+        if self.order_count == 0 {
+            return None;
+        }
+        Some(Self {
+            total_quantity: self.total_quantity.checked_sub(quantity)?,
+            order_count: self.order_count,
+        })
+    }
+
+    /// No orders rest here, so the row should be deleted rather than written.
+    /// Quantity without orders is unrepresentable — it means a mutator
+    /// decremented the count without withdrawing the matching quantity.
+    pub fn is_vacant(self) -> bool {
+        self.order_count == 0 && self.total_quantity == 0
+    }
+
+    /// Quantity remains but no order claims it.
+    pub fn is_inconsistent(self) -> bool {
+        self.order_count == 0 && self.total_quantity != 0
+    }
+}
+
 /// A resting limit order on the order book.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Order {
