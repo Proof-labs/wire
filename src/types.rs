@@ -3064,12 +3064,6 @@ pub enum Event {
         /// Client-assigned order id. `0` means absent.
         client_order_id: u64,
     },
-    /// Absolute post-mutation quantity at one orderbook price level.
-    ///
-    /// Emitted by the matching engine immediately after every deterministic
-    /// book mutation (resting add, maker fill/reduce, cancel, expiry). Market
-    /// data consumers can replay these events from a snapshot instead of
-    /// polling and diffing full books.
     /// User picked a per-market IM override (BE-16). `user_im_bps == 0`
     /// means the override was cleared (engine reverts to market
     /// default).
