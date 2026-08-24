@@ -121,6 +121,7 @@ They are not outer transaction action bytes.
 | 0x04 | `Batch`                           | Specs §11 / PR #334 | open PR  |
 | 0x05 | `SetTriggerMarketConfig`          | W32-10 / TR-1       | dormant behind trigger-index gate |
 | 0x06 | `UnpauseBridge`                   | W29-15 / DEC-65     | height-gated per lineage (`UNPAUSE_BRIDGE_ACTIVATIONS`) |
+| 0x07 | `UpdateAuthoritySet`              | #422                | dormant behind authority-governance gate |
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -131,6 +132,12 @@ when they activate.
 Tag `0x05` has its own `UPGRADE_HEIGHT_TRIGGER_INDEX` admission gate. That
 gate is also parked at `u64::MAX`; the dormant state pull request allocates
 and tests the wire contract but cannot schedule or apply a live policy.
+
+Tag `0x07` (`UpdateAuthoritySet`, #422) is admission-gated per lineage by
+`AUTHORITY_GOVERNANCE_ACTIVATIONS` (parked at `u64::MAX` on
+`exchange-devnet-1`, active from genesis on `proof-dev`). The tag is
+ASSIGNED from this commit — the content hash commits it — regardless of
+when a lineage activates it.
 
 ## Emergency action arm tags
 

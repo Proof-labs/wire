@@ -1433,6 +1433,35 @@ mod tests {
         }
     }
 
+    /// Frozen wire vector for the tag-6 `UpdateAuthoritySet` inner action
+    /// (#422). The externally-tagged variant name plus positional payload
+    /// must never drift — a change here breaks the content hash and every
+    /// already-signed proposal. Also proves the round-trip is a fixed point.
+    #[test]
+    fn update_authority_set_wire_vector_frozen() {
+        use crate::types::{AuthorityDomain, UpdateAuthoritySet};
+        let action = AdminAction::UpdateAuthoritySet(UpdateAuthoritySet {
+            domain: AuthorityDomain::Relayer,
+            add: vec![SignerAddress([0xB1; 20]), SignerAddress([0xB2; 20])],
+            remove: vec![SignerAddress([0xA1; 20])],
+        });
+        let canonical = canonical_admin_action_bytes(&action).unwrap();
+        assert_eq!(
+            hex_string(&canonical),
+            "81b2557064617465417574686f7269747953657493a752656c6179657292dc0014ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1ccb1dc0014ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb2ccb291dc0014cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1",
+            "frozen UpdateAuthoritySet wire vector drifted"
+        );
+        let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+        assert_eq!(
+            re_encoded, canonical,
+            "canonical encoding must be a fixed point"
+        );
+        assert_eq!(
+            decoded.action_tag(),
+            AdminActionType::UpdateAuthoritySet as u8
+        );
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -1595,13 +1624,14 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 6] = [
+        const ALL_INNER_TAGS: [AdminActionType; 7] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
             AdminActionType::Batch,
             AdminActionType::SetTriggerMarketConfig,
             AdminActionType::UnpauseBridge,
+            AdminActionType::UpdateAuthoritySet,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1610,7 +1640,8 @@ mod tests {
                 | AdminActionType::CreateImpactMarket
                 | AdminActionType::Batch
                 | AdminActionType::SetTriggerMarketConfig
-                | AdminActionType::UnpauseBridge => {}
+                | AdminActionType::UnpauseBridge
+                | AdminActionType::UpdateAuthoritySet => {}
             }
         }
 

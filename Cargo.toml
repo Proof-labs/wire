@@ -15,7 +15,12 @@ name = "exchange-wire"
 # 1.1.0 -> 1.2.0: additive wire change (DEC-65). New AdminAction::UnpauseBridge
 # inner tag 0x06 and Event::BridgeUnpauseAuthorized. Pre-existing bytes still
 # decode unchanged -> MINOR.
-version = "1.2.0"
+#
+# 1.2.0 -> 1.3.0: additive wire change (#422 / DEC-87). New
+# AdminAction::UpdateAuthoritySet (inner tag 0x07), AuthorityDomain, and
+# Event::AuthoritySetUpdated. Pre-existing bytes still decode unchanged
+# -> MINOR.
+version = "1.3.0"
 edition = "2021"
 
 [dependencies]

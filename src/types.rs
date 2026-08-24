@@ -627,6 +627,38 @@ pub enum AdminAction {
     /// Governance authorization to resume the halted bridge. Carries no
     /// payload: the quorum-executed proposal is itself the authorization.
     UnpauseBridge,
+    /// Adds and/or removes addresses in one operator-authority set — the
+    /// on-chain revocation and rotation path the relayer/oracle/composite
+    /// allowlists otherwise lack (#422). Admitted only from the lineage's
+    /// authority-governance activation height.
+    UpdateAuthoritySet(UpdateAuthoritySet),
+}
+
+/// One operator-authority allowlist, addressed by a stable discriminant so
+/// an unknown domain fails to decode rather than silently mis-targeting a
+/// set. `Oracle`/`CexComposite`/`Relayer` are the genesis-seeded presence
+/// sets; `Custody`/`MarketParams`/`ScheduledOps` are the capability sets the
+/// split (#422 item 3) activates — their discriminants ship here, dormant,
+/// so the `UpdateAuthoritySet` wire has a single mixed-fleet decode boundary.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AuthorityDomain {
+    Oracle = 1,
+    CexComposite = 2,
+    Relayer = 3,
+    Custody = 4,
+    MarketParams = 5,
+    ScheduledOps = 6,
+}
+
+/// Payload of [`AdminAction::UpdateAuthoritySet`]: the target domain and the
+/// addresses to add and remove. Both lists are canonically sorted,
+/// duplicate-free, and disjoint; the net set may never be left empty.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateAuthoritySet {
+    pub domain: AuthorityDomain,
+    pub add: Vec<SignerAddress>,
+    pub remove: Vec<SignerAddress>,
 }
 
 /// The closed set of actions a `Batch` may carry: market creations only.
@@ -656,6 +688,7 @@ pub enum AdminActionType {
     Batch = 4,
     SetTriggerMarketConfig = 5,
     UnpauseBridge = 6,
+    UpdateAuthoritySet = 7,
 }
 
 impl AdminAction {
@@ -668,6 +701,7 @@ impl AdminAction {
             Self::Batch(_) => AdminActionType::Batch,
             Self::SetTriggerMarketConfig(_) => AdminActionType::SetTriggerMarketConfig,
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
+            Self::UpdateAuthoritySet(_) => AdminActionType::UpdateAuthoritySet,
         }
     }
 
@@ -3066,6 +3100,16 @@ pub enum Event {
     /// holds no halt flag; this is the authoritative decision record the
     /// Squads operator quorum acts on to unfreeze the vault on Solana.
     BridgeUnpauseAuthorized { proposal_id: u64 },
+    /// An operator-authority set was rotated by governance (#422). `domain`
+    /// is the `AuthorityDomain` discriminant; `added`/`removed` are the
+    /// affected addresses as concatenated 40-hex-char strings. The signer is
+    /// carried by the accompanying `ProposalExecuted`/approval events.
+    AuthoritySetUpdated {
+        domain: u8,
+        added: String,
+        removed: String,
+        proposal_id: u64,
+    },
     /// A multisig-approved trigger-market policy was stored for automatic
     /// application at `effective_height`. The complete replacement is evented
     /// so operators can audit the scheduled transition without interpreting
