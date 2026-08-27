@@ -120,6 +120,7 @@ They are not outer transaction action bytes.
 | 0x03 | `CreateImpactMarket`              | Specs §11 / PR #334 | open PR  |
 | 0x04 | `Batch`                           | Specs §11 / PR #334 | open PR  |
 | 0x05 | `SetTriggerMarketConfig`          | W32-10 / TR-1       | dormant behind trigger-index gate |
+| 0x06 | `UnpauseBridge`                   | W29-15 / DEC-65     | admitted |
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at

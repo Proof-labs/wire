@@ -624,6 +624,9 @@ pub enum AdminAction {
     /// Schedules a complete trigger-policy replacement for one standalone
     /// perpetual market. Admitted only after the dormant trigger index gate.
     SetTriggerMarketConfig(crate::triggers::SetTriggerMarketConfig),
+    /// Governance authorization to resume the halted bridge. Carries no
+    /// payload: the quorum-executed proposal is itself the authorization.
+    UnpauseBridge,
 }
 
 /// The closed set of actions a `Batch` may carry: market creations only.
@@ -652,6 +655,7 @@ pub enum AdminActionType {
     CreateImpactMarket = 3,
     Batch = 4,
     SetTriggerMarketConfig = 5,
+    UnpauseBridge = 6,
 }
 
 impl AdminAction {
@@ -663,6 +667,7 @@ impl AdminAction {
             Self::CreateImpactMarket(_) => AdminActionType::CreateImpactMarket,
             Self::Batch(_) => AdminActionType::Batch,
             Self::SetTriggerMarketConfig(_) => AdminActionType::SetTriggerMarketConfig,
+            Self::UnpauseBridge => AdminActionType::UnpauseBridge,
         }
     }
 
@@ -3054,6 +3059,12 @@ pub enum Event {
         version: u64,
         threshold: u32,
         members: String,
+    },
+    /// The admin multisig reached quorum on a bridge un-halt. The engine
+    /// holds no halt flag; this is the authoritative decision record the
+    /// Squads operator quorum acts on to unfreeze the vault on Solana.
+    BridgeUnpauseAuthorized {
+        proposal_id: u64,
     },
     /// A multisig-approved trigger-market policy was stored for automatic
     /// application at `effective_height`. The complete replacement is evented

@@ -1387,6 +1387,11 @@ mod tests {
             signer: SignerAddress([0xA1; 20]),
             action: EmergencyAction::PauseMarket { market_id: 42 },
         });
+        let unpause = Action::ProposeAdminAction(ProposeAdminAction {
+            proposer: SignerAddress([0xA1; 20]),
+            registry_version: RegistryVersion(1),
+            action: AdminAction::UnpauseBridge,
+        });
 
         for (name, action, expected_hex) in [
             (
@@ -1408,6 +1413,11 @@ mod tests {
                 "EmergencyAdminAction",
                 emergency,
                 "92dc0014cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca181ab50617573654d61726b6574912a",
+            ),
+            (
+                "ProposeAdminAction::UnpauseBridge",
+                unpause,
+                "93dc0014cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca101ad556e7061757365427269646765",
             ),
         ] {
             let encoded = action.encode_action().unwrap();
@@ -1477,6 +1487,12 @@ mod tests {
             AdminActionType::UpdateAdminSignerRegistry
         );
         assert_eq!(rotate.action_tag(), 0x02);
+
+        assert_eq!(
+            AdminAction::UnpauseBridge.action_type(),
+            AdminActionType::UnpauseBridge
+        );
+        assert_eq!(AdminAction::UnpauseBridge.action_tag(), 0x06);
     }
 
     #[test]
@@ -1575,12 +1591,13 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 5] = [
+        const ALL_INNER_TAGS: [AdminActionType; 6] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
             AdminActionType::Batch,
             AdminActionType::SetTriggerMarketConfig,
+            AdminActionType::UnpauseBridge,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1588,7 +1605,8 @@ mod tests {
                 | AdminActionType::UpdateAdminSignerRegistry
                 | AdminActionType::CreateImpactMarket
                 | AdminActionType::Batch
-                | AdminActionType::SetTriggerMarketConfig => {}
+                | AdminActionType::SetTriggerMarketConfig
+                | AdminActionType::UnpauseBridge => {}
             }
         }
 
