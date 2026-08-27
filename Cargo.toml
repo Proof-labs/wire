@@ -1,0 +1,38 @@
+[package]
+name = "exchange-wire"
+# The wire contract shared by exchange-core (engine) and proof-trading-sdk
+# (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire
+# types, and the ExecError code table. Extracted from exchange-core so both
+# the private engine and the public SDK compile ONE definition — drift is
+# impossible by construction. Kept dep-light and wasm/pyo3-clean: no
+# bridge-core, no rand_core/getrandom. Versioned on the full MAJOR.MINOR.PATCH
+# line (>=1.0.0); every wire-format change is >=MINOR.
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+derive_more = { version = "1", features = ["from", "display"] }
+serde_bytes = "0.11"
+rmp-serde = "1"
+exchange-derive = { path = "../exchange-derive" }
+# No rand_core feature: the wire layer only verifies and deterministically
+# signs (SigningKey::from_bytes + sign) — nothing generates keys, so nothing
+# pulls getrandom, which would fail to build on wasm32-unknown-unknown.
+ed25519-dalek = { version = "2" }
+sha2 = "0.10"
+sha3 = "0.10"
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = "1"
+
+# Inherited from exchange-core: the wire layer holds these guarantees wherever
+# it is compiled (consensus-critical bytes). Enforced under cargo clippy.
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+float_arithmetic = "deny"
+arithmetic_side_effects = "deny"
+disallowed_types = "deny"
