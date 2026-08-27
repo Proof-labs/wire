@@ -634,12 +634,14 @@ pub enum AdminAction {
     UpdateAuthoritySet(UpdateAuthoritySet),
 }
 
-/// One operator-authority allowlist, addressed by a stable discriminant so
-/// an unknown domain fails to decode rather than silently mis-targeting a
-/// set. `Oracle`/`CexComposite`/`Relayer` are the genesis-seeded presence
-/// sets; `Custody`/`MarketParams`/`ScheduledOps` are the capability sets the
-/// split (#422 item 3) activates — their discriminants ship here, dormant,
-/// so the `UpdateAuthoritySet` wire has a single mixed-fleet decode boundary.
+/// One operator-authority allowlist. On the `UpdateAuthoritySet` wire the
+/// domain is a serde variant *name* (externally tagged), so an unknown domain
+/// fails to decode rather than silently mis-targeting a set. The `#[repr(u8)]`
+/// discriminant is load-bearing for the presence-key bytes (`[prefix][cap]…`),
+/// not for the wire. `Oracle`/`CexComposite`/`Relayer` are the genesis-seeded
+/// presence sets; `Custody`/`MarketParams`/`ScheduledOps` are the capability
+/// sets the split (#422 item 3) activates — their discriminants ship here,
+/// dormant, so the wire has a single mixed-fleet decode boundary.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthorityDomain {
