@@ -3063,9 +3063,7 @@ pub enum Event {
     /// The admin multisig reached quorum on a bridge un-halt. The engine
     /// holds no halt flag; this is the authoritative decision record the
     /// Squads operator quorum acts on to unfreeze the vault on Solana.
-    BridgeUnpauseAuthorized {
-        proposal_id: u64,
-    },
+    BridgeUnpauseAuthorized { proposal_id: u64 },
     /// A multisig-approved trigger-market policy was stored for automatic
     /// application at `effective_height`. The complete replacement is evented
     /// so operators can audit the scheduled transition without interpreting
