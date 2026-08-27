@@ -1067,6 +1067,10 @@ mod tests {
                 amount: 100_000,
                 solana_tx_sig: vec![0xAB; 64],
                 signer: [0x66; 20],
+                locator: Some(DepositLocator {
+                    top_index: 3,
+                    inner_index: Some(1),
+                }),
             }),
             Action::ConfirmWithdrawal(ConfirmWithdrawal {
                 withdrawal_id: 99,
@@ -1082,6 +1086,10 @@ mod tests {
                 solana_signature: vec![0xEF; 64],
                 reason: crate::types::FailDepositReason::MalformedTx,
                 signer: [0x88; 20],
+                locator: Some(DepositLocator {
+                    top_index: 2,
+                    inner_index: None,
+                }),
             }),
             Action::ApproveAgent(ApproveAgent {
                 owner: [0x99; 20],
@@ -1222,6 +1230,111 @@ mod tests {
             decode_tx(&fail_bytes).unwrap().action,
             Action::FailWithdrawal(_)
         ));
+    }
+
+    // -- DEC-66 deposit locator ---------------------------------------------
+
+    /// Pre-locator `ConfirmDeposit`: the 4-field layout before the trailing
+    /// `locator` field. Frozen so the compat test proves old bytes still
+    /// decode under the new struct (the additive -> MINOR property).
+    #[derive(Serialize, Deserialize)]
+    struct PreLocatorConfirmDeposit {
+        owner: [u8; 20],
+        amount: u64,
+        solana_tx_sig: Vec<u8>,
+        signer: [u8; 20],
+    }
+
+    /// Pre-locator `FailDeposit`: the 3-field layout before `locator`.
+    #[derive(Serialize)]
+    struct PreLocatorFailDeposit {
+        solana_signature: Vec<u8>,
+        reason: FailDepositReason,
+        signer: [u8; 20],
+    }
+
+    #[test]
+    fn deposit_locator_is_backward_decodable() {
+        // Old ConfirmDeposit bytes (no locator) decode with locator == None.
+        let old_confirm = PreLocatorConfirmDeposit {
+            owner: [0x55; 20],
+            amount: 100_000,
+            solana_tx_sig: vec![0xAB; 64],
+            signer: [0x66; 20],
+        };
+        let bytes = rmp_serde::to_vec(&old_confirm).unwrap();
+        let decoded: ConfirmDeposit =
+            rmp_serde::from_slice(&bytes).expect("pre-locator ConfirmDeposit must still decode");
+        assert_eq!(decoded.owner, old_confirm.owner);
+        assert_eq!(decoded.amount, old_confirm.amount);
+        assert_eq!(decoded.solana_tx_sig, old_confirm.solana_tx_sig);
+        assert_eq!(decoded.locator, None, "absent locator decodes as None");
+
+        // Old FailDeposit bytes (no locator) decode with locator == None.
+        let old_fail = PreLocatorFailDeposit {
+            solana_signature: vec![0xEF; 64],
+            reason: FailDepositReason::MalformedTx,
+            signer: [0x88; 20],
+        };
+        let bytes = rmp_serde::to_vec(&old_fail).unwrap();
+        let decoded: FailDeposit =
+            rmp_serde::from_slice(&bytes).expect("pre-locator FailDeposit must still decode");
+        assert_eq!(decoded.solana_signature, old_fail.solana_signature);
+        assert_eq!(decoded.locator, None, "absent locator decodes as None");
+
+        // Direction that does NOT hold: rmp_serde positional structs require
+        // an exact array length, so new 5-element bytes are rejected by the
+        // strict old 4-field decoder (same property the OI-cap test pins).
+        // This append is MINOR only because ConfirmDeposit/FailDeposit ship
+        // first in this same release — no prior released decoder exists to
+        // break. Were these actions already released, it would be MAJOR.
+        let none_confirm = ConfirmDeposit {
+            owner: [0x55; 20],
+            amount: 100_000,
+            solana_tx_sig: vec![0xAB; 64],
+            signer: [0x66; 20],
+            locator: None,
+        };
+        let new_bytes = rmp_serde::to_vec(&none_confirm).unwrap();
+        assert!(
+            rmp_serde::from_slice::<PreLocatorConfirmDeposit>(&new_bytes).is_err(),
+            "new locator-bearing bytes are not decodable by the strict old layout"
+        );
+    }
+
+    /// The locator suffix is the fixed-width BE `[top(2)][inner-or-sentinel(2)]`
+    /// and the sentinel distinguishes "no inner" from inner index 0.
+    #[test]
+    fn deposit_locator_suffix_encoding() {
+        assert_eq!(
+            DepositLocator {
+                top_index: 3,
+                inner_index: Some(1)
+            }
+            .id_suffix(),
+            [0x00, 0x03, 0x00, 0x01]
+        );
+        assert_eq!(
+            DepositLocator {
+                top_index: 3,
+                inner_index: None
+            }
+            .id_suffix(),
+            [0x00, 0x03, 0xFF, 0xFF]
+        );
+        // No-inner sentinel is distinct from inner index 0.
+        assert_ne!(
+            DepositLocator {
+                top_index: 3,
+                inner_index: None
+            }
+            .id_suffix(),
+            DepositLocator {
+                top_index: 3,
+                inner_index: Some(0)
+            }
+            .id_suffix()
+        );
     }
 
     // -- Governance wire format ---------------------------------------------
@@ -2194,6 +2307,7 @@ mod tests {
                 amount: u64::MAX,
                 solana_tx_sig: vec![0xFF; 1024],
                 signer: [0xFF; 20],
+                locator: None,
             }),
             Action::ConfirmWithdrawal(ConfirmWithdrawal {
                 withdrawal_id: u64::MAX,
@@ -2272,6 +2386,7 @@ mod tests {
                 amount: 0,
                 solana_tx_sig: vec![],
                 signer: [0u8; 20],
+                locator: None,
             }),
             Action::ConfirmWithdrawal(ConfirmWithdrawal {
                 withdrawal_id: 0,
@@ -2369,6 +2484,7 @@ mod tests {
                     amount: i * 300,
                     solana_tx_sig: i.to_le_bytes().to_vec(),
                     signer: owner,
+                    locator: None,
                 }),
                 Action::ConfirmWithdrawal(ConfirmWithdrawal {
                     withdrawal_id: i,
@@ -2686,6 +2802,7 @@ mod tests {
                 amount: 1,
                 solana_tx_sig: vec![0; 64],
                 signer: [0; 20],
+                locator: None,
             }),
             Action::ConfirmWithdrawal(ConfirmWithdrawal {
                 withdrawal_id: 1,
@@ -2980,6 +3097,7 @@ mod tests {
                         amount: seq + 1,
                         solana_tx_sig: vec![seq as u8; 64],
                         signer: owner,
+                        locator: None,
                     }),
                     9 => Action::ConfirmWithdrawal(ConfirmWithdrawal {
                         withdrawal_id: seq,

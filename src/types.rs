@@ -1816,6 +1816,46 @@ pub struct WithdrawRequest {
     pub solana_destination: [u8; 32],
 }
 
+/// Position of a single USDC transfer inside its Solana transaction: the
+/// top-level instruction index plus, for a transfer nested under a CPI, the
+/// inner instruction index. Two transfers in one transaction share a
+/// signature and differ only here, so the deposit dedup key carries it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositLocator {
+    /// Index of the top-level instruction within the transaction message.
+    pub top_index: u16,
+    /// Index within that instruction's inner (CPI) instructions; `None` when
+    /// the transfer is itself the top-level instruction.
+    pub inner_index: Option<u16>,
+}
+
+impl DepositLocator {
+    /// Reserved inner-index byte value for `inner_index == None`.
+    // ponytail: 0xFFFF reserved as the no-inner sentinel; widen both index
+    // fields to u32 if a Solana inner-instruction count ever nears 65535.
+    const INNER_SENTINEL: u16 = u16::MAX;
+
+    /// Locator for a `ConfirmDeposit`/`FailDeposit` whose wire `locator` is
+    /// absent (pre-locator bytes): top-level instruction 0, no inner.
+    pub const LEGACY: Self = Self {
+        top_index: 0,
+        inner_index: None,
+    };
+
+    /// Fixed-width big-endian dedup-key suffix `[top(2)][inner-or-sentinel(2)]`.
+    pub fn id_suffix(&self) -> [u8; 4] {
+        let mut suffix = [0u8; 4];
+        suffix[0..2].copy_from_slice(&self.top_index.to_be_bytes());
+        suffix[2..4].copy_from_slice(
+            &self
+                .inner_index
+                .unwrap_or(Self::INNER_SENTINEL)
+                .to_be_bytes(),
+        );
+        suffix
+    }
+}
+
 /// Relayer confirms an on-chain USDC deposit from Solana.
 /// Credits the derived internal account.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1828,6 +1868,10 @@ pub struct ConfirmDeposit {
     pub solana_tx_sig: Vec<u8>,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
+    /// Instruction locator within the signature. Absent (`nil`) on
+    /// pre-locator wire bytes, which fall back to [`DepositLocator::LEGACY`].
+    #[serde(default)]
+    pub locator: Option<DepositLocator>,
 }
 
 /// Relayer confirms a USDC withdrawal was sent on Solana.
@@ -2026,6 +2070,11 @@ pub struct FailDeposit {
     /// the relayer allowlist; otherwise `UnauthorizedRelayer`.
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
+    /// Instruction locator within the signature, matching the failed
+    /// transfer's `ConfirmDeposit.locator`. Absent (`nil`) on pre-locator
+    /// wire bytes, which fall back to [`DepositLocator::LEGACY`].
+    #[serde(default)]
+    pub locator: Option<DepositLocator>,
 }
 
 /// Approve a delegate keypair ("agent wallet") to trade on the owner's behalf.
@@ -4195,16 +4244,17 @@ pub mod prelude {
         AuthorizeWithdrawal, Branch, BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder,
         CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
         ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket, Deposit,
-        Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal, FailWithdrawalReceipt,
-        FillId, ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus, LiquidateAccounts,
-        MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOrder, OpenInterest,
-        OperatorReceiptProof, OperatorReceiptRegistry, OracleUpdate, OracleUpdateComposite, Order,
-        OrderId, Outcome, PlaceOrder, Position, ResolveEvent, RevokeAgent, RunFundingTick,
-        RunLiquidationSweep, SetAccountFeeOverride, SetUserMarketLeverage, Side, TimeInForce,
-        TxContext, UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalReceiptSidecar,
-        WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
-        DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
-        DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
-        PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,
+        DepositLocator, Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal,
+        FailWithdrawalReceipt, FillId, ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus,
+        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOrder,
+        OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleUpdate,
+        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
+        RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
+        SetUserMarketLeverage, Side, TimeInForce, TxContext, UpdateMarketFees, Withdraw,
+        WithdrawRequest, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
+        BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
+        DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
+        MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
+        PREDICTION_BINARY_TICK_SIZE,
     };
 }
