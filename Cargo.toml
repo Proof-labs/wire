@@ -7,7 +7,11 @@ name = "exchange-wire"
 # impossible by construction. Kept dep-light and wasm/pyo3-clean: no
 # bridge-core, no rand_core/getrandom. Versioned on the full MAJOR.MINOR.PATCH
 # line (>=1.0.0); every wire-format change is >=MINOR.
-version = "1.0.0"
+#
+# 1.0.0 -> 1.1.0: additive wire change (DEC-66). ConfirmDeposit/FailDeposit
+# gain a trailing Option<DepositLocator> that encodes as nil when absent, so
+# pre-locator bytes still decode -> MINOR.
+version = "1.1.0"
 edition = "2021"
 
 [dependencies]

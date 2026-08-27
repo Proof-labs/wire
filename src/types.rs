@@ -1831,8 +1831,8 @@ pub struct DepositLocator {
 
 impl DepositLocator {
     /// Reserved inner-index byte value for `inner_index == None`.
-    // ponytail: 0xFFFF reserved as the no-inner sentinel; widen both index
-    // fields to u32 if a Solana inner-instruction count ever nears 65535.
+    // Widen both index fields to u32 if a Solana inner-instruction count
+    // ever nears 65535.
     const INNER_SENTINEL: u16 = u16::MAX;
 
     /// Locator for a `ConfirmDeposit`/`FailDeposit` whose wire `locator` is
