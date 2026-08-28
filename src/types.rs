@@ -2867,11 +2867,13 @@ pub enum Event {
         solana_tx_sig: Vec<u8>,
         signer: Option<[u8; 20]>,
     },
-    /// Relayer rejected a Solana deposit (BE-40). The user was NOT
-    /// credited; the signature is recorded so any subsequent
-    /// `ConfirmDeposit`/`FailDeposit` referencing the same sig is a
-    /// silent no-op. `solana_signature` is the raw on-chain sig bytes
-    /// (typically 64 bytes — same encoding as `DepositConfirmed.solana_tx_sig`).
+    /// Relayer rejected a Solana deposit transfer. The user was NOT
+    /// credited; the engine records a `(signature, locator)` dedup marker
+    /// in state, so any subsequent `ConfirmDeposit`/`FailDeposit` for that
+    /// same transfer is a silent no-op. The event itself carries only the
+    /// signature — it does not name which transfer inside the transaction
+    /// failed. `solana_signature` is the raw on-chain sig bytes (typically
+    /// 64 bytes — same encoding as `DepositConfirmed.solana_tx_sig`).
     DepositFailed {
         solana_signature: Vec<u8>,
         reason: FailDepositReason,
