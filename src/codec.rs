@@ -1285,9 +1285,13 @@ mod tests {
         // Direction that does NOT hold: rmp_serde positional structs require
         // an exact array length, so new 5-element bytes are rejected by the
         // strict old 4-field decoder (same property the OI-cap test pins).
-        // This append is MINOR only because ConfirmDeposit/FailDeposit ship
-        // first in this same release — no prior released decoder exists to
-        // break. Were these actions already released, it would be MAJOR.
+        // Released v2.3.x tags DO carry that strict 4-field decoder, so this
+        // is not "no released decoder exists". The append rides as MINOR
+        // because DEC-66 folds the locator into the deposit-feature release:
+        // no deployed producer emits locator-bearing bytes until every
+        // decoding node runs this version, and no other dependent decodes
+        // these actions (the gateway's typed surface excludes them). Absent
+        // that coordination, this break would be MAJOR.
         let none_confirm = ConfirmDeposit {
             owner: [0x55; 20],
             amount: 100_000,
