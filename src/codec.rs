@@ -1433,7 +1433,7 @@ mod tests {
         }
     }
 
-    /// Frozen wire vector for the tag-6 `UpdateAuthoritySet` inner action
+    /// Frozen wire vector for the tag-7 `UpdateAuthoritySet` inner action
     /// (#422). The externally-tagged variant name plus positional payload
     /// must never drift — a change here breaks the content hash and every
     /// already-signed proposal. Also proves the round-trip is a fixed point.
