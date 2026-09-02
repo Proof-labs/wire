@@ -153,6 +153,15 @@ impl PriceComparison {
             PriceComparison::LessThanOrEqual => oracle_price <= strike_price,
         }
     }
+
+    pub fn phrase(&self) -> &'static str {
+        match self {
+            PriceComparison::GreaterThan => "strictly greater than",
+            PriceComparison::LessThan => "strictly less than",
+            PriceComparison::GreaterThanOrEqual => "greater than or equal to",
+            PriceComparison::LessThanOrEqual => "less than or equal to",
+        }
+    }
 }
 
 /// Kind of market stored on-chain. Stored on [`MarketConfig`].
