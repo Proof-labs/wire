@@ -231,7 +231,7 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x37 | `EmergencyActionLog`            | W29-04 / PR #282   | active   |
 | 0x38 | `OperatorReceiptRegistry`       | W28-20 / PR #316   | open PR  |
 | 0x39 | `ConsumedWithdrawalReceipt`     | W28-20 / PR #316   | open PR  |
-| 0x3A | orderbook L2 read prefix        | PR #336            | reserved |
+| 0x3A | `PriceLevelAggregate`           | PR #336            | open PR  |
 | 0x3B | `WithdrawalPolicy`              | W28-20 / PR #316   | open PR  |
 | 0x3C | `RegistryEpochObligations`      | W28-20 / PR #316   | open PR  |
 | 0x3D | `PoolPosition`                  | W29-02 / PR #299   | open PR  |
