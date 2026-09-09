@@ -1655,7 +1655,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 8] = [
+        const ALL_INNER_TAGS: [AdminActionType; 11] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1664,6 +1664,9 @@ mod tests {
             AdminActionType::UnpauseBridge,
             AdminActionType::UpdateAuthoritySet,
             AdminActionType::CancelAllOrdersForAccount,
+            AdminActionType::ReservedRt01A,
+            AdminActionType::ReservedRt01B,
+            AdminActionType::ReservedRt01C,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1674,7 +1677,10 @@ mod tests {
                 | AdminActionType::SetTriggerMarketConfig
                 | AdminActionType::UnpauseBridge
                 | AdminActionType::UpdateAuthoritySet
-                | AdminActionType::CancelAllOrdersForAccount => {}
+                | AdminActionType::CancelAllOrdersForAccount
+                | AdminActionType::ReservedRt01A
+                | AdminActionType::ReservedRt01B
+                | AdminActionType::ReservedRt01C => {}
             }
         }
 

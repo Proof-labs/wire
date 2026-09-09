@@ -722,6 +722,13 @@ pub enum AdminActionType {
     UnpauseBridge = 6,
     UpdateAuthoritySet = 7,
     CancelAllOrdersForAccount = 8,
+    /// Reserved by RT-01 (registry-and-ladder). Number claimed only; no
+    /// data variant and no behaviour. The implementing action renames it.
+    ReservedRt01A = 9,
+    /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
+    ReservedRt01B = 10,
+    /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
+    ReservedRt01C = 11,
 }
 
 impl AdminAction {

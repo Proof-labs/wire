@@ -102,7 +102,13 @@ carries the authoritative names.
 | 0x24 | `AuthorizeWithdrawal`               | W28-20 / #316      | merged to dev — engine-native |
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
-| 0x27 | _free_                              | —                  | —        |
+| 0x27 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
+| 0x28 | `ReservedRt01`                      | RT-01              | reserved |
+| 0x29 | `ReservedRt01`                      | RT-01              | reserved |
+| 0x2A | `ReservedRt01`                      | RT-01              | reserved |
+| 0x2B | `ReservedRt01`                      | RT-01              | reserved |
+| 0x2C | `ReservedRt01`                      | RT-01              | reserved |
+| 0x2D | _free_                              | —                  | —        |
 | ...  | up to 0xFF                         | —                  | —        |
 
 Bytes 0x00 and 0xFF are reserved as sentinels (unused / max).
@@ -123,6 +129,9 @@ They are not outer transaction action bytes.
 | 0x06 | `UnpauseBridge`                   | W29-15 / DEC-65     | height-gated per lineage (`UNPAUSE_BRIDGE_ACTIVATIONS`) |
 | 0x07 | `UpdateAuthoritySet`              | #422                | dormant behind authority-governance gate |
 | 0x08 | `CancelAllOrdersForAccount`       | #467                | height-gated per lineage (`CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS`) |
+| 0x09 | `ReservedRt01A`                   | RT-01               | reserved; discriminant only, no data variant, no behaviour |
+| 0x0A | `ReservedRt01B`                   | RT-01               | reserved; discriminant only, no behaviour |
+| 0x0B | `ReservedRt01C`                   | RT-01               | reserved; discriminant only, no behaviour |
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -309,6 +318,21 @@ share one namespace and must not be reused independently.
    ```
 
    to scan all branches before pushing.
+
+## Upgrade tracker
+
+A single ledger of reserved-but-not-yet-live protocol slots, so a new epic
+claims from the reservation instead of re-scanning the source. RT-01
+(registry-and-ladder) reserved the wave below; the implementing feature
+renames each slot from `ReservedRt01*` to its real name in the same commit
+that gives it behaviour.
+
+| Namespace | Reserved range | Mechanism | Status |
+|---|---|---|---|
+| Outer action bytes | `0x27`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
+| Inner admin tags | `0x09`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
+| State-key prefixes | `0x4A`–`0x4D` | `Prefix` variants, no keyspace written | parked |
+| Schema rungs | `v15`–`v16` | `SCHEMA_V15/16_*` + `UPGRADE_HEIGHT_V15/16_*` at `u64::MAX` | parked |
 
 ## History
 
