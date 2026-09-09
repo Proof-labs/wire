@@ -649,8 +649,9 @@ pub enum AdminAction {
     /// Cancels every resting order of one account, optionally confined to
     /// one market, through the same store path as the owner's own
     /// cancel-all: reserved margin is released and one `OrderCancelled`
-    /// event is emitted per order. Admitted only from the lineage's
-    /// cancel-all-for-account activation height.
+    /// event is emitted per order. A one-shot sweep at quorum, not a
+    /// freeze: the account may place again in the next block. Admitted
+    /// only from the lineage's cancel-all-for-account activation height.
     CancelAllOrdersForAccount(CancelAllOrdersForAccount),
 }
 
@@ -689,7 +690,6 @@ pub struct UpdateAuthoritySet {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelAllOrdersForAccount {
     pub owner: AccountAddress,
-    #[serde(default)]
     pub market: Option<MarketId>,
 }
 
