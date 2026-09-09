@@ -1466,13 +1466,13 @@ mod tests {
     /// action, both with and without a market scope.
     #[test]
     fn cancel_all_orders_for_account_wire_vectors_frozen() {
-        use crate::types::CancelAllOrdersForAccount;
+        use crate::types::{AccountAddress, CancelAllOrdersForAccount};
         for (market, expected) in [
             (Some(7u32), "81b943616e63656c416c6c4f7264657273466f724163636f756e7492dc0014ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc107"),
             (None, "81b943616e63656c416c6c4f7264657273466f724163636f756e7492dc0014ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1c0"),
         ] {
             let action = AdminAction::CancelAllOrdersForAccount(CancelAllOrdersForAccount {
-                owner: [0xC1; 20],
+                owner: AccountAddress([0xC1; 20]),
                 market,
             });
             let canonical = canonical_admin_action_bytes(&action).unwrap();

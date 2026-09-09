@@ -443,6 +443,11 @@ pub struct RegistryVersion(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SignerAddress(pub [u8; 20]);
 
+/// Trading account an admin action targets. Distinct from [`SignerAddress`]
+/// (a governance roster member) so the two cannot be swapped at a call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct AccountAddress(pub [u8; 20]);
+
 /// Number of member approvals required to execute an admin proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SignatureThreshold(pub u32);
@@ -683,8 +688,7 @@ pub struct UpdateAuthoritySet {
 /// is confined to. An account with no matching orders executes as a no-op.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CancelAllOrdersForAccount {
-    #[serde(with = "crate::wire_bytes")]
-    pub owner: [u8; 20],
+    pub owner: AccountAddress,
     #[serde(default)]
     pub market: Option<MarketId>,
 }
