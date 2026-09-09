@@ -1,10 +1,16 @@
 # Byte Allocation Ledger
 
-> [!important] This file is no longer the record.
-> **`protocol-allocations.json` at the repository root is**, and
-> `exchange-core/tests/protocol_allocations.rs` enforces it against the code that
-> actually assigns the numbers. Claim a byte, prefix, schema number or activation
-> height there, in the same commit as the code. The test fails otherwise.
+> [!important] Two ledgers, one rule — and in *this* repository, this file is the wire-byte record.
+> Within Proof-labs/wire, `BYTES.md` is the allocation ledger for the outer
+> action bytes and inner admin-action tags: claim a byte here in the same
+> commit as the code — `codec.rs`'s ledger tests fail otherwise. (Before the
+> 2026-09-09 extraction this file had been demoted to narrative in favour of
+> `protocol-allocations.json` at the root of Proof-labs/exchange; that
+> manifest remains the authority for the engine-side namespaces — state
+> prefixes, schema numbers, activation heights — enforced there by
+> `exchange-core/tests/protocol_allocations.rs`.) A byte claimed on either
+> side is claimed everywhere: coordinate in the exchange manifest first,
+> then mirror the row here.
 >
 > This file survives as narrative — what each namespace is for, why a collision
 > hurts, and the history of past allocations. Treat any number in it as commentary.
