@@ -641,6 +641,12 @@ pub enum AdminAction {
     /// allowlists otherwise lack (#422). Admitted only from the lineage's
     /// authority-governance activation height.
     UpdateAuthoritySet(UpdateAuthoritySet),
+    /// Cancels every resting order of one account, optionally confined to
+    /// one market, through the same store path as the owner's own
+    /// cancel-all: reserved margin is released and one `OrderCancelled`
+    /// event is emitted per order. Admitted only from the lineage's
+    /// cancel-all-for-account activation height.
+    CancelAllOrdersForAccount(CancelAllOrdersForAccount),
 }
 
 /// One operator-authority allowlist. On the `UpdateAuthoritySet` wire the
@@ -672,6 +678,17 @@ pub struct UpdateAuthoritySet {
     pub remove: Vec<SignerAddress>,
 }
 
+/// Payload of [`AdminAction::CancelAllOrdersForAccount`]: the account whose
+/// resting orders are cancelled and, when set, the single market the cancel
+/// is confined to. An account with no matching orders executes as a no-op.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelAllOrdersForAccount {
+    #[serde(with = "crate::wire_bytes")]
+    pub owner: [u8; 20],
+    #[serde(default)]
+    pub market: Option<MarketId>,
+}
+
 /// The closed set of actions a `Batch` may carry: market creations only.
 /// A registry change must be its own reviewable proposal — a roster
 /// rewrite hidden among market operations is precisely the review hazard
@@ -700,6 +717,7 @@ pub enum AdminActionType {
     SetTriggerMarketConfig = 5,
     UnpauseBridge = 6,
     UpdateAuthoritySet = 7,
+    CancelAllOrdersForAccount = 8,
 }
 
 impl AdminAction {
@@ -713,6 +731,7 @@ impl AdminAction {
             Self::SetTriggerMarketConfig(_) => AdminActionType::SetTriggerMarketConfig,
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
             Self::UpdateAuthoritySet(_) => AdminActionType::UpdateAuthoritySet,
+            Self::CancelAllOrdersForAccount(_) => AdminActionType::CancelAllOrdersForAccount,
         }
     }
 

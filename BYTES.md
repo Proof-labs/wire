@@ -122,6 +122,7 @@ They are not outer transaction action bytes.
 | 0x05 | `SetTriggerMarketConfig`          | W32-10 / TR-1       | dormant behind trigger-index gate |
 | 0x06 | `UnpauseBridge`                   | W29-15 / DEC-65     | height-gated per lineage (`UNPAUSE_BRIDGE_ACTIVATIONS`) |
 | 0x07 | `UpdateAuthoritySet`              | #422                | dormant behind authority-governance gate |
+| 0x08 | `CancelAllOrdersForAccount`       | #467                | height-gated per lineage (`CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS`) |
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -138,6 +139,11 @@ Tag `0x07` (`UpdateAuthoritySet`, #422) is admission-gated per lineage by
 `exchange-devnet-1`, active from genesis on `proof-dev`). The tag is
 ASSIGNED from this commit — the content hash commits it — regardless of
 when a lineage activates it.
+
+Tag `0x08` (`CancelAllOrdersForAccount`, #467) is admission-gated per
+lineage by `CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS` (parked at `u64::MAX` on
+`exchange-devnet-1`, active from genesis on `proof-dev`). Same rule: the
+tag is ASSIGNED from this commit regardless of when a lineage activates it.
 
 ## Emergency action arm tags
 

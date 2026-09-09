@@ -1462,6 +1462,37 @@ mod tests {
         );
     }
 
+    /// Frozen wire vector for the tag-8 `CancelAllOrdersForAccount` inner
+    /// action, both with and without a market scope.
+    #[test]
+    fn cancel_all_orders_for_account_wire_vectors_frozen() {
+        use crate::types::CancelAllOrdersForAccount;
+        for (market, expected) in [
+            (Some(7u32), "81b943616e63656c416c6c4f7264657273466f724163636f756e7492dc0014ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc107"),
+            (None, "81b943616e63656c416c6c4f7264657273466f724163636f756e7492dc0014ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1ccc1c0"),
+        ] {
+            let action = AdminAction::CancelAllOrdersForAccount(CancelAllOrdersForAccount {
+                owner: [0xC1; 20],
+                market,
+            });
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen CancelAllOrdersForAccount wire vector drifted"
+            );
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(
+                decoded.action_tag(),
+                AdminActionType::CancelAllOrdersForAccount as u8
+            );
+        }
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -1624,7 +1655,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 7] = [
+        const ALL_INNER_TAGS: [AdminActionType; 8] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1632,6 +1663,7 @@ mod tests {
             AdminActionType::SetTriggerMarketConfig,
             AdminActionType::UnpauseBridge,
             AdminActionType::UpdateAuthoritySet,
+            AdminActionType::CancelAllOrdersForAccount,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1641,7 +1673,8 @@ mod tests {
                 | AdminActionType::Batch
                 | AdminActionType::SetTriggerMarketConfig
                 | AdminActionType::UnpauseBridge
-                | AdminActionType::UpdateAuthoritySet => {}
+                | AdminActionType::UpdateAuthoritySet
+                | AdminActionType::CancelAllOrdersForAccount => {}
             }
         }
 
