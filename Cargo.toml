@@ -1,5 +1,9 @@
 [package]
-name = "exchange-wire"
+name = "proof-wire"
+#
+# Renamed from `exchange-wire` and extracted to this public repository
+# (Proof-labs/wire) on 2026-09-09 — see the README for consumers and the
+# versioning discipline. The bytes have not changed.
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire
 # types, and the ExecError code table. Extracted from exchange-core so both
@@ -32,7 +36,7 @@ serde = { version = "1", features = ["derive"] }
 derive_more = { version = "1", features = ["from", "display"] }
 serde_bytes = "0.11"
 rmp-serde = "1"
-exchange-derive = { path = "../exchange-derive" }
+proof-wire-derive = { path = "derive", version = "1" }
 # No rand_core feature: the wire layer only verifies and deterministically
 # signs (SigningKey::from_bytes + sign) — nothing generates keys, so nothing
 # pulls getrandom, which would fail to build on wasm32-unknown-unknown.
@@ -53,3 +57,6 @@ panic = "deny"
 float_arithmetic = "deny"
 arithmetic_side_effects = "deny"
 disallowed_types = "deny"
+
+[workspace]
+members = ["derive"]
