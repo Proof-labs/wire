@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (deny unwrap/expect/panic/float/arithmetic)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # The crate's [lints.clippy] table denies the safety-relevant set; -D
+      # warnings makes any future lint regression fail the job.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (ledger, frozen vectors, round-trips, stress)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
+
+  wasm-clean:
+    name: wasm32 build stays clean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - run: cargo build --workspace --target wasm32-unknown-unknown
+
+  dep-hygiene:
+    name: dependency hygiene (dep-light promise)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The Cargo.toml header promises: no bridge-core, no rand_core/getrandom
+      # (getrandom anywhere in the direct set breaks the wasm32 build and the
+      # pyo3 story). Gate the DIRECT dependency set of every crate in the repo.
+      - name: no forbidden dependencies
+        run: |
+          set -euo pipefail
+          forbidden="bridge-core rand_core getrandom"
+          graph="$(cargo metadata --no-deps --format-version 1 \
+                     | jq -r '.packages[] | .name as $p | .dependencies[].name | "\($p) \(.)"' )"
+          for bad in $forbidden; do
+            if grep -q " $bad\$" <<<"$graph"; then
+              echo "::error::forbidden dependency '$bad' reintroduced:"
+              grep " $bad\$" <<<"$graph"
+              exit 1
+            fi
+          done
+          echo "dependency set is clean:"
+          echo "$graph"
