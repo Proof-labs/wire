@@ -2076,7 +2076,7 @@ mod tests {
         }
         // A cap-sized inner action plus context, hash, and envelope overhead
         // remains below the transport limit.
-        assert!(110 + 130 + 32 + MAX_ADMIN_ACTION_BYTES + 512 < 8_192);
+        const { assert!(110 + 130 + 32 + MAX_ADMIN_ACTION_BYTES + 512 < 8_192) };
     }
 
     /// A pre-`sz_decimals` `CreateMarket` payload: 9 positional elements

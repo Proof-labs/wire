@@ -68,6 +68,7 @@ pub struct PositionBrief {
     ///     entry × size, short keeps it).
     ///   * **Perp**: equal to `upnl_now` (perps never die; reported here
     ///     for API symmetry so the UI renders the column uniformly).
+    ///
     /// (Earlier audit-affected formula was `sign(side) × (0 − entry × size)`
     /// uniformly across kinds — wrong for CPs. Fixed in `fc59cbf`.)
     pub pnl_if_dies: i64,
