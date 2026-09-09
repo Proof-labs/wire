@@ -469,7 +469,7 @@ pub fn decode_tx_from_envelope(envelope: WireTxEnvelope) -> Result<DecodedTx, Ex
 }
 
 /// Encode an action with a pre-computed pubkey + signature into a wire envelope.
-/// Most callers should use [`sign_and_encode`] instead; this exists for paths
+/// Most callers should use [`sign_and_encode_with_chain`] instead; this exists for paths
 /// (api-gateway forward, FFI relays) that already hold raw signature bytes.
 pub fn encode_signed_tx(
     action: &Action,
@@ -550,19 +550,6 @@ pub fn sign_and_encode_with_chain(
         signature,
     };
     rmp_serde::to_vec(&envelope).map_err(|e| ExecError::InternalError(e.to_string()))
-}
-
-/// Test-only convenience: sign with the `UNBOUND_CHAIN_ID`. Production
-/// code MUST use `sign_and_encode_with_chain` with a real chain_id,
-/// otherwise the signature is trivially replayable on any
-/// zero-chain_id deployment. Kept public because `exchange-core`
-/// integration tests are spread across multiple modules.
-pub fn sign_and_encode(
-    action: &Action,
-    seq: u64,
-    signing_key: &ed25519_dalek::SigningKey,
-) -> Result<Vec<u8>, ExecError> {
-    sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, action, seq, signing_key)
 }
 
 /// Sign and encode from a raw `action_type` + already-serialized `payload`,
@@ -782,7 +769,7 @@ mod tests {
     }
 
     fn encode_tx(action: &Action, seq: u64) -> Result<Vec<u8>, ExecError> {
-        sign_and_encode(action, seq, &test_key())
+        sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, action, seq, &test_key())
     }
 
     fn assert_round_trip(action: &Action, seq: u64) {
@@ -2621,7 +2608,9 @@ mod tests {
             outcome: Outcome::Yes,
             signer: [0x11; 20],
         });
-        let canonical = sign_and_encode(&action, 1, &test_key()).unwrap();
+        let canonical =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &test_key())
+                .unwrap();
         assert_eq!(
             canonical_tier2_action_type(&canonical),
             Some(ActionType::ResolveEvent)
@@ -2637,7 +2626,9 @@ mod tests {
         assert_eq!(canonical_tier2_action_type(&array16), None);
 
         let sweep = Action::RunLiquidationSweep(RunLiquidationSweep { signer: [0x22; 20] });
-        let canonical_sweep = sign_and_encode(&sweep, 2, &test_key()).unwrap();
+        let canonical_sweep =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &sweep, 2, &test_key())
+                .unwrap();
         assert_eq!(
             canonical_tier2_action_type(&canonical_sweep),
             Some(ActionType::RunLiquidationSweep)
@@ -2746,7 +2737,9 @@ mod tests {
             owner: [0x11; 20],
             agent_pubkey: [0x22; 32],
         });
-        let canonical = sign_and_encode(&action, 7, &test_key()).unwrap();
+        let canonical =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 7, &test_key())
+                .unwrap();
         assert_eq!(
             canonical_block_phase(&canonical),
             Some(BlockPhase::AgentAuthority)
@@ -2917,7 +2910,9 @@ mod tests {
         ];
 
         for action in actions {
-            let encoded = sign_and_encode(&action, 1, &key).unwrap();
+            let encoded =
+                sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &key)
+                    .unwrap();
             let decoded = decode_tx(&encoded).unwrap();
             assert_eq!(decoded.seq, 1);
         }
@@ -2931,7 +2926,9 @@ mod tests {
             amount: 5000,
             signer: [0xEE; 20],
         });
-        let encoded = sign_and_encode(&action, 99, &key).unwrap();
+        let encoded =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 99, &key)
+                .unwrap();
         let decoded = decode_tx(&encoded).unwrap();
 
         let auth = decoded.auth;
@@ -2956,7 +2953,9 @@ mod tests {
             amount: 5000,
             signer: [0xEE; 20],
         });
-        let encoded = sign_and_encode(&action, 99, &key).unwrap();
+        let encoded =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 99, &key)
+                .unwrap();
         let decoded = decode_tx(&encoded).unwrap();
 
         let auth = decoded.auth;
@@ -3049,7 +3048,9 @@ mod tests {
     fn test_peek_action_type_v2() {
         let key = test_signing_key();
         for action in all_action_variants() {
-            let encoded = sign_and_encode(&action, 1, &key).unwrap();
+            let encoded =
+                sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &key)
+                    .unwrap();
             let peeked = peek_action_type(&encoded);
             let expected = action.encode_action().unwrap().action_type;
             assert_eq!(peeked, Some(expected), "v2 peek mismatch for {action:?}");
@@ -3063,8 +3064,10 @@ mod tests {
             order_id: 42,
             owner: [0xDD; 20],
         });
-        let a = sign_and_encode(&action, 1, &key).unwrap();
-        let b = sign_and_encode(&action, 1, &key).unwrap();
+        let a =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &key).unwrap();
+        let b =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &key).unwrap();
         assert_eq!(a, b, "v2 encoding must be deterministic");
     }
 
@@ -3091,7 +3094,13 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
             });
 
-            let encoded = sign_and_encode(&action, i as u64, &key).unwrap();
+            let encoded = sign_and_encode_with_chain(
+                &crate::crypto::UNBOUND_CHAIN_ID,
+                &action,
+                i as u64,
+                &key,
+            )
+            .unwrap();
             let decoded = decode_tx(&encoded).unwrap();
 
             assert_eq!(decoded.seq, i as u64, "seq mismatch at i={i}");
@@ -3229,7 +3238,13 @@ mod tests {
                     _ => unreachable!(),
                 };
 
-                let encoded = sign_and_encode(&action, seq, &key).unwrap();
+                let encoded = sign_and_encode_with_chain(
+                    &crate::crypto::UNBOUND_CHAIN_ID,
+                    &action,
+                    seq,
+                    &key,
+                )
+                .unwrap();
                 let decoded = decode_tx(&encoded).unwrap();
 
                 let auth = &decoded.auth;
@@ -3260,7 +3275,9 @@ mod tests {
                 signer: [0xEE; 20],
             });
 
-            let encoded = sign_and_encode(&action, i, &key).unwrap();
+            let encoded =
+                sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, i, &key)
+                    .unwrap();
 
             // Tamper each byte — should fail decode or verification
             for byte_idx in 0..encoded.len() {
@@ -3308,7 +3325,9 @@ mod tests {
             u64::MAX / 2,
             u64::MAX,
         ] {
-            let encoded = sign_and_encode(&action, seq, &key).unwrap();
+            let encoded =
+                sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, seq, &key)
+                    .unwrap();
             let decoded = decode_tx(&encoded).unwrap();
             assert_eq!(decoded.seq, seq, "seq mismatch for {seq}");
         }
