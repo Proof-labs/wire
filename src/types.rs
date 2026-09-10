@@ -34,9 +34,14 @@ pub type FillId = u64;
 /// Impact market family identifier (1 family owns 4 child markets — CPY/CPN/EBY/EBN).
 pub type ImpactMarketId = u32;
 
-/// Identifier of a standalone event (G17 re-root). Its own logical space;
-/// on DevNet a legacy family reuses its `ImpactMarketId` value here.
-pub type EventId = u32;
+/// Identifier of a standalone event (G17 re-root), structurally distinct
+/// from [`ImpactMarketId`] per the domain-newtype convention. `#[serde(transparent)]`
+/// so it encodes as a bare `u32`, keeping the wire unchanged. On DevNet the
+/// underlying value space is currently shared with families (a legacy family's
+/// event reuses its id value); distinct allocation is a follow-up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventId(pub u32);
 
 /// Well-known market ID for the BTC-USD perpetual.
 pub const MARKET_BTC_USD_PERP: MarketId = 1;
@@ -300,7 +305,7 @@ impl MarketKind {
             MarketKind::ConditionalPerp {
                 impact_market_id, ..
             } => Some(*impact_market_id),
-            MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
+            MarketKind::PredictionBinary { event_id, .. } => Some(event_id.0),
         }
     }
 
