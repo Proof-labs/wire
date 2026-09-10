@@ -1,0 +1,13 @@
+/tmp/opencode/wire/target/debug/deps/sha2-9aac515e69bedadd.d: /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/x86.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/x86.rs
+
+/tmp/opencode/wire/target/debug/deps/libsha2-9aac515e69bedadd.rmeta: /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/x86.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs /home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/x86.rs
+
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/lib.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/core_api.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/consts.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/soft.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha256/x86.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/soft.rs:
+/home/app/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/sha2-0.10.9/src/sha512/x86.rs:
