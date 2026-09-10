@@ -1655,7 +1655,7 @@ mod tests {
             AdminActionType::UnpauseBridge,
             AdminActionType::UpdateAuthoritySet,
             AdminActionType::CancelAllOrdersForAccount,
-            AdminActionType::ReservedRt01A,
+            AdminActionType::CreateEvent,
             AdminActionType::ReservedRt01B,
             AdminActionType::ReservedRt01C,
         ];
@@ -1669,7 +1669,7 @@ mod tests {
                 | AdminActionType::UnpauseBridge
                 | AdminActionType::UpdateAuthoritySet
                 | AdminActionType::CancelAllOrdersForAccount
-                | AdminActionType::ReservedRt01A
+                | AdminActionType::CreateEvent
                 | AdminActionType::ReservedRt01B
                 | AdminActionType::ReservedRt01C => {}
             }

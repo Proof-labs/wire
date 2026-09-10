@@ -129,7 +129,7 @@ They are not outer transaction action bytes.
 | 0x06 | `UnpauseBridge`                   | W29-15 / DEC-65     | height-gated per lineage (`UNPAUSE_BRIDGE_ACTIVATIONS`) |
 | 0x07 | `UpdateAuthoritySet`              | #422                | dormant behind authority-governance gate |
 | 0x08 | `CancelAllOrdersForAccount`       | #467                | height-gated per lineage (`CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS`) |
-| 0x09 | `ReservedRt01A`                   | RT-01               | reserved; discriminant only, no data variant, no behaviour |
+| 0x09 | `CreateEvent`                     | EN-01               | governed; creates a standalone event (G17) |
 | 0x0A | `ReservedRt01B`                   | RT-01               | reserved; discriminant only, no behaviour |
 | 0x0B | `ReservedRt01C`                   | RT-01               | reserved; discriminant only, no behaviour |
 

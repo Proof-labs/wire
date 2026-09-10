@@ -39,7 +39,19 @@ pub type ImpactMarketId = u32;
 /// so it encodes as a bare `u32`, keeping the wire unchanged. On DevNet the
 /// underlying value space is currently shared with families (a legacy family's
 /// event reuses its id value); distinct allocation is a follow-up.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+)]
 #[serde(transparent)]
 pub struct EventId(pub u32);
 
@@ -348,6 +360,37 @@ pub enum ImpactMarketStatus {
     Resolved(Outcome),
 }
 
+/// Stored on-chain record for a standalone event (G17 re-root). Owns its two
+/// prediction-binary books (EBY, EBN) and its resolution rule. Unlike an
+/// impact-market family it has no underlying perp and no conditional legs, so
+/// its binaries never enter the scenario evaluator (they are backed by the
+/// DEC-140 locked reserve, out of scope for this record).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct EventInfo {
+    pub event_id: EventId,
+    /// Prediction-binary YES book.
+    pub eby_market: MarketId,
+    /// Prediction-binary NO book.
+    pub ebn_market: MarketId,
+    /// Human-readable question.
+    pub question: String,
+    /// Event settlement time in ms since Unix epoch.
+    pub settlement_ms: u64,
+    /// Grace period after `settlement_ms` before a stale-oracle event may be
+    /// voided by a signer (there is no automatic void, G16).
+    pub resolution_window_ms: u64,
+    /// Current lifecycle status (shares the family status enum).
+    pub status: ImpactMarketStatus,
+    /// Block timestamp when the event was created (ms since epoch).
+    pub created_ms: u64,
+    /// Block timestamp when the event resolved (ms since epoch), 0 if unresolved.
+    pub resolved_ms: u64,
+    /// How the YES/NO outcome is determined. `None` (or absent) means
+    /// `RelayerAttested` — a signer supplies the outcome.
+    #[serde(default)]
+    pub oracle_source: Option<EventOracleSource>,
+}
+
 /// Stored on-chain record for an impact-market family. Owns pointers to the
 /// 4 child markets (CPY, CPN, EBY, EBN) plus the underlying perp.
 ///
@@ -635,6 +678,9 @@ pub enum AdminAction {
     /// lineage's admin-actions-v2 activation height
     /// (`crate::repo::ADMIN_ACTIONS_V2_ACTIVATIONS`).
     CreateImpactMarket(CreateImpactMarket),
+    /// Creates a standalone event (2 binary books, no underlying). Same
+    /// zero-signer rule as `CreateImpactMarket`.
+    CreateEvent(CreateEvent),
     /// Two to `MAX_BATCH_ADMIN_ACTIONS` market-creation actions executed
     /// sequentially in ONE child overlay, so the whole batch lands
     /// atomically and a later item may reference state an earlier item
@@ -739,9 +785,8 @@ pub enum AdminActionType {
     UnpauseBridge = 6,
     UpdateAuthoritySet = 7,
     CancelAllOrdersForAccount = 8,
-    /// Reserved by RT-01 (registry-and-ladder). Number claimed only; no
-    /// data variant and no behaviour. The implementing action renames it.
-    ReservedRt01A = 9,
+    /// Create a standalone event (G17). Governed like `CreateImpactMarket`.
+    CreateEvent = 9,
     /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01B = 10,
     /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
@@ -755,6 +800,7 @@ impl AdminAction {
             Self::CreateMarket(_) => AdminActionType::CreateMarket,
             Self::UpdateAdminSignerRegistry(_) => AdminActionType::UpdateAdminSignerRegistry,
             Self::CreateImpactMarket(_) => AdminActionType::CreateImpactMarket,
+            Self::CreateEvent(_) => AdminActionType::CreateEvent,
             Self::Batch(_) => AdminActionType::Batch,
             Self::SetTriggerMarketConfig(_) => AdminActionType::SetTriggerMarketConfig,
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
@@ -2299,6 +2345,35 @@ pub struct CreateImpactMarket {
     pub rules: String,
 }
 
+/// Create a standalone event: mints two prediction-binary books (EBY at
+/// `child_market_base+0`, EBN at `+1`) under a new [`EventInfo`], with no
+/// underlying perp and no conditional legs (G17). Requires relayer
+/// authorization; governed like `CreateImpactMarket`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateEvent {
+    pub event_id: EventId,
+    /// Starting id for the 2 binary child markets: `base+0` = EBY, `+1` = EBN.
+    pub child_market_base: MarketId,
+    /// Risk/insurance pool the two books belong to.
+    pub pool_id: u8,
+    pub question: String,
+    pub settlement_ms: u64,
+    pub resolution_window_ms: u64,
+    pub taker_fee_bps: u32,
+    pub maker_fee_bps: u32,
+    #[serde(with = "crate::wire_bytes")]
+    pub signer: [u8; 20],
+    /// How the outcome is determined. `None` => `RelayerAttested`.
+    #[serde(default)]
+    pub oracle_source: Option<EventOracleSource>,
+    /// Off-chain event body text (not stored in consensus state).
+    #[serde(default)]
+    pub description: String,
+    /// Off-chain resolution criteria text (not stored in consensus state).
+    #[serde(default)]
+    pub rules: String,
+}
+
 /// Admin action to resolve an impact-market event. Settles the winning
 /// conditional-perp book and voids the loser; cash-settles both binary books
 /// to $1 (winner) / $0 (loser). Requires relayer authorization.
@@ -2838,6 +2913,18 @@ pub enum Event {
         ebn_market: MarketId,
         question: String,
         deadline_ms: u64,
+        resolution_window_ms: u64,
+        description: String,
+        rules: String,
+    },
+    /// A standalone event was created: two prediction-binary books under a
+    /// new [`EventInfo`], no underlying perp (G17).
+    EventCreated {
+        event_id: EventId,
+        eby_market: MarketId,
+        ebn_market: MarketId,
+        question: String,
+        settlement_ms: u64,
         resolution_window_ms: u64,
         description: String,
         rules: String,
