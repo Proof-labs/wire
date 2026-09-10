@@ -1201,7 +1201,7 @@ pub struct TriggerSlippageBps(pub u32);
 pub const MAX_TICKER_LEN: usize = 24;
 
 /// Per-market risk parameters. Stored on-chain via `CreateMarket` admin action.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MarketConfig {
     pub market: MarketId,
     /// Initial margin ratio in basis points (e.g. 3334 = 33.34% → about 3x leverage).
