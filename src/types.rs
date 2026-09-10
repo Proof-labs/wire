@@ -34,6 +34,10 @@ pub type FillId = u64;
 /// Impact market family identifier (1 family owns 4 child markets — CPY/CPN/EBY/EBN).
 pub type ImpactMarketId = u32;
 
+/// Identifier of a standalone event (G17 re-root). Its own logical space;
+/// on DevNet a legacy family reuses its `ImpactMarketId` value here.
+pub type EventId = u32;
+
 /// Well-known market ID for the BTC-USD perpetual.
 pub const MARKET_BTC_USD_PERP: MarketId = 1;
 
@@ -185,10 +189,8 @@ pub enum MarketKind {
     },
     /// Prediction-binary token — trades on [0, BINARY_PRICE_MAX] µUSDC.
     /// Settles to $1 if the branch wins at resolution, $0 otherwise.
-    PredictionBinary {
-        impact_market_id: ImpactMarketId,
-        branch: Branch,
-    },
+    /// G17 re-root: parented by an [`EventInfo`] via `event_id`, not a family.
+    PredictionBinary { event_id: EventId, branch: Branch },
 }
 
 /// Mark-price source for a perp market. Selects how `get_mark_price`
@@ -288,16 +290,26 @@ pub const MARK_MIN_BOOK_NOTIONAL_UUSDC: u128 = 50_000_000_000;
 pub const DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR: u64 = 10;
 
 impl MarketKind {
-    /// Returns the impact market family ID this market belongs to, if any.
+    /// Returns the parent id this market belongs to, if any. For a
+    /// conditional perp that is its impact-market family; for a prediction
+    /// binary that is its [`EventInfo`] (G17 re-root). On DevNet the two id
+    /// spaces share values, so a legacy family's binary still resolves to it.
     pub fn impact_market_id(&self) -> Option<ImpactMarketId> {
         match self {
             MarketKind::Perp => None,
             MarketKind::ConditionalPerp {
                 impact_market_id, ..
-            }
-            | MarketKind::PredictionBinary {
-                impact_market_id, ..
             } => Some(*impact_market_id),
+            MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
+        }
+    }
+
+    /// The event this market is parented by, if it is a prediction binary
+    /// (G17 re-root). `None` for perps and conditional perps.
+    pub fn event_id(&self) -> Option<EventId> {
+        match self {
+            MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
+            _ => None,
         }
     }
 
