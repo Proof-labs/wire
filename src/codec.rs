@@ -781,9 +781,9 @@ mod tests {
 
     #[test]
     fn test_golden_vectors() {
-        const PLACE_HEX: &str = include_str!("../../docs/spec/golden-vectors/place_order.hex");
-        const CANCEL_HEX: &str = include_str!("../../docs/spec/golden-vectors/cancel_order.hex");
-        const ORACLE_HEX: &str = include_str!("../../docs/spec/golden-vectors/oracle_update.hex");
+        const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
+        const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
+        const ORACLE_HEX: &str = include_str!("../vectors/oracle_update.hex");
 
         let cases: Vec<(Action, u64, &str, u8)> = vec![
             (
@@ -1156,11 +1156,10 @@ mod tests {
         // Payload-only golden hex (envelope signature excluded so the vector
         // does not depend on a signing key).
         const CONFIRM_RECEIPT_PAYLOAD_HEX: &str =
-            include_str!("../../docs/spec/golden-vectors/confirm_withdrawal_receipt.hex");
+            include_str!("../vectors/confirm_withdrawal_receipt.hex");
         const FAIL_RECEIPT_PAYLOAD_HEX: &str =
-            include_str!("../../docs/spec/golden-vectors/fail_withdrawal_receipt.hex");
-        const AUTHORIZE_PAYLOAD_HEX: &str =
-            include_str!("../../docs/spec/golden-vectors/authorize_withdrawal.hex");
+            include_str!("../vectors/fail_withdrawal_receipt.hex");
+        const AUTHORIZE_PAYLOAD_HEX: &str = include_str!("../vectors/authorize_withdrawal.hex");
 
         let confirm_payload = hex_string(&confirm.encode_action().unwrap().payload.0);
         let fail_payload = hex_string(&fail.encode_action().unwrap().payload.0);

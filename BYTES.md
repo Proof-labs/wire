@@ -18,7 +18,7 @@ could fail a build:
 - It said the action type is the **first byte of every transaction envelope**. It is
   **byte 2**. The envelope is a 6-element msgpack fixarray, so byte 0 is `0x96` and
   byte 1 is the envelope version — the golden vectors read `96 02 01 01`
-  (`docs/spec/golden-vectors/place_order.hex`). The prefix claim, byte 0 of a KV key,
+  (`vectors/place_order.hex`). The prefix claim, byte 0 of a KV key,
   was correct.
 - It pointed at `exchange-core/src/codec.rs::ACTION_*`. **No such constants exist.**
   Action bytes come from the `define_actions!` macro at `codec.rs:84`.
