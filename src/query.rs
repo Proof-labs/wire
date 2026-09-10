@@ -16,10 +16,6 @@ use crate::types::{
 /// new and OK to ignore for older clients — rmp-serde arrays are
 /// length-prefixed and TS/JS decoders access by numeric index.
 ///
-/// Addresses Sprint 1 items in `docs/api-scope.md`:
-///   * P1 #2 — `pnl_if_fires` / `pnl_if_dies` per position
-///   * P2 #8 — per-position `upnl_now`, `mm_now`, `im_now`, `funding_since`
-///
 /// The enrichment fields are deliberately per-leg anchors, not a decomposed
 /// account-health proof. From schema v9, branch equity applies one debit-only
 /// shock after all firing linear legs are netted by underlying, and CP margin
@@ -62,15 +58,12 @@ pub struct PositionBrief {
     pub pnl_if_fires: i64,
     /// V(p, s) when position's branch does NOT fire (μ = 0). Per-kind:
     ///   * **ConditionalPerp**: 0 (voided side returns IM, no settlement
-    ///     cash flow per `docs/impact-market-design.md` §2.1).
+    ///     cash flow).
     ///   * **PredictionBinary**: `sign(side) × (0 − entry × size)`
     ///     (binaries DO settle at $0 on the losing side — long forfeits
     ///     entry × size, short keeps it).
     ///   * **Perp**: equal to `upnl_now` (perps never die; reported here
     ///     for API symmetry so the UI renders the column uniformly).
-    ///
-    /// (Earlier audit-affected formula was `sign(side) × (0 − entry × size)`
-    /// uniformly across kinds — wrong for CPs. Fixed in `fc59cbf`.)
     pub pnl_if_dies: i64,
     /// Funding accrued since the position's last settled funding index.
     /// Positive = credit to owner, negative = debit. Convention:
@@ -81,9 +74,8 @@ pub struct PositionBrief {
     pub funding_since: i64,
 
     /// ADL queue score: `max(0, upnl_now) × leverage_used`. Used by the
-    /// Tier-3 Auto-Deleveraging queue (docs/adl-vs-socialized-loss.md
-    /// §3.5) to rank profitable counterparties. Higher score = closer
-    /// to the front of the ADL queue.
+    /// Tier-3 Auto-Deleveraging queue to rank profitable counterparties.
+    /// Higher score = closer to the front of the ADL queue.
     ///
     /// Formula: `(positive_upnl × notional × 10_000) / im_now`, where
     /// notional = settle_price × size and im_now = notional × im_bps
@@ -137,14 +129,13 @@ pub struct AccountInfo {
     /// "binding" liquidation-health outcome.
     /// One entry per active impact market the account touches, in ascending
     /// impact-market-id order. For perp-only accounts (no impact exposure)
-    /// this is empty. Addresses Jesse's P1 #3 (see docs/api-scope.md).
+    /// this is empty.
     ///
     /// The pre-scenario-margin framing said "binding branch: YES vs NO" but
     /// that doesn't compose for 2+ impact markets. `binding_scenario` is the
-    /// correct generalization — a tuple of (impact_market_id, branch) per
-    /// event the account is exposed to. Shipped 2026-04-24 as a trailing
-    /// msgpack field (index 6); older SDK versions reading indices 0-5
-    /// continue to work.
+    /// correct generalization: a tuple of (impact_market_id, branch) per
+    /// event the account is exposed to. A trailing msgpack field (index 6);
+    /// older SDK versions reading indices 0-5 continue to work.
     pub binding_scenario: Vec<(ImpactMarketId, Branch)>,
     /// Cumulative trading fees paid (positive) or rebates received
     /// (negative) by this account across its lifetime in micro-USDC.
@@ -152,8 +143,7 @@ pub struct AccountInfo {
     /// `Σ fees_accrued ≈ current FeePool balance` holds. Powers the
     /// "lifetime trading cost" line on the UI/SDK. New accounts read
     /// 0. Trailing field (index 7); decodes as 0 for callers reading
-    /// older AccountInfo blobs thanks to `serde(default)`. BE-45,
-    /// 2026-05-03.
+    /// older AccountInfo blobs thanks to `serde(default)`.
     #[serde(default)]
     pub fees_accrued: i64,
     /// Per-account rolling 30-day taker volume in micro-USDC at the last

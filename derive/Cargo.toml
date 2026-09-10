@@ -2,10 +2,9 @@
 name = "proof-wire-derive"
 version = "1.1.0"
 edition = "2021"
-# Mirrored from Proof-labs/exchange `exchange-derive` (the AbciEvent
-# derive), vendored here so proof-wire is self-contained. Keep in sync:
-# the snake_case event names it renders are pinned by proof-wire's own
-# conformance tests and by the engine's golden vectors.
+# The AbciEvent derive macro, kept self-contained here so proof-wire has no
+# engine dependency. The snake_case event names it renders are pinned by
+# proof-wire's own conformance tests and by the engine's golden vectors.
 [lib]
 proc-macro = true
 

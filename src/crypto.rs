@@ -3,12 +3,11 @@ use sha3::{Digest, Keccak256};
 
 use crate::types::ExecError;
 
-/// Domain separator for v3 signing messages. Bumped from v2 on
-/// 2026-04-23 (audit finding B4) when the envelope gained a 32-byte
-/// `chain_id` binding — v2 had no chain ID, which let a tx signed for
-/// `dev` be replayed on `testnet` or `prod` (or any post-wipe fresh
-/// chain) with the same pubkey. Any v2 signature submitted post-v3
-/// will verify against a different message bytes and fail.
+/// Domain separator for v3 signing messages. Bumped from v2 when the
+/// envelope gained a 32-byte `chain_id` binding: v2 had no chain ID,
+/// which let a tx signed for one chain be replayed on another (or any
+/// post-wipe fresh chain) with the same pubkey. Any v2 signature
+/// submitted post-v3 will verify against different message bytes and fail.
 const DOMAIN_PREFIX: &[u8] = b"ProofExchange-v3";
 
 /// 32-byte zero chain_id. Used in tests and in engine startup paths
@@ -48,8 +47,7 @@ pub fn chain_id_from_string(chain_id: &str) -> [u8; 32] {
 ///
 /// The `chain_id` field binds the signature to a specific chain. Two
 /// chains with the same user keys but different chain_ids will produce
-/// mutually invalid signatures — closing the cross-chain replay vector
-/// that audit B4 identified.
+/// mutually invalid signatures, closing the cross-chain replay vector.
 pub fn signing_message(chain_id: &[u8; 32], action_type: u8, seq: u64, payload: &[u8]) -> Vec<u8> {
     // 16 (domain prefix) + 32 (chain_id) + 1 (action_type) + 8 (seq) + payload
     let cap = DOMAIN_PREFIX
@@ -165,13 +163,13 @@ mod tests {
         assert!(verify_signature(&TEST_CHAIN, &pubkey, &sig, 0x01, 43, payload).is_err());
     }
 
-    /// B4 regression test: a signature generated for chain_id A must
+    /// Regression test: a signature generated for chain_id A must
     /// NOT verify against chain_id B. Without this binding, any user
     /// key promoted from dev → testnet → prod would have all their
     /// historical txs re-playable. If this test ever passes trivially
     /// again, v3 signing has been silently downgraded.
     #[test]
-    fn v3_cross_chain_replay_rejected_b4_regression() {
+    fn v3_cross_chain_replay_rejected() {
         let key = test_keypair();
         let pubkey = key.verifying_key().to_bytes();
         let payload = b"mint 1M";
