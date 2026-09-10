@@ -1275,8 +1275,13 @@ mod tests {
         // is not "no released decoder exists". The append rides as MINOR
         // because DEC-66 folds the locator into the deposit-feature release:
         // no deployed producer emits locator-bearing bytes until every
-        // decoding node runs this version, and no other dependent decodes
-        // these actions (the gateway's typed surface excludes them). Absent
+        // decoding node runs this version. One dependent does more than
+        // decode these actions: the gateway's structured `/exchange` path
+        // re-encodes `ConfirmDeposit` from JSON fields and verifies the
+        // client's signature over the result, so the appended element is
+        // a signing-contract change for anyone signing that structured
+        // form; api-gateway#150 cut that path over to the five-element
+        // layout with no external signer affected (exchange#473). Absent
         // that coordination, this break would be MAJOR.
         let none_confirm = ConfirmDeposit {
             owner: [0x55; 20],
