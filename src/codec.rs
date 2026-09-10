@@ -182,7 +182,7 @@ define_actions! {
     ApproveAdminAction => 31,    // 0x1F — signed governance approval
     RejectAdminAction => 32,     // 0x20 — signed governance rejection
     EmergencyAdminAction => 33,  // 0x21 — signed emergency action
-    // W28-20 bridge custody: receipt-gated terminal withdrawal actions.
+    // Bridge custody: receipt-gated terminal withdrawal actions.
     // NEW action_types (additive) — the legacy relayer ConfirmWithdrawal
     // (0x0A) / FailWithdrawal (0x0B) remain decodable, so old decoders are
     // unaffected. See the codec decode-compat tests.
@@ -217,7 +217,7 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
         | ActionType::FailWithdrawal
-        // W28-20 receipt-gated terminals replace the legacy relayer
+        // Receipt-gated terminals replace the legacy relayer
         // Confirm/FailWithdrawal and take the same credit-band phase.
         | ActionType::ConfirmWithdrawalReceipt
         | ActionType::FailWithdrawalReceipt
@@ -359,8 +359,8 @@ impl std::ops::Deref for WireBlob {
 pub const ENVELOPE_VERSION: u8 = 2;
 
 /// Wire envelope versions this build accepts on decode. Single source of
-/// truth — mirrored by `supportedEnvelopeVersions` in
-/// `exchange-node/check_tx.go` and the SDK check in `sdk/src/codec.ts`.
+/// truth — mirrored by `supportedEnvelopeVersions` in the Go CheckTx parser
+/// and the SDK codec check.
 /// Add a new version here when introducing one; drop an old one when it
 /// is no longer permitted. Decoders MUST consult this slice instead of
 /// hardcoding numeric comparisons.
@@ -376,13 +376,12 @@ pub const MAX_LIQUIDATE_ACCOUNTS_TX_BYTES: usize = 11_119;
 /// Wire envelope: `[version=2, action_type, seq, payload_bytes, pubkey, signature]`.
 ///
 /// Byte fields use [`WireBlob`] which enforces msgpack `bin` encoding at the
-/// type level (not just an annotation). The Go CheckTx parser
-/// (exchange-node/check_tx.go) and the SDK both expect this shape.
+/// type level (not just an annotation). The Go CheckTx parser and the SDK
+/// both expect this shape.
 ///
 /// The `version` byte stays `2` and the signing-prefix string stays
-/// `"ProofExchange-v2"` because every existing signature in dev/devnet
-/// was produced under that prefix. The legacy unsigned (v1) envelope
-/// was removed pre-launch.
+/// `"ProofExchange-v2"` because every existing signature was produced under
+/// that prefix. The legacy unsigned (v1) envelope was removed pre-launch.
 #[derive(Serialize, Deserialize)]
 pub struct WireTxEnvelope {
     version: u8,
@@ -470,7 +469,7 @@ pub fn decode_tx_from_envelope(envelope: WireTxEnvelope) -> Result<DecodedTx, Ex
 
 /// Encode an action with a pre-computed pubkey + signature into a wire envelope.
 /// Most callers should use [`sign_and_encode_with_chain`] instead; this exists for paths
-/// (api-gateway forward, FFI relays) that already hold raw signature bytes.
+/// (gateway forward, FFI relays) that already hold raw signature bytes.
 pub fn encode_signed_tx(
     action: &Action,
     seq: u64,
@@ -521,8 +520,8 @@ pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, Ex
 
 /// Sign an action and encode it as a wire envelope, binding the
 /// signature to a specific `chain_id`. The signing bytes carry a 32-byte
-/// chain_id prefix per audit B4 — `chain_id` is established by
-/// genesis / snapshot-load, not carried on the wire.
+/// chain_id prefix; `chain_id` is established by genesis / snapshot-load,
+/// not carried on the wire.
 pub fn sign_and_encode_with_chain(
     chain_id: &[u8; 32],
     action: &Action,
@@ -1096,7 +1095,7 @@ mod tests {
         }
     }
 
-    // -- W28-20 receipt-gated terminal withdrawal actions -------------------
+    // -- receipt-gated terminal withdrawal actions --------------------------
 
     /// A deterministic wire receipt fixture for the golden vectors.
     fn golden_receipt(terminal_state: u8) -> BridgeWithdrawalReceipt {
@@ -1147,7 +1146,7 @@ mod tests {
         });
         // The authorization payload is opaque canonical bytes at this layer
         // (fixed 221-byte `WithdrawalAuthorizationV1` wire form); the codec
-        // vector pins the envelope layout, not the bridge-core semantics.
+        // vector pins the envelope layout, not the authorization semantics.
         let authorize = Action::AuthorizeWithdrawal(AuthorizeWithdrawal {
             authorization: vec![0x44; 221],
             proof: golden_proof(),
@@ -1218,7 +1217,7 @@ mod tests {
         ));
     }
 
-    // -- DEC-66 deposit locator ---------------------------------------------
+    // -- deposit locator ----------------------------------------------------
 
     /// Pre-locator `ConfirmDeposit`: the 4-field layout before the trailing
     /// `locator` field. Frozen so the compat test proves old bytes still
@@ -1273,16 +1272,16 @@ mod tests {
         // strict old 4-field decoder (same property the OI-cap test pins).
         // Released v2.3.x tags DO carry that strict 4-field decoder, so this
         // is not "no released decoder exists". The append rides as MINOR
-        // because DEC-66 folds the locator into the deposit-feature release:
-        // no deployed producer emits locator-bearing bytes until every
-        // decoding node runs this version. One dependent does more than
-        // decode these actions: the gateway's structured `/exchange` path
-        // re-encodes `ConfirmDeposit` from JSON fields and verifies the
-        // client's signature over the result, so the appended element is
-        // a signing-contract change for anyone signing that structured
-        // form; api-gateway#150 cut that path over to the five-element
-        // layout with no external signer affected (exchange#473). Absent
-        // that coordination, this break would be MAJOR.
+        // because the locator lands with the deposit-feature release: no
+        // deployed producer emits locator-bearing bytes until every decoding
+        // node runs this version. One dependent does more than decode these
+        // actions: the gateway's structured `/exchange` path re-encodes
+        // `ConfirmDeposit` from JSON fields and verifies the client's
+        // signature over the result, so the appended element is a
+        // signing-contract change for anyone signing that structured form;
+        // the gateway cut that path over to the five-element layout with no
+        // external signer affected. Absent that coordination, this break
+        // would be MAJOR.
         let none_confirm = ConfirmDeposit {
             owner: [0x55; 20],
             amount: 100_000,
@@ -1424,8 +1423,8 @@ mod tests {
         }
     }
 
-    /// Frozen wire vector for the tag-7 `UpdateAuthoritySet` inner action
-    /// (#422). The externally-tagged variant name plus positional payload
+    /// Frozen wire vector for the tag-7 `UpdateAuthoritySet` inner action.
+    /// The externally-tagged variant name plus positional payload
     /// must never drift — a change here breaks the content hash and every
     /// already-signed proposal. Also proves the round-trip is a fixed point.
     #[test]
@@ -1904,7 +1903,7 @@ mod tests {
         );
     }
 
-    /// The §11 byte-budget claim, proven rather than asserted in prose:
+    /// The byte-budget claim, proven rather than asserted in prose:
     /// a worst-case capped impact action — and the canonical batch of
     /// [worst CreateMarket, worst impact] — fit `MAX_ADMIN_ACTION_BYTES`
     /// without raising it. The free-text caps are what make this true.

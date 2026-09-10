@@ -36,7 +36,7 @@ pub type ImpactMarketId = u32;
 
 /// Identifier of a standalone event (G17 re-root), structurally distinct
 /// from [`ImpactMarketId`] per the domain-newtype convention. `#[serde(transparent)]`
-/// so it encodes as a bare `u32`, keeping the wire unchanged. On DevNet the
+/// so it encodes as a bare `u32`, keeping the wire unchanged. The
 /// underlying value space is currently shared with families (a legacy family's
 /// event reuses its id value); distinct allocation is a follow-up.
 #[derive(
@@ -112,7 +112,7 @@ pub enum Outcome {
     Void = 3,
 }
 
-/// BE-54: how the YES/NO outcome of an impact-market event is determined
+/// How the YES/NO outcome of an impact-market event is determined
 /// at deadline. Stored on [`ImpactMarketInfo`] (and carried on
 /// [`CreateImpactMarket`]). `RelayerAttested` is the legacy default —
 /// the resolver supplies the outcome and the engine trusts it. The two
@@ -147,7 +147,7 @@ pub enum EventOracleSource {
     RelayerAttested,
 }
 
-/// BE-54: comparison operator used by the auto-resolve oracle modes.
+/// Comparison operator used by the auto-resolve oracle modes.
 /// `YES` fires iff `oracle_price <comparison> strike_price` (e.g.
 /// `GreaterThan` means the event resolves YES when the oracle reading is
 /// strictly greater than the strike). Equality on the boundary is
@@ -224,7 +224,7 @@ pub enum MarketKind {
 /// = 0, `Median` = 1. New variants append.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MarkSourceMode {
-    /// Mark = oracle price. Single-source; same as the pre-BE-31
+    /// Mark = oracle price. Single-source; same as the legacy
     /// engine. Failure mode: a stale or attacked oracle moves mark
     /// without a second opinion.
     #[default]
@@ -264,7 +264,7 @@ pub const DEFAULT_BRANCH_SHOCK_CLAMP_BPS: u32 = 2_500;
 /// feeder shows up in the mark drift within minutes.
 pub const DEFAULT_CEX_COMPOSITE_STALENESS_MS: u64 = 30_000;
 
-/// W28-06 slice 1: maximum per-update oracle price deviation from the
+/// Maximum per-update oracle price deviation from the
 /// stored last-good, in basis points. `handle_oracle_update` otherwise
 /// lands ANY non-zero price an authorized signer submits directly in the
 /// mark. Out-of-band updates are CLAMPED to `last_good ± this band` (not
@@ -272,11 +272,10 @@ pub const DEFAULT_CEX_COMPOSITE_STALENESS_MS: u64 = 30_000;
 /// while a single out-of-band spike is bounded to one band step. 2000 bps
 /// = 20% per update. The first-ever price on a market (no last-good) is
 /// accepted as-is. The behavior activates at the shared stored-schema v9
-/// boundary; pre-v9 replay keeps the raw submitted price. (Slice 2 may move
-/// this onto per-market `MarketConfig`.)
+/// boundary; pre-v9 replay keeps the raw submitted price.
 pub const DEFAULT_MAX_ORACLE_DEVIATION_BPS: u32 = 2_000;
 
-/// W28-06 slice 1: minimum top-of-book notional for a book-mid to be trusted
+/// Minimum top-of-book notional for a book-mid to be trusted
 /// as a mark source, in µUSDC. The floor binds PER SIDE at half this value —
 /// each of bid and ask, valued at the mid, must clear
 /// `MARK_MIN_BOOK_NOTIONAL_UUSDC / 2` (see `engine::book_depth_meets_floor`
@@ -287,11 +286,10 @@ pub const DEFAULT_MAX_ORACLE_DEVIATION_BPS: u32 = 2_000;
 /// could otherwise drive the branch or median mark and move a solvent third
 /// party's margin. $50k aggregate ($25k/side). Compared directly against
 /// `engine::notional_micro`'s u128 output. The floor activates at stored schema
-/// v9; pre-v9 replay keeps the historical spread-only book-mid rule. (Slice 2
-/// may move this onto per-market `MarketConfig`.)
+/// v9; pre-v9 replay keeps the historical spread-only book-mid rule.
 pub const MARK_MIN_BOOK_NOTIONAL_UUSDC: u128 = 50_000_000_000;
 
-/// W28-06 slice 1: hard-cap multiple on `mark_price_max_oracle_age_ms` past
+/// Hard-cap multiple on `mark_price_max_oracle_age_ms` past
 /// which the stale→last-good mark fallback stops and `get_mark_price` errors
 /// (`StaleOracle`) again. Two-tier staleness policy: below the per-market
 /// gate the oracle is fresh; between the gate and `gate × this factor` the
@@ -302,14 +300,13 @@ pub const MARK_MIN_BOOK_NOTIONAL_UUSDC: u128 = 50_000_000_000;
 /// lever up against an arbitrarily old price. Withdrawal initiation is stricter
 /// and rejects immediately after the configured freshness gate. Both policies
 /// activate at stored schema v9; pre-v9 replay retains immediate staleness
-/// rejection for every mark consumer. (Slice 2 may move this onto per-market
-/// `MarketConfig`.)
+/// rejection for every mark consumer.
 pub const DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR: u64 = 10;
 
 impl MarketKind {
     /// Returns the parent id this market belongs to, if any. For a
     /// conditional perp that is its impact-market family; for a prediction
-    /// binary that is its [`EventInfo`] (G17 re-root). On DevNet the two id
+    /// binary that is its [`EventInfo`] (G17 re-root). Currently the two id
     /// spaces share values, so a legacy family's binary still resolves to it.
     pub fn impact_market_id(&self) -> Option<ImpactMarketId> {
         match self {
@@ -364,7 +361,7 @@ pub enum ImpactMarketStatus {
 /// prediction-binary books (EBY, EBN) and its resolution rule. Unlike an
 /// impact-market family it has no underlying perp and no conditional legs, so
 /// its binaries never enter the scenario evaluator (they are backed by the
-/// DEC-140 locked reserve, out of scope for this record).
+/// locked reserve, out of scope for this record).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventInfo {
     pub event_id: EventId,
@@ -423,8 +420,8 @@ pub struct ImpactMarketInfo {
     pub created_ms: u64,
     /// Block timestamp when the impact market was resolved (ms since epoch), 0 if unresolved.
     pub resolved_ms: u64,
-    /// BE-54: how the YES/NO outcome is determined at deadline. Defaults
-    /// to `RelayerAttested` for back-compat with pre-BE-54 records (which
+    /// How the YES/NO outcome is determined at deadline. Defaults
+    /// to `RelayerAttested` for back-compat with legacy records (which
     /// decode as `None` here, treated as `RelayerAttested` by the engine).
     /// Stored in addition to `CreateImpactMarket.oracle_source` so the
     /// resolver doesn't need to re-scan the original action bytes.
@@ -434,8 +431,6 @@ pub struct ImpactMarketInfo {
 
 // ---------------------------------------------------------------------------
 // Admin multisig governance
-//
-// Design record: <https://github.com/Proof-labs/ProofOfBrain/blob/dev/delivery/epics/w29-04-engine-admin-multisig.md>
 // ---------------------------------------------------------------------------
 
 /// Maximum signer-roster size, enforced at genesis, seed, and every
@@ -706,7 +701,7 @@ pub enum AdminAction {
     UnpauseBridge,
     /// Adds and/or removes addresses in one operator-authority set — the
     /// on-chain revocation and rotation path the relayer/oracle/composite
-    /// allowlists otherwise lack (#422). Admitted only from the lineage's
+    /// allowlists otherwise lack. Admitted only from the lineage's
     /// authority-governance activation height.
     UpdateAuthoritySet(UpdateAuthoritySet),
     /// Cancels every resting order of one account, optionally confined to
@@ -724,7 +719,7 @@ pub enum AdminAction {
 /// discriminant is load-bearing for the presence-key bytes (`[prefix][cap]…`),
 /// not for the wire. `Oracle`/`CexComposite`/`Relayer` are the genesis-seeded
 /// presence sets; `Custody`/`MarketParams`/`ScheduledOps` are the capability
-/// sets the split (#422 item 3) activates — their discriminants ship here,
+/// sets the split activates — their discriminants ship here,
 /// dormant, so the wire has a single mixed-fleet decode boundary.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -787,9 +782,9 @@ pub enum AdminActionType {
     CancelAllOrdersForAccount = 8,
     /// Create a standalone event (G17). Governed like `CreateImpactMarket`.
     CreateEvent = 9,
-    /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
+    /// Reserved. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01B = 10,
-    /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
+    /// Reserved. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01C = 11,
 }
 
@@ -1121,7 +1116,7 @@ pub struct TxContext {
     /// Defaults to `crypto::UNBOUND_CHAIN_ID` ([0u8; 32]) in tests
     /// and in unbound deployments; production chains must set a
     /// non-zero value to close the cross-chain replay vector
-    /// (audit B4, 2026-04-23).
+    /// (2026-04-23).
     pub chain_id: [u8; 32],
 }
 
@@ -1279,16 +1274,13 @@ pub struct MarketConfig {
     /// Default: false — legacy per-leg scenario margin behavior.
     /// `#[serde(default)]` keeps existing on-chain MarketConfig records
     /// decoding correctly.
-    ///
-    /// See docs/margin-engine.md §6 for the derivation.
     #[serde(default)]
     pub net_delta_margin: bool,
     /// Insurance-fund pool grouping. Markets with the same `pool_id`
     /// share an insurance fund — a JELLY-style blowout in one pool can
     /// drain its own IF to zero without touching the IF that backs
-    /// other pools. See `docs/adl-vs-socialized-loss.md` §3 for the
-    /// full waterfall design (HLP → per-pool IF → socialized loss →
-    /// ADL).
+    /// other pools. The full waterfall is HLP → per-pool IF → socialized
+    /// loss → ADL.
     ///
     /// Defaults to 0 so existing on-chain MarketConfigs (written before
     /// per-pool IF existed) all map to the legacy single-IF behavior.
@@ -1319,8 +1311,7 @@ pub struct MarketConfig {
     /// feeder silently mispriced everything. With this field set on a
     /// market, the engine refuses to read an oracle whose
     /// `publish_time_ms` is older than `block_time_ms -
-    /// mark_price_max_oracle_age_ms` and returns `ExecError::StaleOracle`
-    /// (BE-33, 2026-05-03).
+    /// mark_price_max_oracle_age_ms` and returns `ExecError::StaleOracle`.
     ///
     /// Skipped on impact-family markets (CPY/CPN/EBY/EBN) — those
     /// mark off the book directly via the EWMA fallback and have no
@@ -1339,24 +1330,24 @@ pub struct MarketConfig {
     /// the FeePool.
     ///
     /// Added after `mark_price_max_oracle_age_ms` so already-merged
-    /// BE-33 records keep their positional wire/state layout.
+    /// records keep their positional wire/state layout.
     #[serde(default)]
     pub fee_tiers: Vec<FeeTier>,
     /// Tick size in micro-USDC. Order prices must be exact multiples
     /// of `tick_size`. Zero (default) disables the check, preserving
-    /// pre-BE-48 behavior. Recommended: $0.01 = 10_000 µUSDC for
+    /// legacy behavior. Recommended: $0.01 = 10_000 µUSDC for
     /// crypto perps; $0.001 = 1_000 µUSDC for high-precision impact
     /// market child books.
     #[serde(default)]
     pub tick_size: u64,
     /// Lot size in contracts. Order quantities must be exact multiples
     /// of `lot_size`. Zero (default) disables the check, preserving
-    /// pre-BE-48 behavior. Recommended: 1 for whole-contract markets
+    /// legacy behavior. Recommended: 1 for whole-contract markets
     /// (BTC perps), 100 for high-volume markets where round lots
     /// improve readability.
     #[serde(default)]
     pub lot_size: u64,
-    /// Primary oracle signer for this market (BE-50). When `Some`,
+    /// Primary oracle signer for this market. When `Some`,
     /// this signer's `OracleUpdate` is always accepted (subject to
     /// the existing monotonic publish-time check).
     ///
@@ -1368,7 +1359,7 @@ pub struct MarketConfig {
     /// Net effect: fail-over chains through fallbacks rather than
     /// requiring the primary itself to recover.
     ///
-    /// `None` (default) preserves the pre-BE-50 behavior where any
+    /// `None` (default) preserves the legacy behavior where any
     /// authorized signer can update at any time.
     #[serde(default)]
     pub primary_oracle_signer: Option<[u8; 20]>,
@@ -1391,8 +1382,6 @@ pub struct MarketConfig {
     /// Ignored on impact-family markets (`ConditionalPerp`,
     /// `PredictionBinary`) - those keep marking off the book EWMA per
     /// the no-oracle-MTM redesign (2026-04-26).
-    ///
-    /// Linear: BE-31 Phase A.
     #[serde(default)]
     pub mark_source_mode: MarkSourceMode,
     /// Top-of-book spread cap (bps) for the thin-book guard on
@@ -1404,11 +1393,9 @@ pub struct MarketConfig {
     /// `MarketConfig` records (written before this field existed)
     /// decode to thanks to `serde(default)`. Operators tighten or
     /// loosen per-market via `UpdateMarketFees`.
-    ///
-    /// Linear: BE-31 Phase A.
     #[serde(default)]
     pub max_mark_spread_bps: u32,
-    /// BE-31 Phase B: max age (ms) for a composite-CEX price update
+    /// Max age (ms) for a composite-CEX price update
     /// before the engine excludes it from the median. Zero means
     /// "use the built-in default `DEFAULT_CEX_COMPOSITE_STALENESS_MS`
     /// (30s)" — also the value existing on-chain `MarketConfig`
@@ -1417,7 +1404,7 @@ pub struct MarketConfig {
     /// `Median`.
     #[serde(default)]
     pub cex_composite_staleness_ms: u64,
-    /// BE-26: enable partial liquidation for this market. When true,
+    /// Enable partial liquidation for this market. When true,
     /// the liquidation engine closes positions one at a time and
     /// rechecks maintenance margin after each close. If MM holds after
     /// closing a single market's position, the account is considered
@@ -1482,7 +1469,7 @@ pub struct FeeTier {
 
 /// Configuration for the Hyperliquidity Provider (HLP) — the
 /// protocol-owned MM that absorbs bankruptcy losses at Tier 0 of the
-/// bad-debt waterfall. See `docs/adl-vs-socialized-loss.md` §3.2.
+/// bad-debt waterfall.
 ///
 /// Stored under `keys::HLP_CONFIG` (single global record). The HLP's
 /// trading account lives at `address`; the engine treats it like any
@@ -1626,8 +1613,6 @@ pub struct RunFundingTick {
 /// This is a user-signed action (not relayer-signed). Each owner
 /// can only set their own override — the dispatcher enforces
 /// `signer == owner` before the handler runs.
-///
-/// BE-16, 2026-05-03.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetUserMarketLeverage {
     #[serde(with = "crate::wire_bytes")]
@@ -1646,8 +1631,7 @@ pub struct SetUserMarketLeverage {
 /// market order but replaces the friction of opposite-side placement or
 /// order cancellation. User-signed (owner must match position owner).
 ///
-/// S49, Auros documentation plan (2026-05-09) §1 line 11; matches
-/// the Hyperliquid pattern.
+/// Matches the Hyperliquid pattern.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClosePosition {
     pub market: MarketId,
@@ -1801,7 +1785,7 @@ pub struct AmendOrder {
 /// Push a new oracle (mark) price. Requires an authorized oracle signer
 /// AND a strictly increasing `publish_time_ms` per market.
 ///
-/// **Why the timestamp check** (added 2026-04-23, audit finding B3):
+/// **Why the timestamp check** (added 2026-04-23):
 /// before this field existed, `OracleUpdate` relied only on the envelope
 /// nonce for transaction replay protection, while the handler read no
 /// previous oracle timestamp before overwriting the price. A different
@@ -1833,7 +1817,7 @@ pub struct OracleUpdate {
     pub publish_time_ms: u64,
 }
 
-/// Composite-CEX price update — BE-31 Phase B's third source for the
+/// Composite-CEX price update: the third source for the
 /// multi-source mark-price median. Carries the median (or VWAP) of N
 /// off-chain CEX feeds (Binance / OKX / Bybit / Coinbase) computed by
 /// a separate off-chain feeder process.
@@ -1849,7 +1833,7 @@ pub struct OracleUpdate {
 ///      `n_sources` carried for observability.
 ///
 /// Same monotonicity-of-publish-time replay guard as `OracleUpdate`
-/// (audit B3, 2026-04-23).
+/// (2026-04-23).
 ///
 /// Stored under `keys::CexCompositePrice` keyspace, indexed by market.
 /// Read by `compute_median_mark_price` as the third source when the
@@ -1881,8 +1865,8 @@ pub struct OracleUpdateComposite {
 ///
 /// Previously described as "testing/internal" with no authorization check
 /// beyond `signer == owner`, which was an unauthenticated mint primitive:
-/// any signed user could credit themselves arbitrary balance. See audit
-/// finding B1 (2026-04-23). The handler now requires
+/// any signed user could credit themselves arbitrary balance
+/// (2026-04-23). The handler now requires
 /// `is_relayer_authorized(signer)`.
 ///
 /// In production the primary deposit path is [`ConfirmDeposit`] (which
@@ -1897,7 +1881,7 @@ pub struct Deposit {
     /// Amount in micro-USDC.
     pub amount: u64,
     /// Relayer signer. Must be an authorized relayer; enforced by
-    /// `handle_deposit`. Added 2026-04-23 per audit B1.
+    /// `handle_deposit`. Added 2026-04-23.
     #[serde(default)]
     pub signer: [u8; 20],
 }
@@ -1906,9 +1890,8 @@ pub struct Deposit {
 ///
 /// Previously described as "testing/internal" with no authorization check
 /// beyond `signer == owner`, which let any user debit their balance with
-/// no off-chain counterparty (a silent burn). See audit finding B2
-/// (2026-04-23). The handler now requires
-/// `is_relayer_authorized(signer)`.
+/// no off-chain counterparty (a silent burn, 2026-04-23). The handler
+/// now requires `is_relayer_authorized(signer)`.
 ///
 /// External users move funds out via the two-phase [`WithdrawRequest`] →
 /// relayer [`ConfirmWithdrawal`] path. This direct action remains
@@ -1921,7 +1904,7 @@ pub struct Withdraw {
     /// Amount in micro-USDC.
     pub amount: u64,
     /// Relayer signer. Must be an authorized relayer; enforced by
-    /// `handle_withdraw`. Added 2026-04-23 per audit B2.
+    /// `handle_withdraw`. Added 2026-04-23.
     #[serde(default)]
     pub signer: [u8; 20],
 }
@@ -1980,7 +1963,7 @@ pub struct CreateMarket {
 }
 
 impl Default for CreateMarket {
-    /// Conservative defaults that match the private-alpha seed config
+    /// Conservative defaults that match the seed config
     /// (`scripts/seed.ts`): 33.34% IM, 16.67% MM, 5/2 bps fees, 60 s funding
     /// cadence with a 30% per-interval cap, pool 0. Tests that just
     /// need *some* CreateMarket instance can `..Default::default()`
@@ -2097,7 +2080,7 @@ pub struct FailWithdrawal {
 }
 
 // ---------------------------------------------------------------------------
-// W28-20 bridge custody: receipt-gated terminal withdrawal actions
+// Bridge custody: receipt-gated terminal withdrawal actions
 // ---------------------------------------------------------------------------
 //
 // Operator-multisig phase. The legacy relayer `ConfirmWithdrawal` (0x0A) /
@@ -2106,7 +2089,6 @@ pub struct FailWithdrawal {
 // ed25519 proof, and the engine verifies the quorum in consensus before
 // crediting/refunding — no trusted courier assertion. Additive: the legacy
 // actions stay decodable for the shadow/canary phase and rollback.
-// Design: ProofOfBrain delivery/epics/bridge-contract.md (§Withdrawal).
 
 /// Engine-side mirror of `bridge_core::BridgeReceiptV1` (fixed 327-byte wire
 /// form). Carried by the receipt-gated actions; the engine rebuilds the
@@ -2148,7 +2130,7 @@ pub struct BridgeWithdrawalReceipt {
 /// Operator ed25519 proof wrapper — mirrors
 /// `bridge_core::ReceiptProofV1::OperatorEd25519`. Bitmap plus one signature
 /// per set bit in ascending registry order; structure and every signature
-/// are checked by `bridge-core`.
+/// are checked by the quorum-proof verifier.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorReceiptProof {
     /// `ceil(registry_len / 8)` bytes; unused high bits zero.
@@ -2190,9 +2172,9 @@ pub struct AuthorizeWithdrawal {
     pub proof: OperatorReceiptProof,
 }
 
-/// Engine operator receipt registry (W28-20 #28): the epoch-pinned named
-/// operator set the terminal receipts are verified against. Stored per epoch
-/// (W28-20 #316); presence of any registry activates the operator-multisig
+/// Engine operator receipt registry: the epoch-pinned named
+/// operator set the terminal receipts are verified against. Stored per epoch.
+/// Presence of any registry activates the operator-multisig
 /// receipt path, and the highest stored epoch is the current one. `threshold`
 /// is *m* (m distinct members), `operator_keys.len()` is *n*. Persistence
 /// rejects a duplicate/oversized roster or an out-of-range threshold.
@@ -2323,7 +2305,7 @@ pub struct CreateImpactMarket {
     pub max_funding_rate_bps: u32,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
-    /// BE-54: how this event's YES/NO outcome is determined at deadline.
+    /// How this event's YES/NO outcome is determined at deadline.
     /// Optional — `None` (or absent on the wire, via `serde(default)`) means
     /// `RelayerAttested` (the legacy default — the resolver supplies the
     /// outcome). Two auto-resolve modes derive YES/NO from an on-chain
@@ -2451,15 +2433,15 @@ pub struct UpdateMarketFees {
     #[serde(default)]
     pub net_delta_margin: Option<bool>,
     /// Tick size in micro-USDC. `None` = leave unchanged. Setting to 0
-    /// disables the tick check (any price accepted). BE-48.
+    /// disables the tick check (any price accepted).
     #[serde(default)]
     pub tick_size: Option<u64>,
     /// Lot size in contracts. `None` = leave unchanged. Setting to 0
-    /// disables the lot check (any quantity accepted). BE-48.
+    /// disables the lot check (any quantity accepted).
     #[serde(default)]
     pub lot_size: Option<u64>,
     /// Primary oracle signer for this market. `None` = leave unchanged.
-    /// `Some(addr)` sets the primary to `addr`. BE-50.
+    /// `Some(addr)` sets the primary to `addr`.
     ///
     /// Wire-format note: msgpack via rmp-serde collapses `Option<Option<T>>`
     /// in positional arrays — both `None` and `Some(None)` encode as `nil`,
@@ -2467,7 +2449,7 @@ pub struct UpdateMarketFees {
     /// nesting. To clear the primary without re-creating the market, send
     /// `Some([0u8; 20])` — the engine treats the all-zero address as a
     /// "clear primary" sentinel (mirrors the `FEE_OVERRIDE_REVERT_SENTINEL`
-    /// pattern from BE-46.1). Real signer addresses are derived from
+    /// pattern). Real signer addresses are derived from
     /// keccak256 of an Ed25519 public key, which collides with the all-zero
     /// address only with negligible probability — safe to use as a sentinel.
     ///
@@ -2478,10 +2460,10 @@ pub struct UpdateMarketFees {
     pub primary_oracle_signer: Option<[u8; 20]>,
     /// Oracle staleness threshold in ms. `None` = leave unchanged.
     /// Only consulted when `primary_oracle_signer` is set; see
-    /// `MarketConfig::oracle_staleness_ms`. BE-50.
+    /// `MarketConfig::oracle_staleness_ms`.
     #[serde(default)]
     pub oracle_staleness_ms: Option<u64>,
-    /// New mark-source mode (BE-31 Phase A). `None` = leave unchanged.
+    /// New mark-source mode. `None` = leave unchanged.
     /// `Some(MarkSourceMode::Median)` opts the market into the
     /// multi-source median path. Has no effect on impact-family
     /// markets - those always read EWMA per the no-oracle-MTM redesign.
@@ -2493,13 +2475,13 @@ pub struct UpdateMarketFees {
     /// per-market; no chain wipe.
     #[serde(default)]
     pub mark_source_mode: Option<MarkSourceMode>,
-    /// New thin-book spread cap in bps for the median guard
-    /// (BE-31 Phase A). `None` = leave unchanged. `Some(0)` resets
+    /// New thin-book spread cap in bps for the median guard.
+    /// `None` = leave unchanged. `Some(0)` resets
     /// to the built-in default `DEFAULT_MAX_MARK_SPREAD_BPS` (100 bps).
     /// Ignored unless `mark_source_mode` is `Median`.
     #[serde(default)]
     pub max_mark_spread_bps: Option<u32>,
-    /// BE-31 Phase B: max age (ms) for a composite-CEX price update
+    /// Max age (ms) for a composite-CEX price update
     /// before it's excluded from the median. `None` = leave unchanged.
     /// `Some(0)` resets to the built-in default
     /// `DEFAULT_CEX_COMPOSITE_STALENESS_MS` (30s). Ignored unless
@@ -2507,7 +2489,7 @@ pub struct UpdateMarketFees {
     /// one composite update.
     #[serde(default)]
     pub cex_composite_staleness_ms: Option<u64>,
-    /// BE-26: enable partial liquidation for this market. `None` =
+    /// Enable partial liquidation for this market. `None` =
     /// leave unchanged. See `MarketConfig::partial_liquidation_enabled`
     /// for semantics. Safe to flip on at any time.
     #[serde(default)]
@@ -2536,7 +2518,7 @@ pub struct UpdateMarketFees {
     pub max_open_interest: Option<u64>,
 }
 
-/// Per-account fee override (BE-46). Stored at
+/// Per-account fee override. Stored at
 /// `keys::account_fee_override(addr)` whenever an account has been
 /// granted a non-default fee schedule. Replaces the market's base
 /// `taker_fee_bps` / `maker_fee_bps` on fills where this account is
@@ -2588,7 +2570,7 @@ pub struct SetAccountFeeOverride {
     /// owner and be on the relayer allowlist.
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
-    /// Replay-guard sequence (BE-46.2). The engine tracks the highest
+    /// Replay-guard sequence. The engine tracks the highest
     /// accepted `seq` per `account`; the next call must satisfy
     /// `cmd.seq > stored_seq` or it is rejected with
     /// `FeeOverrideStaleSeq`. The first call against a fresh account
@@ -2628,7 +2610,7 @@ pub struct WithdrawalRecord {
     pub request_height: u64,
 }
 
-/// W28-20 receipt-phase sidecar to a [`WithdrawalRecord`], stored under its
+/// Receipt-phase sidecar to a [`WithdrawalRecord`], stored under its
 /// own key (`keys::withdrawal_receipt_sidecar`). Absent decodes as default:
 /// unauthorized, zero fee.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2878,7 +2860,7 @@ pub enum Event {
         max_position_size: u64,
         default_ttl_ms: u64,
         net_delta_margin: bool,
-        // BE-48 + BE-50 fields included in the event payload so off-chain
+        // Fields included in the event payload so off-chain
         // consumers can mirror the live config without re-reading state.
         // `primary_oracle_signer` is flattened to `[u8; 20]`: all-zero
         // bytes mean "no primary signer set". The derive now carries
@@ -2892,7 +2874,7 @@ pub enum Event {
         max_open_interest: u64,
         signer: Option<[u8; 20]>,
     },
-    /// An account's fee override was set (BE-46). Emitted on success
+    /// An account's fee override was set. Emitted on success
     /// of `SetAccountFeeOverride`. Carries the post-update values so
     /// off-chain consumers can mirror the override without re-reading
     /// state.
@@ -3061,19 +3043,19 @@ pub enum Event {
         side: Side,
         /// Number of contracts force-closed in this leg. May be less
         /// than the ADL'd account's full position when the deficit is
-        /// covered by a partial close (per audit 2026-04-25 P0 #2 fix);
+        /// covered by a partial close;
         /// the remainder of the position keeps its original entry.
         size: u64,
         /// Price the position was actually closed at — the **liquidated
         /// trader's bankruptcy price** `bp = entry − σ × balance / size`
         /// (one `bp` per liquidation event, threaded through to every
         /// ADL leg in the same waterfall call). Equals `close_price_spec`
-        /// after the audit P0 #2 fix landed; the two fields are retained
+        /// today; the two fields are retained
         /// separately for forward compatibility with future settlement-
         /// price experimentation.
         close_price: u64,
-        /// Bankruptcy price the spec (`docs/adl-vs-socialized-loss.md`
-        /// §3.5) says the position should be closed at. Currently equal
+        /// Bankruptcy price the spec says the position should be closed
+        /// at. Currently equal
         /// to `close_price`; tracked separately so any future deviation
         /// (e.g., adding a "max haircut per ADL leg" cap that would
         /// re-introduce a spec gap) can be audited via this field.
@@ -3207,7 +3189,7 @@ pub enum Event {
         /// Client-assigned order id. `0` means absent.
         client_order_id: u64,
     },
-    /// User picked a per-market IM override (BE-16). `user_im_bps == 0`
+    /// User picked a per-market IM override. `user_im_bps == 0`
     /// means the override was cleared (engine reverts to market
     /// default).
     UserMarketLeverageSet {
@@ -3288,7 +3270,7 @@ pub enum Event {
     /// holds no halt flag; this is the authoritative decision record the
     /// Squads operator quorum acts on to unfreeze the vault on Solana.
     BridgeUnpauseAuthorized { proposal_id: u64 },
-    /// An operator-authority set was rotated by governance (#422). `domain`
+    /// An operator-authority set was rotated by governance. `domain`
     /// is the `AuthorityDomain` discriminant; `added`/`removed` are the
     /// affected addresses as concatenated 40-hex-char strings. The signer is
     /// carried by the accompanying `ProposalExecuted`/approval events.
@@ -3553,15 +3535,15 @@ pub enum ExecError {
     /// invariants (threshold bounds, sorted duplicate-free members,
     /// roster size, version headroom). Fails before any mutation.
     InvalidAdminRegistry(String),
-    /// W28-20: a receipt-gated withdrawal action was submitted while no
+    /// A receipt-gated withdrawal action was submitted while no
     /// operator receipt registry exists on this chain — the operator
     /// custody phase is inactive and the path fails closed.
     BridgeReceiptRegistryInactive,
-    /// W28-20: the operator quorum proof failed `bridge-core` verification
+    /// The operator quorum proof failed verification
     /// (bad structure, below *m* distinct members, or an invalid
     /// signature). Wraps the `bridge_core::VerifyError` cause as text.
     BridgeReceiptInvalid(String),
-    /// W28-20: the signed receipt does not bind to this withdrawal or
+    /// The signed receipt does not bind to this withdrawal or
     /// deployment (id/owner/amount/destination/epoch/terminal-state
     /// mismatch). Names the field that diverged.
     BridgeReceiptMismatch(String),
@@ -3572,7 +3554,7 @@ pub enum ExecError {
         amount: u64,
         min: u64,
     },
-    /// W28-20 (DEC-48): a retired legacy relayer terminal
+    /// A retired legacy relayer terminal
     /// (`ConfirmWithdrawal` / `FailWithdrawal`) was submitted at or above the
     /// receipt cutover. Rejected as a normal failed action (bytes absorbed,
     /// nonce burned). The reverse case — an operator-receipt terminal below
@@ -3638,7 +3620,7 @@ pub enum ExecError {
     },
     /// Rejected `OracleUpdate` whose `publish_time_ms` is not strictly
     /// greater than the last accepted update for this market. Replay
-    /// protection per audit B3 (2026-04-23).
+    /// protection (2026-04-23).
     OracleTimestampNotMonotonic {
         market: MarketId,
         stored: u64,
@@ -3648,7 +3630,6 @@ pub enum ExecError {
     /// engine can enumerate (`MAX_IMPACT_MARKETS_PER_ACCOUNT`). Returned
     /// instead of `InsufficientMargin` so clients can distinguish
     /// "basket exceeds enumeration cap" from "collateral shortfall."
-    /// Audit 2026-04-25 P3.
     TooManyActiveImpactMarkets {
         current: u32,
         max: u32,
@@ -3657,8 +3638,7 @@ pub enum ExecError {
     /// disagreeing settle prices — upstream data corruption (different
     /// markets in the same `underlying_market_id` group should resolve
     /// to identical settles per scenario). Distinct from `Overflow`,
-    /// which the same path used to return as a placeholder. Audit
-    /// 2026-04-25 P2 #10.
+    /// which the same path used to return as a placeholder.
     SettlementPriceMismatch {
         market: MarketId,
         expected: u64,
@@ -3693,14 +3673,13 @@ pub enum ExecError {
     /// referenced doesn't exist.
     TestActionRejected(String),
     /// `SetAccountFeeOverride` rejected because a fee value is outside
-    /// the legal `[0, 10_000]` basis-point range. BE-46.
+    /// the legal `[0, 10_000]` basis-point range.
     FeeBpsOutOfRange {
         bps: u32,
     },
     /// `SetAccountFeeOverride` rejected because `cmd.seq` is not
     /// strictly greater than the seq stored on this account — i.e. it
-    /// is a replay or an out-of-order tx. BE-46.2 replay guard
-    /// (Ramon's 2026-05-03 review on #39). The seq advances on the
+    /// is a replay or an out-of-order tx. The seq advances on the
     /// no-op path too, so even an identical-payload replay against a
     /// stale seq is rejected here.
     FeeOverrideStaleSeq {
@@ -3708,7 +3687,7 @@ pub enum ExecError {
         stored_seq: u64,
     },
     /// `PlaceOrder` price is not an exact multiple of the market's
-    /// `tick_size`. BE-48: makes the orderbook coarser at high precision
+    /// `tick_size`. Makes the orderbook coarser at high precision
     /// to keep MMs from quoting through fractional ticks.
     TickSizeViolation {
         market: MarketId,
@@ -3716,7 +3695,7 @@ pub enum ExecError {
         price: u64,
     },
     /// `PlaceOrder` quantity is not an exact multiple of the market's
-    /// `lot_size`. BE-48 sibling of `TickSizeViolation`.
+    /// `lot_size`. Sibling of `TickSizeViolation`.
     LotSizeViolation {
         market: MarketId,
         lot_size: u64,
@@ -3725,7 +3704,7 @@ pub enum ExecError {
     /// `OracleUpdate` from a fallback (non-primary) signer was rejected
     /// because the market's last oracle update — by any signer — is still
     /// within the staleness window. Caller must wait until
-    /// `block_time - last_publish_ms >= oracle_staleness_ms`. BE-50.
+    /// `block_time - last_publish_ms >= oracle_staleness_ms`.
     OracleStaleNotElapsed {
         market: MarketId,
         last_publish_ms: u64,
@@ -3736,7 +3715,7 @@ pub enum ExecError {
     /// older than `MarketConfig::mark_price_max_oracle_age_ms`. Order
     /// placement, margin checks, and liquidation refuse to use a
     /// stale oracle so a node with a stuck feeder can't silently
-    /// misprice the book. BE-33, 2026-05-03.
+    /// misprice the book.
     StaleOracle {
         market: MarketId,
         /// Stored `publish_time_ms` of the most recent oracle update.
@@ -3749,7 +3728,7 @@ pub enum ExecError {
     /// `SetUserMarketLeverage` rejected because the user attempted to
     /// pick an IM ratio LOWER than the market's risk floor. The
     /// engine only allows users to deleverage (more margin, less
-    /// leverage), never the other direction. BE-16, 2026-05-03.
+    /// leverage), never the other direction.
     UserLeverageBelowMarketIm {
         market: MarketId,
         user_im_bps: u32,
@@ -3843,7 +3822,7 @@ impl ExecError {
             ExecError::PositionLimitExceeded { .. } => 29,
             // Code 50 was already assigned to SlippageExceeded when the OI-cap
             // variant was added. Preserve that older integration contract and
-            // use the next contiguous code for the OI-cap rejection (#250).
+            // use the next contiguous code for the OI-cap rejection.
             ExecError::OpenInterestLimitExceeded { .. } => 51,
             ExecError::OracleTimestampNotMonotonic { .. } => 30,
             ExecError::TooManyActiveImpactMarkets { .. } => 31,
@@ -3897,7 +3876,7 @@ impl ExecError {
 
     /// Stable, one-line human-readable meaning per variant. Intended for
     /// documentation and integration-guide tables (e.g. the openapi.yaml
-    /// `ExecErrorCode` table for Auros and other MMs). The string is the
+    /// `ExecErrorCode` table for MMs and other integrators). The string is the
     /// **integration contract**: don't reword these without bumping a
     /// minor doc version, since downstream tooling may key off them.
     ///
