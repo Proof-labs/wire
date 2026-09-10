@@ -18,7 +18,7 @@
 
 use core::fmt;
 
-use exchange_derive::AbciEvent;
+use proof_wire_derive::AbciEvent;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------

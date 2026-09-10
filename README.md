@@ -33,6 +33,7 @@ decision-register references for each bump) lives in the header of
 - 1.1.0 → 1.2.0 — DEC-65: `AdminAction::UnpauseBridge` (inner tag `0x06`)
 - 1.2.0 → 1.3.0 — DEC-87: `UpdateAuthoritySet` (inner tag `0x07`)
 - 1.3.0 → 1.4.0 — #467: `CancelAllOrdersForAccount` (inner tag `0x08`)
+- 1.4.0 → 1.5.0 — EN-01: `AdminAction::CreateEvent` (inner tag `0x09`, claiming the RT-01 reservation) and the typed `EventKey`
 
 ## The byte ledger
 
