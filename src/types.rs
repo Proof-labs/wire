@@ -3859,6 +3859,8 @@ pub enum ExecError {
     SubAccountTransferBothChildren,
     /// Source balance is below the transfer amount.
     SubAccountTransferInsufficientBalance,
+    /// Create rejected: `sub_account_id` is zero, which is not a valid id.
+    SubAccountIdZero,
 }
 
 impl ExecError {
@@ -3955,6 +3957,7 @@ impl ExecError {
             ExecError::SubAccountTransferSameAccount => 79,
             ExecError::SubAccountTransferBothChildren => 80,
             ExecError::SubAccountTransferInsufficientBalance => 81,
+            ExecError::SubAccountIdZero => 82,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4134,6 +4137,9 @@ impl ExecError {
             }
             ExecError::SubAccountTransferInsufficientBalance => {
                 "Source account has insufficient balance to complete the transfer."
+            }
+            ExecError::SubAccountIdZero => {
+                "Sub-account id must be non-zero; id 0 is not a valid sub-account id."
             }
             ExecError::InternalError(_) => {
                 "Catch-all for unexpected runtime failures (panics caught by the FFI boundary, etc.). \
@@ -4565,6 +4571,9 @@ impl fmt::Display for ExecError {
             }
             ExecError::SubAccountTransferInsufficientBalance => {
                 write!(f, "insufficient balance for sub-account transfer")
+            }
+            ExecError::SubAccountIdZero => {
+                write!(f, "sub-account id must be non-zero")
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }

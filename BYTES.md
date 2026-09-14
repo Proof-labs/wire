@@ -274,7 +274,6 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x4D | `ReservedRt01D`                 | RT-01              | reserved |
 | 0x4E | `SubAccountRegistry`            | sub-accounts       | active   |
 | 0x4F | `SubAccountsByMaster`           | sub-accounts       | active   |
-| 0x50 | `SignerTargetRecentNonces`      | sub-accounts       | active   |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
