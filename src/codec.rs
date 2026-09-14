@@ -191,6 +191,8 @@ define_actions! {
     AuthorizeWithdrawal => 36,      // 0x24 — operator-quorum withdrawal authorization
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
+    CreateSubAccount => 39,      // 0x27 — create a sub-account under an owner
+    SubAccountTransfer => 40,    // 0x28 — transfer between master/child addresses
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -250,7 +252,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ProposeAdminAction
         | ActionType::ApproveAdminAction
         | ActionType::RejectAdminAction
-        | ActionType::EmergencyAdminAction => BlockPhase::Ordinary,
+        | ActionType::EmergencyAdminAction
+        | ActionType::CreateSubAccount
+        | ActionType::SubAccountTransfer => BlockPhase::Ordinary,
     }
 }
 
@@ -759,9 +763,9 @@ mod tests {
     use crate::types::{
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier, MarkSourceMode,
-        MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent, Side,
-        TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent,
+        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -3425,5 +3429,32 @@ mod tests {
             matches!(decode_tx(&encoded), Err(ExecError::DecodeError(_))),
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
+    }
+
+    #[test]
+    fn test_round_trip_create_sub_account() {
+        let action = Action::CreateSubAccount(CreateSubAccount {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            name: [0xBB; 32],
+        });
+        assert_round_trip(&action, 100);
+    }
+
+    #[test]
+    fn test_round_trip_sub_account_transfer() {
+        let action = Action::SubAccountTransfer(SubAccountTransfer {
+            owner: [0xCC; 20],
+            from: [0xDD; 20],
+            to: [0xEE; 20],
+            amount: 1_000_000,
+        });
+        assert_round_trip(&action, 200);
+    }
+
+    #[test]
+    fn test_sub_account_action_types() {
+        assert_eq!(CreateSubAccount::ACTION_TYPE, 39);
+        assert_eq!(SubAccountTransfer::ACTION_TYPE, 40);
     }
 }

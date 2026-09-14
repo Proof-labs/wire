@@ -108,9 +108,9 @@ carries the authoritative names.
 | 0x24 | `AuthorizeWithdrawal`               | W28-20 / #316      | merged to dev — engine-native |
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
-| 0x27 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
-| 0x28 | `ReservedRt01`                      | RT-01              | reserved |
-| 0x29 | `ReservedRt01`                      | RT-01              | reserved |
+| 0x27 | `CreateSubAccount`                  | sub-accounts       | sub-account creation |
+| 0x28 | `SubAccountTransfer`                | sub-accounts       | sub-account balance transfer |
+| 0x29 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
@@ -257,15 +257,24 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x3C | `RegistryEpochObligations`      | W28-20 / PR #316   | open PR  |
 | 0x3D | `PoolPosition`                  | W29-02 / PR #299   | open PR  |
 | 0x3E | `ActiveImpactMarket`            | W29-02 / PR #299   | open PR  |
-| 0x3F | `PositionEpoch`                 | W32-10 / TR-1      | dormant allocation |
-| 0x40 | `PositionTriggerBracket`        | W32-10 / TR-1      | dormant allocation |
-| 0x41 | `TriggerThresholdIndex`         | W32-10 / TR-1      | dormant allocation |
-| 0x42 | `TriggerAccountState`           | W32-10 / TR-1      | dormant allocation |
-| 0x43 | `TriggerMarketState`            | W32-10 / TR-1      | dormant allocation |
-| 0x44 | `TriggerMarketConfig`           | W32-10 / TR-1      | dormant allocation |
-| 0x45 | `TriggerClientState`            | W32-10 / TR-1      | dormant allocation |
-| 0x46 | `TriggerMeta`                   | W32-10 / TR-1      | dormant allocation |
-| 0x47 | `QueuePriorityLevel`            | W32-10 / TR-3      | active behind trigger-index migration |
+| 0x3F | `WithdrawalReceiptSidecar`      | W28-20 / PR #316   | open PR  |
+| 0x40 | `PositionEpoch`                 | W32-10 / TR-1      | dormant allocation |
+| 0x41 | `PositionTriggerBracket`        | W32-10 / TR-1      | dormant allocation |
+| 0x42 | `TriggerThresholdIndex`         | W32-10 / TR-1      | dormant allocation |
+| 0x43 | `TriggerAccountState`           | W32-10 / TR-1      | dormant allocation |
+| 0x44 | `TriggerMarketState`            | W32-10 / TR-1      | dormant allocation |
+| 0x45 | `TriggerMarketConfig`           | W32-10 / TR-1      | dormant allocation |
+| 0x46 | `TriggerClientState`            | W32-10 / TR-1      | dormant allocation |
+| 0x47 | `TriggerMeta`                   | W32-10 / TR-1      | dormant allocation |
+| 0x48 | `QueuePriorityLevel`            | W32-10 / TR-3      | active behind trigger-index migration |
+| 0x49 | `CapabilityAuth`                | #422               | active   |
+| 0x4A | `EventInfo`                     | RT-01 / G17        | active   |
+| 0x4B | `ActiveEvent`                   | RT-01 / G17        | active   |
+| 0x4C | `ReservedRt01C`                 | RT-01              | reserved |
+| 0x4D | `ReservedRt01D`                 | RT-01              | reserved |
+| 0x4E | `SubAccountRegistry`            | sub-accounts       | active   |
+| 0x4F | `SubAccountsByMaster`           | sub-accounts       | active   |
+| 0x50 | `SignerTargetRecentNonces`      | sub-accounts       | active   |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
