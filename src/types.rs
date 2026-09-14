@@ -4066,7 +4066,7 @@ impl ExecError {
             ExecError::BridgeReceiptMismatch(_) => 74,
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
-            ExecError::OracleGuardUnset { .. } => 77,
+            ExecError::OracleGuardUnset { .. } => 82,
             ExecError::InternalError(_) => 255,
         }
     }
