@@ -2832,9 +2832,22 @@ mod tests {
                 ActionType::CancelPositionTriggers,
                 BlockPhase::TriggerManagement,
             ),
+            (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (
+                ActionType::ConfirmWithdrawalReceipt,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::FailWithdrawalReceipt,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::AuthorizeWithdrawal,
+                BlockPhase::PriceCreditPrefix,
+            ),
         ];
 
-        assert_eq!(expected.len(), 35);
+        assert_eq!(expected.len(), 39);
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
         }
