@@ -191,8 +191,8 @@ define_actions! {
     AuthorizeWithdrawal => 36,      // 0x24 — operator-quorum withdrawal authorization
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
-    CreateSubAccount => 39,      // 0x27 — create a sub-account under an owner
-    SubAccountTransfer => 40,    // 0x28 — transfer between master/child addresses
+    CreateSubAccount => 40,      // 0x28 — create a sub-account under an owner
+    SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -1557,15 +1557,11 @@ mod tests {
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
-        let last = ActionType::ALL
-            .iter()
-            .map(|action_type| *action_type as u8)
-            .max()
-            .expect("at least one action type is defined");
-        for byte in 1..=last {
+        for action_type in ActionType::ALL {
+            let byte = *action_type as u8;
             assert!(
                 ActionType::try_from(byte).is_ok(),
-                "outer action namespace unexpectedly has a hole at {byte:#04x}"
+                "assigned outer action must decode at {byte:#04x}"
             );
             let marker = format!("| 0x{byte:02X} |");
             let line = ledger
@@ -3454,7 +3450,7 @@ mod tests {
 
     #[test]
     fn test_sub_account_action_types() {
-        assert_eq!(CreateSubAccount::ACTION_TYPE, 39);
-        assert_eq!(SubAccountTransfer::ACTION_TYPE, 40);
+        assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
+        assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
     }
 }

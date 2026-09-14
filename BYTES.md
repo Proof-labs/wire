@@ -108,9 +108,9 @@ carries the authoritative names.
 | 0x24 | `AuthorizeWithdrawal`               | W28-20 / #316      | merged to dev — engine-native |
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
-| 0x27 | `CreateSubAccount`                  | sub-accounts       | sub-account creation |
-| 0x28 | `SubAccountTransfer`                | sub-accounts       | sub-account balance transfer |
-| 0x29 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
+| 0x27 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
+| 0x28 | `CreateSubAccount`                  | sub-accounts       | sub-account creation |
+| 0x29 | `SubAccountTransfer`                | sub-accounts       | sub-account balance transfer |
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
