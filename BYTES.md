@@ -310,7 +310,9 @@ share one namespace and must not be reused independently.
 | 0x0A | `NextEmergencyId`                | W29-04 / PR #282   | active   |
 | 0x0B | `LivePositionCount`              | W29-02 / PR #299   | open PR  |
 | 0x0C | `ActiveImpactMarketCount`        | W29-02 / PR #299   | open PR  |
-| 0x0D | _free_                           | —                  | —        |
+| 0x0D | `SubAccountRegistryCount`        | sub-accounts       | open PR  |
+| 0x0E | `SubAccountCreationBlockHeight`  | sub-accounts       | open PR  |
+| 0x0F | `SubAccountCreationCount`        | sub-accounts       | open PR  |
 | ...  | up to 0xFF                       | —                  | —        |
 
 ## Process for adding a new byte
