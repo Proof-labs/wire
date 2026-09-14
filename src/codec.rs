@@ -192,6 +192,7 @@ define_actions! {
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
+    SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -214,6 +215,7 @@ pub enum BlockPhase {
 pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
     match action_type {
         ActionType::OracleUpdate
+        | ActionType::SubmitOracleObservation
         | ActionType::OracleUpdateComposite
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
@@ -923,6 +925,16 @@ mod tests {
     /// Helper: build one instance of every Action variant with realistic values.
     fn all_action_variants() -> Vec<Action> {
         vec![
+            Action::SubmitOracleObservation(SubmitOracleObservation {
+                market: 1,
+                policy_version: OraclePolicyVersion(3),
+                source_id: OracleSourceId(2),
+                publish_time_ms: 1_780_000_000_000,
+                price_micro: 9_007_199_254_740_993,
+                confidence_micro: Some(1),
+                evidence_digest: [8; 32],
+                signer: [7; 20],
+            }),
             // Governance wire actions (tags 30–33).
             Action::ProposeAdminAction(ProposeAdminAction {
                 proposer: SignerAddress([0xA1; 20]),
@@ -1567,15 +1579,11 @@ mod tests {
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
-        let last = ActionType::ALL
-            .iter()
-            .map(|action_type| *action_type as u8)
-            .max()
-            .expect("at least one action type is defined");
-        for byte in 1..=last {
+        for action_type in ActionType::ALL {
+            let byte = *action_type as u8;
             assert!(
                 ActionType::try_from(byte).is_ok(),
-                "outer action namespace unexpectedly has a hole at {byte:#04x}"
+                "assigned outer action must decode at {byte:#04x}"
             );
             let marker = format!("| 0x{byte:02X} |");
             let line = ledger
@@ -1660,7 +1668,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 11] = [
+        const ALL_INNER_TAGS: [AdminActionType; 12] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1672,6 +1680,7 @@ mod tests {
             AdminActionType::CreateEvent,
             AdminActionType::ReservedRt01B,
             AdminActionType::ReservedRt01C,
+            AdminActionType::ConfigureOraclePolicy,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1685,7 +1694,8 @@ mod tests {
                 | AdminActionType::CancelAllOrdersForAccount
                 | AdminActionType::CreateEvent
                 | AdminActionType::ReservedRt01B
-                | AdminActionType::ReservedRt01C => {}
+                | AdminActionType::ReservedRt01C
+                | AdminActionType::ConfigureOraclePolicy => {}
             }
         }
 
@@ -2825,15 +2835,6 @@ mod tests {
             (ActionType::RejectAdminAction, BlockPhase::Ordinary),
             (ActionType::EmergencyAdminAction, BlockPhase::Ordinary),
             (
-                ActionType::SetPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (
-                ActionType::CancelPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (ActionType::ResolveEvent, BlockPhase::Ordinary),
-            (
                 ActionType::ConfirmWithdrawalReceipt,
                 BlockPhase::PriceCreditPrefix,
             ),
@@ -2845,9 +2846,22 @@ mod tests {
                 ActionType::AuthorizeWithdrawal,
                 BlockPhase::PriceCreditPrefix,
             ),
+            (
+                ActionType::SubmitOracleObservation,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::SetPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (
+                ActionType::CancelPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (ActionType::ResolveEvent, BlockPhase::Ordinary),
         ];
 
-        assert_eq!(expected.len(), 39);
+        assert_eq!(expected.len(), ActionType::ALL.len());
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
         }
