@@ -84,7 +84,7 @@ carries the authoritative names.
 | 0x0C | `ACTION_APPROVE_AGENT`            | main               | shipped  |
 | 0x0D | `ACTION_REVOKE_AGENT`             | main               | shipped  |
 | 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | main               | shipped  |
-| 0x0F | `ACTION_RESOLVE_EVENT`            | main               | shipped  |
+| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | main               | shipped (renamed from ResolveEvent in 1.6.0) |
 | 0x10 | `ACTION_UPDATE_MARKET_FEES`       | main               | shipped  |
 | 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | main               | shipped  |
 | 0x12 | `ACTION_RUN_FUNDING_TICK`         | main               | shipped  |
@@ -108,7 +108,7 @@ carries the authoritative names.
 | 0x24 | `AuthorizeWithdrawal`               | W28-20 / #316      | merged to dev — engine-native |
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
-| 0x27 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
+| 0x27 | `ResolveEvent`                      | 1.6.0              | resolve a standalone event |
 | 0x28 | `ReservedRt01`                      | RT-01              | reserved |
 | 0x29 | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
