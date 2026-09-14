@@ -1510,6 +1510,50 @@ mod tests {
         }
     }
 
+    /// Frozen wire vectors for the tag-12 `SetOracleGuards` inner action:
+    /// both fields, and each field alone. The externally-tagged
+    /// variant name plus positional payload must never drift, since the
+    /// proposal content hash commits these bytes.
+    #[test]
+    fn set_oracle_guards_wire_vectors_frozen() {
+        use crate::types::SetOracleGuards;
+        for (max_age, band, expected) in [
+            (
+                Some(30_000u64),
+                Some(2_000u32),
+                "81af5365744f7261636c65477561726473930acd7530cd07d0",
+            ),
+            (
+                Some(30_000),
+                None,
+                "81af5365744f7261636c65477561726473930acd7530c0",
+            ),
+            (
+                None,
+                Some(2_000),
+                "81af5365744f7261636c65477561726473930ac0cd07d0",
+            ),
+        ] {
+            let action = AdminAction::SetOracleGuards(SetOracleGuards {
+                market: 10,
+                mark_price_max_oracle_age_ms: max_age,
+                max_oracle_deviation_bps: band,
+            });
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen SetOracleGuards wire vector drifted"
+            );
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(decoded.action_tag(), AdminActionType::SetOracleGuards as u8);
+        }
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -1668,7 +1712,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 12] = [
+        const ALL_INNER_TAGS: [AdminActionType; 13] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1681,6 +1725,7 @@ mod tests {
             AdminActionType::ReservedRt01B,
             AdminActionType::ReservedRt01C,
             AdminActionType::ConfigureOraclePolicy,
+            AdminActionType::SetOracleGuards,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1695,7 +1740,8 @@ mod tests {
                 | AdminActionType::CreateEvent
                 | AdminActionType::ReservedRt01B
                 | AdminActionType::ReservedRt01C
-                | AdminActionType::ConfigureOraclePolicy => {}
+                | AdminActionType::ConfigureOraclePolicy
+                | AdminActionType::SetOracleGuards => {}
             }
         }
 
