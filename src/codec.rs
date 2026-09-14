@@ -1510,7 +1510,7 @@ mod tests {
         }
     }
 
-    /// Frozen wire vectors for the tag-12 `SetOracleGuards` inner action:
+    /// Frozen wire vectors for the tag-13 `SetOracleGuards` inner action:
     /// both fields, and each field alone. The externally-tagged
     /// variant name plus positional payload must never drift, since the
     /// proposal content hash commits these bytes.
@@ -1754,26 +1754,31 @@ mod tests {
             .next()
             .expect("split always yields at least one piece");
 
-        // The assigned tags must also be contiguous from 1 — a hole would
-        // mean a burned value nobody recorded.
-        for (i, tag_type) in ALL_INNER_TAGS.into_iter().enumerate() {
-            let tag = tag_type as u8;
-            assert_eq!(
-                tag,
-                i as u8 + 1,
-                "inner admin-action namespace has a hole before {tag:#04x}"
-            );
+        // Every tag from 1 to the highest assigned one needs a row: assigned
+        // tags must not read free, and an unassigned tag below the highest
+        // must be recorded as reserved — a silent hole would mean a burned
+        // value nobody recorded.
+        let highest = ALL_INNER_TAGS
+            .iter()
+            .map(|tag_type| *tag_type as u8)
+            .max()
+            .expect("at least one inner admin tag is assigned");
+        for tag in 1..=highest {
             let marker = format!("| 0x{tag:02X} |");
             let line = section
                 .lines()
                 .find(|line| line.starts_with(&marker))
-                .unwrap_or_else(|| {
-                    panic!("BYTES.md inner-admin table is missing assigned tag {tag:#04x}")
-                });
+                .unwrap_or_else(|| panic!("BYTES.md inner-admin table has no row for {tag:#04x}"));
             assert!(
                 !line.contains("_free_"),
-                "BYTES.md marks assigned inner admin tag {tag:#04x} free"
+                "BYTES.md marks inner admin tag {tag:#04x} free"
             );
+            if !ALL_INNER_TAGS.iter().any(|tag_type| *tag_type as u8 == tag) {
+                assert!(
+                    line.contains("reserved"),
+                    "unassigned inner admin tag {tag:#04x} must be recorded as reserved"
+                );
+            }
         }
     }
 

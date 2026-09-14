@@ -167,7 +167,7 @@ lineage by `CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS` (parked at `u64::MAX` on
 `exchange-devnet-1`, active from genesis on `proof-dev`). Same rule: the
 tag is ASSIGNED from this commit regardless of when a lineage activates it.
 
-Tag `0x0C` (`SetOracleGuards`) is admission-gated by the compiled
+Tag `0x0D` (`SetOracleGuards`) is admission-gated by the compiled
 `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` (parked at `u64::MAX` on trunk; a
 release branch pins it). Same rule:
 the tag is ASSIGNED from this commit regardless of when it activates.
