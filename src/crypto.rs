@@ -280,7 +280,7 @@ mod tests {
         let pubkey = key.verifying_key().to_bytes();
         let payload = b"test";
 
-        // All 15 action types (0x01..=0x0F, including 0x0E CreateImpactMarket + 0x0F ResolveEvent)
+        // All 15 action types (0x01..=0x0F, including 0x0E CreateImpactMarket + 0x0F ResolveImpactMarket)
         for action_type in 0x01u8..=0x0F {
             // Boundary seq values
             for seq in [0u64, 1, u64::MAX / 2, u64::MAX - 1, u64::MAX] {

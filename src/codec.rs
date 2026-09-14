@@ -163,7 +163,7 @@ define_actions! {
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
     CreateImpactMarket => 14,    // 0x0E
-    ResolveEvent => 15,          // 0x0F
+    ResolveImpactMarket => 15,          // 0x0F
     UpdateMarketFees => 16,      // 0x10
     RunLiquidationSweep => 17,   // 0x11
     RunFundingTick => 18,        // 0x12
@@ -191,6 +191,7 @@ define_actions! {
     AuthorizeWithdrawal => 36,      // 0x24 — operator-quorum withdrawal authorization
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
+    ResolveEvent => 39,          // 0x27 — resolve a standalone event
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -236,6 +237,7 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::WithdrawRequest
         | ActionType::ConfirmWithdrawal
         | ActionType::CreateImpactMarket
+        | ActionType::ResolveImpactMarket
         | ActionType::ResolveEvent
         | ActionType::UpdateMarketFees
         | ActionType::RunLiquidationSweep
@@ -732,9 +734,16 @@ pub fn canonical_block_phase(bytes: &[u8]) -> Option<BlockPhase> {
 /// block-work counter.
 pub fn canonical_tier2_action_type(bytes: &[u8]) -> Option<ActionType> {
     let action_type = ActionType::try_from(peek_fixarray_action_type(bytes)?).ok()?;
+    // Must stay the same set the node's block proposer classifies as Tier-2.
+    // A resolution missing here is admitted by the proposer as the block's one
+    // Tier-2 action and then not counted by the engine at finalize, which goes
+    // on to spend the automatic resolution allowance in the same block.
     if !matches!(
         action_type,
-        ActionType::ResolveEvent | ActionType::RunLiquidationSweep | ActionType::LiquidateAccounts
+        ActionType::ResolveImpactMarket
+            | ActionType::ResolveEvent
+            | ActionType::RunLiquidationSweep
+            | ActionType::LiquidateAccounts
     ) {
         return None;
     }
@@ -1085,6 +1094,11 @@ mod tests {
             Action::RevokeAgent(RevokeAgent {
                 owner: [0xBB; 20],
                 agent_pubkey: [0xCC; 32],
+            }),
+            Action::ResolveEvent(crate::types::ResolveEvent {
+                event_id: crate::types::EventId(7),
+                outcome: Outcome::Yes,
+                signer: [0x33; 20],
             }),
         ]
     }
@@ -1489,9 +1503,9 @@ mod tests {
         // Unknown admin-action variants must fail decoding.
         #[derive(Serialize)]
         enum PhantomAdminAction {
-            ResolveEvent { impact_market_id: u32 },
+            ResolveImpactMarket { impact_market_id: u32 },
         }
-        let bytes = rmp_serde::to_vec(&PhantomAdminAction::ResolveEvent {
+        let bytes = rmp_serde::to_vec(&PhantomAdminAction::ResolveImpactMarket {
             impact_market_id: 7,
         })
         .unwrap();
@@ -2607,7 +2621,7 @@ mod tests {
 
     #[test]
     fn canonical_tier2_classifier_rejects_alternate_envelope_representation() {
-        let action = Action::ResolveEvent(ResolveEvent {
+        let action = Action::ResolveImpactMarket(ResolveImpactMarket {
             impact_market_id: 42,
             outcome: Outcome::Yes,
             signer: [0x11; 20],
@@ -2617,7 +2631,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             canonical_tier2_action_type(&canonical),
-            Some(ActionType::ResolveEvent)
+            Some(ActionType::ResolveImpactMarket)
         );
 
         // rmp-serde accepts array16(6) for the same struct, and the signature
@@ -2659,6 +2673,97 @@ mod tests {
         assert_eq!(canonical_tier2_action_type(&unsorted_liquidation), None);
     }
 
+    /// The Rust Tier-2 classifier must recognise the same actions the node's
+    /// block proposer partitions on. A `ResolveEvent` the proposer admitted as
+    /// the block's one Tier-2 action but this classifier did not see would let
+    /// the engine still grant the automatic-resolution allowance in that block.
+    #[test]
+    fn canonical_tier2_classifier_covers_standalone_event_resolution() {
+        let action = Action::ResolveEvent(crate::types::ResolveEvent {
+            event_id: crate::types::EventId(7),
+            outcome: Outcome::Yes,
+            signer: [0x33; 20],
+        });
+        let canonical =
+            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 3, &test_key())
+                .unwrap();
+        assert_eq!(
+            canonical_tier2_action_type(&canonical),
+            Some(ActionType::ResolveEvent),
+            "standalone resolution is a Tier-2 action in Rust as it is in Go"
+        );
+
+        // The canonicality rule applies to it like every other Tier-2 action:
+        // an alternate container encoding the signature still covers is not
+        // admitted into the work count.
+        let mut array16 = vec![0xdc, 0x00, 0x06];
+        array16.extend_from_slice(&canonical[1..]);
+        assert!(decode_tx(&array16).is_ok());
+        assert_eq!(canonical_tier2_action_type(&array16), None);
+    }
+
+    /// Pins the Tier-2 set itself, so a resolution action added to one side of
+    /// the Rust/Go pair shows up here rather than as a block-work divergence.
+    /// The node's proposer must list the same actions.
+    #[test]
+    fn tier2_action_set_is_pinned() {
+        let tier2: Vec<(Action, ActionType)> = vec![
+            (
+                Action::ResolveImpactMarket(ResolveImpactMarket {
+                    impact_market_id: 42,
+                    outcome: Outcome::Yes,
+                    signer: [0x11; 20],
+                }),
+                ActionType::ResolveImpactMarket,
+            ),
+            (
+                Action::ResolveEvent(crate::types::ResolveEvent {
+                    event_id: crate::types::EventId(7),
+                    outcome: Outcome::No,
+                    signer: [0x33; 20],
+                }),
+                ActionType::ResolveEvent,
+            ),
+            (
+                Action::RunLiquidationSweep(RunLiquidationSweep { signer: [0x22; 20] }),
+                ActionType::RunLiquidationSweep,
+            ),
+        ];
+        for (action, expected) in tier2 {
+            let encoded = encode_tx(&action, 1).unwrap();
+            assert_eq!(
+                canonical_tier2_action_type(&encoded),
+                Some(expected),
+                "{expected:?} must count against the block-work budget"
+            );
+        }
+        let liquidate = encode_liquidate_accounts_tx(vec![[1; 20]]).unwrap();
+        assert_eq!(
+            canonical_tier2_action_type(&liquidate),
+            Some(ActionType::LiquidateAccounts)
+        );
+
+        // Everything else stays outside the budget.
+        for action in all_action_variants() {
+            let action_type = ActionType::try_from(action.encode_action().unwrap().action_type)
+                .expect("every emitted action type is known");
+            if matches!(
+                action_type,
+                ActionType::ResolveImpactMarket
+                    | ActionType::ResolveEvent
+                    | ActionType::RunLiquidationSweep
+                    | ActionType::LiquidateAccounts
+            ) {
+                continue;
+            }
+            assert_eq!(
+                canonical_tier2_action_type(&encode_tx(&action, 1).unwrap()),
+                None,
+                "{action_type:?} must not count as Tier-2"
+            );
+        }
+    }
+
     #[test]
     fn maximum_liquidation_owner_vector_has_pinned_wire_size() {
         let owners = (0..crate::types::MAX_LIQUIDATE_ACCOUNTS_OWNERS)
@@ -2694,7 +2799,7 @@ mod tests {
             (ActionType::ApproveAgent, BlockPhase::AgentAuthority),
             (ActionType::RevokeAgent, BlockPhase::AgentAuthority),
             (ActionType::CreateImpactMarket, BlockPhase::Ordinary),
-            (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (ActionType::ResolveImpactMarket, BlockPhase::Ordinary),
             (ActionType::UpdateMarketFees, BlockPhase::Ordinary),
             (ActionType::RunLiquidationSweep, BlockPhase::Ordinary),
             (ActionType::RunFundingTick, BlockPhase::Ordinary),
@@ -2727,9 +2832,22 @@ mod tests {
                 ActionType::CancelPositionTriggers,
                 BlockPhase::TriggerManagement,
             ),
+            (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (
+                ActionType::ConfirmWithdrawalReceipt,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::FailWithdrawalReceipt,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::AuthorizeWithdrawal,
+                BlockPhase::PriceCreditPrefix,
+            ),
         ];
 
-        assert_eq!(expected.len(), 35);
+        assert_eq!(expected.len(), 39);
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
         }
