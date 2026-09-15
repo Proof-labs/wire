@@ -37,7 +37,13 @@ name = "proof-wire"
 # resolves a standalone event; the impact-market resolution at 0x0F is renamed
 # ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
 # unchanged -> MINOR.
-version = "1.6.0"
+#
+# 1.6.0 -> 1.7.0: additive wire changes (F16 oracle epic). New outer action
+# SubmitOracleObservation at 0x2D, new inner admin ConfigureOraclePolicy at
+# 0x0C, new inner admin SetOracleGuards at 0x0D, plus MarketOracleGuards,
+# OracleRejectReason, FundingSkipReason types and ExecError::OracleGuardUnset
+# (code 82). Pre-existing bytes still decode unchanged -> MINOR.
+version = "1.7.0"
 edition = "2021"
 
 [dependencies]
