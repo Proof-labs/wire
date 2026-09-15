@@ -735,6 +735,17 @@ pub enum AdminAction {
     /// allowlists otherwise lack (#422). Admitted only from the lineage's
     /// authority-governance activation height.
     UpdateAuthoritySet(UpdateAuthoritySet),
+    /// Schedules (or reschedules) the pending protocol upgrade: the target
+    /// height, the protocol version that must be staged, and the SHA-256 of
+    /// the successor library file. One pending plan; rescheduling replaces.
+    /// Governed via the signer registry; the hash is re-verified against the
+    /// staged file at the swap (fail-closed on mismatch).
+    ScheduleUpgrade(ScheduleUpgrade),
+    /// Cancels the pending protocol upgrade plan. Must commit before the
+    /// plan's target height; a cancellation that has not committed on every
+    /// validator before the boundary is not a cancellation (roll-forward
+    /// only, DEC-32).
+    CancelUpgrade(CancelUpgrade),
     /// Cancels every resting order of one account, optionally confined to
     /// one market, through the same store path as the owner's own
     /// cancel-all: reserved margin is released and one `OrderCancelled`
@@ -806,6 +817,31 @@ pub struct CancelAllOrdersForAccount {
     pub market: Option<MarketId>,
 }
 
+/// Payload of [`AdminAction::ScheduleUpgrade`]: one pending protocol-upgrade
+/// plan. `successor_sha256` pins the staged successor library file — verified
+/// at schedule time and re-verified at the swap (fail-closed on mismatch).
+/// `protocol_version` must differ from the active version: scheduling a
+/// self-upgrade is a no-op by construction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleUpgrade {
+    /// Consensus height at which the successor becomes active.
+    pub target_height: u64,
+    /// The successor's monotonic protocol version.
+    pub protocol_version: u32,
+    /// SHA-256 of the staged successor library file.
+    #[serde(with = "crate::wire_bytes")]
+    pub successor_sha256: [u8; 32],
+}
+
+/// Payload of [`AdminAction::CancelUpgrade`]: which plan is being cancelled,
+/// by target height, so a cancellation names the plan it retires. Cancelling
+/// a non-existent plan is a no-op, not an error: the plan is gone either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelUpgrade {
+    /// The `target_height` of the plan being cancelled.
+    pub target_height: u64,
+}
+
 /// The closed set of actions a `Batch` may carry: market creations only.
 /// A registry change must be its own reviewable proposal — a roster
 /// rewrite hidden among market operations is precisely the review hazard
@@ -845,6 +881,13 @@ pub enum AdminActionType {
     /// Per-market oracle guards. Admitted from
     /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`.
     SetOracleGuards = 13,
+    /// Schedules (or reschedules) the pending protocol upgrade plan.
+    /// Governed like `UpdateAuthoritySet`: signer-registry path, one
+    /// pending plan, target height never decreases.
+    ScheduleUpgrade = 14,
+    /// Cancels the pending protocol upgrade plan. Must commit before the
+    /// plan's target height to have effect.
+    CancelUpgrade = 15,
 }
 
 impl AdminAction {
@@ -862,6 +905,8 @@ impl AdminAction {
             Self::CancelAllOrdersForAccount(_) => AdminActionType::CancelAllOrdersForAccount,
             Self::ConfigureOraclePolicy(_) => AdminActionType::ConfigureOraclePolicy,
             Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
+            Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
+            Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
         }
     }
 

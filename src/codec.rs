@@ -1712,7 +1712,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 13] = [
+        const ALL_INNER_TAGS: [AdminActionType; 15] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1726,6 +1726,8 @@ mod tests {
             AdminActionType::ReservedRt01C,
             AdminActionType::ConfigureOraclePolicy,
             AdminActionType::SetOracleGuards,
+            AdminActionType::ScheduleUpgrade,
+            AdminActionType::CancelUpgrade,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1741,7 +1743,9 @@ mod tests {
                 | AdminActionType::ReservedRt01B
                 | AdminActionType::ReservedRt01C
                 | AdminActionType::ConfigureOraclePolicy
-                | AdminActionType::SetOracleGuards => {}
+                | AdminActionType::SetOracleGuards
+                | AdminActionType::ScheduleUpgrade
+                | AdminActionType::CancelUpgrade => {}
             }
         }
 
@@ -3609,4 +3613,36 @@ mod tests {
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
     }
+}
+
+/// The upgrade-plan admin arms round-trip through the canonical msgpack
+/// encoding, and their engine-facing tags are the 0x0C/0x0D the BYTES.md
+/// ledger claims.
+#[test]
+fn upgrade_plan_admin_actions_round_trip() {
+    let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
+        target_height: 50_780_000,
+        protocol_version: 2,
+        successor_sha256: [0xAB; 32],
+    });
+    let canonical = canonical_admin_action_bytes(&schedule).unwrap();
+    let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+    assert!(matches!(
+        &decoded,
+        AdminAction::ScheduleUpgrade(plan)
+            if plan.target_height == 50_780_000
+                && plan.protocol_version == 2
+                && plan.successor_sha256 == [0xAB; 32]
+    ));
+    assert_eq!(canonical, canonical2);
+    assert_eq!(schedule.action_tag(), 0x0C);
+
+    let cancel = AdminAction::CancelUpgrade(CancelUpgrade {
+        target_height: 50_780_000,
+    });
+    let canonical = canonical_admin_action_bytes(&cancel).unwrap();
+    let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+    assert!(matches!(decoded, AdminAction::CancelUpgrade(_)));
+    assert_eq!(canonical, canonical2);
+    assert_eq!(cancel.action_tag(), 0x0D);
 }
