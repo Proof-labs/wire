@@ -716,6 +716,8 @@ pub enum AdminAction {
     /// freeze: the account may place again in the next block. Admitted
     /// only from the lineage's cancel-all-for-account activation height.
     CancelAllOrdersForAccount(CancelAllOrdersForAccount),
+    /// Schedules a canonical, complete oracle-policy epoch after quorum approval.
+    ConfigureOraclePolicy(ConfigureOraclePolicy),
 }
 
 /// One operator-authority allowlist. On the `UpdateAuthoritySet` wire the
@@ -791,6 +793,7 @@ pub enum AdminActionType {
     ReservedRt01B = 10,
     /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01C = 11,
+    ConfigureOraclePolicy = 12,
 }
 
 impl AdminAction {
@@ -806,6 +809,7 @@ impl AdminAction {
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
             Self::UpdateAuthoritySet(_) => AdminActionType::UpdateAuthoritySet,
             Self::CancelAllOrdersForAccount(_) => AdminActionType::CancelAllOrdersForAccount,
+            Self::ConfigureOraclePolicy(_) => AdminActionType::ConfigureOraclePolicy,
         }
     }
 
@@ -1831,6 +1835,38 @@ pub struct OracleUpdate {
     /// `publish_time_ms` for the same market.
     #[serde(default)]
     pub publish_time_ms: u64,
+}
+
+/// A source identifier scoped to one policy epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OracleSourceId(pub u32);
+
+/// A monotonically increasing oracle-policy epoch identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OraclePolicyVersion(pub u64);
+
+/// A normalized observation attested by the exact source key in its policy.
+/// The envelope signature authenticates the relay, not the external provider.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitOracleObservation {
+    pub market: MarketId,
+    pub policy_version: OraclePolicyVersion,
+    pub source_id: OracleSourceId,
+    pub publish_time_ms: u64,
+    pub price_micro: u64,
+    pub confidence_micro: Option<u64>,
+    #[serde(with = "crate::wire_bytes")]
+    pub evidence_digest: [u8; 32],
+    #[serde(with = "crate::wire_bytes")]
+    pub signer: [u8; 20],
+}
+
+/// Canonical MessagePack policy bytes and the first block that may use them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigureOraclePolicy {
+    pub effective_height: u64,
+    #[serde(with = "crate::wire_bytes::vec")]
+    pub bundle: Vec<u8>,
 }
 
 /// Composite-CEX price update — BE-31 Phase B's third source for the
