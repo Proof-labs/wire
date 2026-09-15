@@ -34,6 +34,7 @@ decision-register references for each bump) lives in the header of
 - 1.2.0 → 1.3.0 — DEC-87: `UpdateAuthoritySet` (inner tag `0x07`)
 - 1.3.0 → 1.4.0 — #467: `CancelAllOrdersForAccount` (inner tag `0x08`)
 - 1.4.0 → 1.5.0 — EN-01: `AdminAction::CreateEvent` (inner tag `0x09`, claiming the RT-01 reservation) and the typed `EventKey`
+- 1.5.0 → 1.6.0 — `ResolveEvent` (outer action `0x27`) for standalone events; the `0x0F` impact-market resolution is renamed `ResolveImpactMarket` (payload unchanged)
 
 ## The byte ledger
 

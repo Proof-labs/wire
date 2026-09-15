@@ -32,7 +32,24 @@ name = "proof-wire"
 # AdminAction::CreateEvent at inner tag 0x09 (claiming the RT-01 reservation),
 # plus the typed EventKey. Pre-existing bytes still decode unchanged -> MINOR.
 # still decode unchanged -> MINOR.
-version = "1.6.0"
+#
+# 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
+# resolves a standalone event; the impact-market resolution at 0x0F is renamed
+# ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
+# unchanged -> MINOR.
+#
+# 1.6.0 -> 1.7.0: additive wire changes (F16 oracle epic). New outer action
+# SubmitOracleObservation at 0x2D, new inner admin ConfigureOraclePolicy at
+# 0x0C, new inner admin SetOracleGuards at 0x0D, plus MarketOracleGuards,
+# OracleRejectReason, FundingSkipReason types and ExecError::OracleGuardUnset
+# (code 82). Pre-existing bytes still decode unchanged -> MINOR.
+#
+# 1.7.0 -> 1.8.0: additive wire change (sub-accounts, SA-0/SA-1). New outer
+# actions CreateSubAccount at 0x28 and SubAccountTransfer at 0x29, the frozen
+# derive_sub_account, SubAccountCreated/SubAccountTransferCompleted events,
+# and sub-account ExecError codes at 83-88 (moved off the oracle-guard range
+# that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
+version = "1.8.0"
 edition = "2021"
 
 [dependencies]

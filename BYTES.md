@@ -84,7 +84,7 @@ carries the authoritative names.
 | 0x0C | `ACTION_APPROVE_AGENT`            | main               | shipped  |
 | 0x0D | `ACTION_REVOKE_AGENT`             | main               | shipped  |
 | 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | main               | shipped  |
-| 0x0F | `ACTION_RESOLVE_EVENT`            | main               | shipped  |
+| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | main               | shipped (renamed from ResolveEvent in 1.6.0) |
 | 0x10 | `ACTION_UPDATE_MARKET_FEES`       | main               | shipped  |
 | 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | main               | shipped  |
 | 0x12 | `ACTION_RUN_FUNDING_TICK`         | main               | shipped  |
@@ -108,13 +108,14 @@ carries the authoritative names.
 | 0x24 | `AuthorizeWithdrawal`               | W28-20 / #316      | merged to dev — engine-native |
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
-| 0x27 | `ReservedRt01`                      | RT-01              | reserved range, no action arm (see `external_action_reservations`) |
+| 0x27 | `ResolveEvent`                      | 1.6.0              | resolve a standalone event |
 | 0x28 | `CreateSubAccount`                  | sub-accounts       | sub-account creation |
 | 0x29 | `SubAccountTransfer`                | sub-accounts       | sub-account balance transfer |
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
-| 0x2D | _free_                              | —                  | —        |
+| 0x2D | `SubmitOracleObservation`            | oracle policy | dormant behind oracle-policy gate |
+| 0x2E | _free_                              | —                  | —        |
 | ...  | up to 0xFF                         | —                  | —        |
 
 Bytes 0x00 and 0xFF are reserved as sentinels (unused / max).
@@ -138,6 +139,12 @@ They are not outer transaction action bytes.
 | 0x09 | `CreateEvent`                     | EN-01               | governed; creates a standalone event (G17) |
 | 0x0A | `ReservedRt01B`                   | RT-01               | reserved; discriminant only, no behaviour |
 | 0x0B | `ReservedRt01C`                   | RT-01               | reserved; discriminant only, no behaviour |
+| 0x0C | `ConfigureOraclePolicy`           | oracle policy       | dormant behind oracle-policy gate |
+| 0x0D | `SetOracleGuards`                 | oracle guards       | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
+
+The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
+are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
+u64::MAX`. Source messages authenticate an approved relay, not a provider proof.
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -159,6 +166,11 @@ Tag `0x08` (`CancelAllOrdersForAccount`, #467) is admission-gated per
 lineage by `CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS` (parked at `u64::MAX` on
 `exchange-devnet-1`, active from genesis on `proof-dev`). Same rule: the
 tag is ASSIGNED from this commit regardless of when a lineage activates it.
+
+Tag `0x0D` (`SetOracleGuards`) is admission-gated by the compiled
+`UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` (parked at `u64::MAX` on trunk; a
+release branch pins it). Same rule:
+the tag is ASSIGNED from this commit regardless of when it activates.
 
 ## Emergency action arm tags
 
