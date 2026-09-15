@@ -3613,36 +3613,36 @@ mod tests {
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
     }
-}
 
-/// The upgrade-plan admin arms round-trip through the canonical msgpack
-/// encoding, and their engine-facing tags are the 0x0C/0x0D the BYTES.md
-/// ledger claims.
-#[test]
-fn upgrade_plan_admin_actions_round_trip() {
-    let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
-        target_height: 50_780_000,
-        protocol_version: 2,
-        successor_sha256: [0xAB; 32],
-    });
-    let canonical = canonical_admin_action_bytes(&schedule).unwrap();
-    let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
-    assert!(matches!(
-        &decoded,
-        AdminAction::ScheduleUpgrade(plan)
-            if plan.target_height == 50_780_000
-                && plan.protocol_version == 2
-                && plan.successor_sha256 == [0xAB; 32]
-    ));
-    assert_eq!(canonical, canonical2);
-    assert_eq!(schedule.action_tag(), 0x0C);
+    /// The upgrade-plan admin arms round-trip through the canonical msgpack
+    /// encoding, and their engine-facing tags are the 0x0E/0x0F the BYTES.md
+    /// ledger claims.
+    #[test]
+    fn upgrade_plan_admin_actions_round_trip() {
+        let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
+            target_height: 50_780_000,
+            protocol_version: 2,
+            successor_sha256: [0xAB; 32],
+        });
+        let canonical = canonical_admin_action_bytes(&schedule).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(
+            &decoded,
+            AdminAction::ScheduleUpgrade(plan)
+                if plan.target_height == 50_780_000
+                    && plan.protocol_version == 2
+                    && plan.successor_sha256 == [0xAB; 32]
+        ));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(schedule.action_tag(), 0x0E);
 
-    let cancel = AdminAction::CancelUpgrade(CancelUpgrade {
-        target_height: 50_780_000,
-    });
-    let canonical = canonical_admin_action_bytes(&cancel).unwrap();
-    let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
-    assert!(matches!(decoded, AdminAction::CancelUpgrade(_)));
-    assert_eq!(canonical, canonical2);
-    assert_eq!(cancel.action_tag(), 0x0D);
+        let cancel = AdminAction::CancelUpgrade(CancelUpgrade {
+            target_height: 50_780_000,
+        });
+        let canonical = canonical_admin_action_bytes(&cancel).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(decoded, AdminAction::CancelUpgrade(_)));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(cancel.action_tag(), 0x0F);
+    }
 }
