@@ -114,7 +114,8 @@ carries the authoritative names.
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
-| 0x2D | _free_                              | —                  | —        |
+| 0x2D | `SubmitOracleObservation`            | oracle policy | dormant behind oracle-policy gate |
+| 0x2E | _free_                              | —                  | —        |
 | ...  | up to 0xFF                         | —                  | —        |
 
 Bytes 0x00 and 0xFF are reserved as sentinels (unused / max).
@@ -138,6 +139,14 @@ They are not outer transaction action bytes.
 | 0x09 | `CreateEvent`                     | EN-01               | governed; creates a standalone event (G17) |
 | 0x0A | `ReservedRt01B`                   | RT-01               | reserved; discriminant only, no behaviour |
 | 0x0B | `ReservedRt01C`                   | RT-01               | reserved; discriminant only, no behaviour |
+| 0x0C | `ConfigureOraclePolicy`           | oracle policy       | dormant behind oracle-policy gate |
+| 0x0D | `SetOracleGuards`                 | oracle guards       | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
+| 0x0E | `ScheduleUpgrade`                 | 1.8.0               | governed; schedules the pending protocol-upgrade plan |
+| 0x0F | `CancelUpgrade`                   | 1.8.0               | governed; cancels the pending plan (before H) |
+
+The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
+are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
+u64::MAX`. Source messages authenticate an approved relay, not a provider proof.
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -159,6 +168,11 @@ Tag `0x08` (`CancelAllOrdersForAccount`, #467) is admission-gated per
 lineage by `CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS` (parked at `u64::MAX` on
 `exchange-devnet-1`, active from genesis on `proof-dev`). Same rule: the
 tag is ASSIGNED from this commit regardless of when a lineage activates it.
+
+Tag `0x0D` (`SetOracleGuards`) is admission-gated by the compiled
+`UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` (parked at `u64::MAX` on trunk; a
+release branch pins it). Same rule:
+the tag is ASSIGNED from this commit regardless of when it activates.
 
 ## Emergency action arm tags
 

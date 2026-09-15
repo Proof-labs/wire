@@ -192,6 +192,7 @@ define_actions! {
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
+    SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -214,6 +215,7 @@ pub enum BlockPhase {
 pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
     match action_type {
         ActionType::OracleUpdate
+        | ActionType::SubmitOracleObservation
         | ActionType::OracleUpdateComposite
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
@@ -923,6 +925,16 @@ mod tests {
     /// Helper: build one instance of every Action variant with realistic values.
     fn all_action_variants() -> Vec<Action> {
         vec![
+            Action::SubmitOracleObservation(SubmitOracleObservation {
+                market: 1,
+                policy_version: OraclePolicyVersion(3),
+                source_id: OracleSourceId(2),
+                publish_time_ms: 1_780_000_000_000,
+                price_micro: 9_007_199_254_740_993,
+                confidence_micro: Some(1),
+                evidence_digest: [8; 32],
+                signer: [7; 20],
+            }),
             // Governance wire actions (tags 30–33).
             Action::ProposeAdminAction(ProposeAdminAction {
                 proposer: SignerAddress([0xA1; 20]),
@@ -1498,6 +1510,50 @@ mod tests {
         }
     }
 
+    /// Frozen wire vectors for the tag-13 `SetOracleGuards` inner action:
+    /// both fields, and each field alone. The externally-tagged
+    /// variant name plus positional payload must never drift, since the
+    /// proposal content hash commits these bytes.
+    #[test]
+    fn set_oracle_guards_wire_vectors_frozen() {
+        use crate::types::SetOracleGuards;
+        for (max_age, band, expected) in [
+            (
+                Some(30_000u64),
+                Some(2_000u32),
+                "81af5365744f7261636c65477561726473930acd7530cd07d0",
+            ),
+            (
+                Some(30_000),
+                None,
+                "81af5365744f7261636c65477561726473930acd7530c0",
+            ),
+            (
+                None,
+                Some(2_000),
+                "81af5365744f7261636c65477561726473930ac0cd07d0",
+            ),
+        ] {
+            let action = AdminAction::SetOracleGuards(SetOracleGuards {
+                market: 10,
+                mark_price_max_oracle_age_ms: max_age,
+                max_oracle_deviation_bps: band,
+            });
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen SetOracleGuards wire vector drifted"
+            );
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(decoded.action_tag(), AdminActionType::SetOracleGuards as u8);
+        }
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -1567,15 +1623,11 @@ mod tests {
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
-        let last = ActionType::ALL
-            .iter()
-            .map(|action_type| *action_type as u8)
-            .max()
-            .expect("at least one action type is defined");
-        for byte in 1..=last {
+        for action_type in ActionType::ALL {
+            let byte = *action_type as u8;
             assert!(
                 ActionType::try_from(byte).is_ok(),
-                "outer action namespace unexpectedly has a hole at {byte:#04x}"
+                "assigned outer action must decode at {byte:#04x}"
             );
             let marker = format!("| 0x{byte:02X} |");
             let line = ledger
@@ -1660,7 +1712,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 11] = [
+        const ALL_INNER_TAGS: [AdminActionType; 15] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1672,6 +1724,10 @@ mod tests {
             AdminActionType::CreateEvent,
             AdminActionType::ReservedRt01B,
             AdminActionType::ReservedRt01C,
+            AdminActionType::ConfigureOraclePolicy,
+            AdminActionType::SetOracleGuards,
+            AdminActionType::ScheduleUpgrade,
+            AdminActionType::CancelUpgrade,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1685,7 +1741,11 @@ mod tests {
                 | AdminActionType::CancelAllOrdersForAccount
                 | AdminActionType::CreateEvent
                 | AdminActionType::ReservedRt01B
-                | AdminActionType::ReservedRt01C => {}
+                | AdminActionType::ReservedRt01C
+                | AdminActionType::ConfigureOraclePolicy
+                | AdminActionType::SetOracleGuards
+                | AdminActionType::ScheduleUpgrade
+                | AdminActionType::CancelUpgrade => {}
             }
         }
 
@@ -1698,26 +1758,31 @@ mod tests {
             .next()
             .expect("split always yields at least one piece");
 
-        // The assigned tags must also be contiguous from 1 — a hole would
-        // mean a burned value nobody recorded.
-        for (i, tag_type) in ALL_INNER_TAGS.into_iter().enumerate() {
-            let tag = tag_type as u8;
-            assert_eq!(
-                tag,
-                i as u8 + 1,
-                "inner admin-action namespace has a hole before {tag:#04x}"
-            );
+        // Every tag from 1 to the highest assigned one needs a row: assigned
+        // tags must not read free, and an unassigned tag below the highest
+        // must be recorded as reserved — a silent hole would mean a burned
+        // value nobody recorded.
+        let highest = ALL_INNER_TAGS
+            .iter()
+            .map(|tag_type| *tag_type as u8)
+            .max()
+            .expect("at least one inner admin tag is assigned");
+        for tag in 1..=highest {
             let marker = format!("| 0x{tag:02X} |");
             let line = section
                 .lines()
                 .find(|line| line.starts_with(&marker))
-                .unwrap_or_else(|| {
-                    panic!("BYTES.md inner-admin table is missing assigned tag {tag:#04x}")
-                });
+                .unwrap_or_else(|| panic!("BYTES.md inner-admin table has no row for {tag:#04x}"));
             assert!(
                 !line.contains("_free_"),
-                "BYTES.md marks assigned inner admin tag {tag:#04x} free"
+                "BYTES.md marks inner admin tag {tag:#04x} free"
             );
+            if !ALL_INNER_TAGS.iter().any(|tag_type| *tag_type as u8 == tag) {
+                assert!(
+                    line.contains("reserved"),
+                    "unassigned inner admin tag {tag:#04x} must be recorded as reserved"
+                );
+            }
         }
     }
 
@@ -2825,15 +2890,6 @@ mod tests {
             (ActionType::RejectAdminAction, BlockPhase::Ordinary),
             (ActionType::EmergencyAdminAction, BlockPhase::Ordinary),
             (
-                ActionType::SetPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (
-                ActionType::CancelPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (ActionType::ResolveEvent, BlockPhase::Ordinary),
-            (
                 ActionType::ConfirmWithdrawalReceipt,
                 BlockPhase::PriceCreditPrefix,
             ),
@@ -2845,9 +2901,22 @@ mod tests {
                 ActionType::AuthorizeWithdrawal,
                 BlockPhase::PriceCreditPrefix,
             ),
+            (
+                ActionType::SubmitOracleObservation,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::SetPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (
+                ActionType::CancelPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (ActionType::ResolveEvent, BlockPhase::Ordinary),
         ];
 
-        assert_eq!(expected.len(), 39);
+        assert_eq!(expected.len(), ActionType::ALL.len());
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
         }
@@ -3543,5 +3612,37 @@ mod tests {
             matches!(decode_tx(&encoded), Err(ExecError::DecodeError(_))),
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
+    }
+
+    /// The upgrade-plan admin arms round-trip through the canonical msgpack
+    /// encoding, and their engine-facing tags are the 0x0E/0x0F the BYTES.md
+    /// ledger claims.
+    #[test]
+    fn upgrade_plan_admin_actions_round_trip() {
+        let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
+            target_height: 50_780_000,
+            protocol_version: 2,
+            successor_sha256: [0xAB; 32],
+        });
+        let canonical = canonical_admin_action_bytes(&schedule).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(
+            &decoded,
+            AdminAction::ScheduleUpgrade(plan)
+                if plan.target_height == 50_780_000
+                    && plan.protocol_version == 2
+                    && plan.successor_sha256 == [0xAB; 32]
+        ));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(schedule.action_tag(), 0x0E);
+
+        let cancel = AdminAction::CancelUpgrade(CancelUpgrade {
+            target_height: 50_780_000,
+        });
+        let canonical = canonical_admin_action_bytes(&cancel).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(decoded, AdminAction::CancelUpgrade(_)));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(cancel.action_tag(), 0x0F);
     }
 }

@@ -35,6 +35,7 @@ decision-register references for each bump) lives in the header of
 - 1.3.0 → 1.4.0 — #467: `CancelAllOrdersForAccount` (inner tag `0x08`)
 - 1.4.0 → 1.5.0 — EN-01: `AdminAction::CreateEvent` (inner tag `0x09`, claiming the RT-01 reservation) and the typed `EventKey`
 - 1.5.0 → 1.6.0 — `ResolveEvent` (outer action `0x27`) for standalone events; the `0x0F` impact-market resolution is renamed `ResolveImpactMarket` (payload unchanged)
+- 1.7.0 → 1.8.0 — `ScheduleUpgrade` (inner tag `0x0E`) and `CancelUpgrade` (`0x0F`): the on-chain upgrade-plan path replacing `UPGRADE_PLAN` env coordination
 
 ## The byte ledger
 
