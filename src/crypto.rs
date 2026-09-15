@@ -30,6 +30,29 @@ pub fn pubkey_to_owner(pubkey: &[u8; 32]) -> [u8; 20] {
     owner
 }
 
+/// Domain separator for derived sub-account addresses.
+pub const SUB_ACCOUNT_DERIVATION_DOMAIN: &[u8] = b"ProofExchange-sub-account-v1";
+
+/// Derive a sub-account address:
+/// `Keccak256(SUB_ACCOUNT_DERIVATION_DOMAIN || master(20) || sub_account_id(4, big-endian))[0..20]`.
+///
+/// Domain-separated from every other digest in the system. Preimage and
+/// second-preimage resistance mean no keypair can target a derived address:
+/// derived addresses are not keypair addresses — no private key exists for
+/// them, so only the engine's transfer semantics can move their funds. The
+/// instantiation is frozen; changing it changes every derived address and
+/// requires a new domain string.
+pub fn derive_sub_account(master: &[u8; 20], sub_account_id: u32) -> [u8; 20] {
+    let mut preimage = Vec::with_capacity(SUB_ACCOUNT_DERIVATION_DOMAIN.len().saturating_add(24));
+    preimage.extend_from_slice(SUB_ACCOUNT_DERIVATION_DOMAIN);
+    preimage.extend_from_slice(master);
+    preimage.extend_from_slice(&sub_account_id.to_be_bytes());
+    let hash = Keccak256::digest(&preimage);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&hash[..20]);
+    out
+}
+
 /// Hash a CometBFT chain_id string into the 32-byte form used in the
 /// signing envelope. Keccak-256 so every language (Rust, Go, TS) can
 /// reproduce the binding without dragging in an extra hash dependency.
@@ -221,6 +244,72 @@ mod tests {
         let a = signing_message(&TEST_CHAIN, 0x01, 42, b"payload");
         let b = signing_message(&TEST_CHAIN, 0x01, 42, b"payload");
         assert_eq!(a, b);
+    }
+
+    /// The instantiation is frozen: these vectors must match byte-for-byte.
+    #[test]
+    fn derive_sub_account_golden_vectors_are_frozen() {
+        let vectors: [(&[u8; 20], u32, &str); 4] = [
+            (&[0xaa; 20], 1, "0a886444bda9f5afa621054d9b4d6ae9c0d4bdb7"),
+            (
+                &[0x11; 20],
+                0xDEADBEEF,
+                "2eddfeb4b455de6de44a8340610a15defd9cab9d",
+            ),
+            (&[0x00; 20], 2, "fb0de5d58603e96d7d5fea63bbd3adbf33ba97ec"),
+            (
+                &[0x42; 20],
+                u32::MAX,
+                "e7209241aa6c581de222b4671f8586cf8ddf33c7",
+            ),
+        ];
+        for (master, sub_account_id, expected) in vectors {
+            let derived = derive_sub_account(master, sub_account_id);
+            let hex: String = derived.iter().map(|byte| format!("{byte:02x}")).collect();
+            assert_eq!(
+                hex, expected,
+                "frozen sub-account derivation vector changed for \
+                 sub_account_id {sub_account_id}"
+            );
+        }
+    }
+
+    /// A different domain must not produce any frozen vector address: the
+    /// domain keeps the derived-address space disjoint from every other
+    /// Keccak preimage in the system.
+    #[test]
+    fn derive_sub_account_other_domain_never_matches_frozen_vectors() {
+        let cases: [(&[u8; 20], u32); 4] = [
+            (&[0xaa; 20], 1),
+            (&[0x11; 20], 0xDEADBEEF),
+            (&[0x00; 20], 2),
+            (&[0x42; 20], u32::MAX),
+        ];
+        let frozen: Vec<[u8; 20]> = cases
+            .iter()
+            .map(|(master, sub_account_id)| derive_sub_account(master, *sub_account_id))
+            .collect();
+
+        for domain in [
+            b"ProofExchange-sub-account-v2".as_slice(),
+            b"proofexchange-sub-account-v1",
+            b"ProofExchange-sub-account",
+            b"ProofExchange-v3",
+        ] {
+            for (master, sub_account_id) in cases {
+                let mut preimage = Vec::with_capacity(domain.len() + 24);
+                preimage.extend_from_slice(domain);
+                preimage.extend_from_slice(master);
+                preimage.extend_from_slice(&sub_account_id.to_be_bytes());
+                let hash = Keccak256::digest(&preimage);
+                let mut other = [0u8; 20];
+                other.copy_from_slice(&hash[..20]);
+                assert!(
+                    !frozen.contains(&other),
+                    "domain {domain:?} reproduced a frozen sub-account address"
+                );
+            }
+        }
     }
 
     // -------------------------------------------------------------------

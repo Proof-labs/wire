@@ -352,7 +352,7 @@ that gives it behaviour.
 | Outer action bytes | `0x27`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x09`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
 | State-key prefixes | `0x4A`–`0x4D` | `Prefix` variants, no keyspace written | parked |
-| Schema rungs | `v15`–`v16` | `SCHEMA_V15/16_*` + `UPGRADE_HEIGHT_V15/16_*` at `u64::MAX` | parked |
+| Schema rungs | `v12` (Window A), `v15`–`v16` | `SCHEMA_V12_RESERVED_WINDOW_A`; `SCHEMA_V15/16_LEVEL_*` + `UPGRADE_HEIGHT_LEVEL_AGGREGATES/SEQ` at `u64::MAX` | parked |
 
 ## History
 
