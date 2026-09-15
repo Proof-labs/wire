@@ -109,8 +109,8 @@ carries the authoritative names.
 | 0x25 | `SetPositionTriggers`               | W32-10             | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | W32-10             | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | 1.6.0              | resolve a standalone event |
-| 0x28 | `ReservedRt01`                      | RT-01              | reserved |
-| 0x29 | `ReservedRt01`                      | RT-01              | reserved |
+| 0x28 | `CreateSubAccount`                  | sub-accounts       | sub-account creation |
+| 0x29 | `SubAccountTransfer`                | sub-accounts       | sub-account balance transfer |
 | 0x2A | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
@@ -271,15 +271,24 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x3C | `RegistryEpochObligations`      | W28-20 / PR #316   | open PR  |
 | 0x3D | `PoolPosition`                  | W29-02 / PR #299   | open PR  |
 | 0x3E | `ActiveImpactMarket`            | W29-02 / PR #299   | open PR  |
-| 0x3F | `PositionEpoch`                 | W32-10 / TR-1      | dormant allocation |
-| 0x40 | `PositionTriggerBracket`        | W32-10 / TR-1      | dormant allocation |
-| 0x41 | `TriggerThresholdIndex`         | W32-10 / TR-1      | dormant allocation |
-| 0x42 | `TriggerAccountState`           | W32-10 / TR-1      | dormant allocation |
-| 0x43 | `TriggerMarketState`            | W32-10 / TR-1      | dormant allocation |
-| 0x44 | `TriggerMarketConfig`           | W32-10 / TR-1      | dormant allocation |
-| 0x45 | `TriggerClientState`            | W32-10 / TR-1      | dormant allocation |
-| 0x46 | `TriggerMeta`                   | W32-10 / TR-1      | dormant allocation |
-| 0x47 | `QueuePriorityLevel`            | W32-10 / TR-3      | active behind trigger-index migration |
+| 0x3F | `WithdrawalReceiptSidecar`      | W28-20 / PR #316   | open PR  |
+| 0x40 | `PositionEpoch`                 | W32-10 / TR-1      | dormant allocation |
+| 0x41 | `PositionTriggerBracket`        | W32-10 / TR-1      | dormant allocation |
+| 0x42 | `TriggerThresholdIndex`         | W32-10 / TR-1      | dormant allocation |
+| 0x43 | `TriggerAccountState`           | W32-10 / TR-1      | dormant allocation |
+| 0x44 | `TriggerMarketState`            | W32-10 / TR-1      | dormant allocation |
+| 0x45 | `TriggerMarketConfig`           | W32-10 / TR-1      | dormant allocation |
+| 0x46 | `TriggerClientState`            | W32-10 / TR-1      | dormant allocation |
+| 0x47 | `TriggerMeta`                   | W32-10 / TR-1      | dormant allocation |
+| 0x48 | `QueuePriorityLevel`            | W32-10 / TR-3      | active behind trigger-index migration |
+| 0x49 | `CapabilityAuth`                | #422               | active   |
+| 0x4A | `EventInfo`                     | RT-01 / G17        | active   |
+| 0x4B | `ActiveEvent`                   | RT-01 / G17        | active   |
+| 0x4C | `ReservedRt01C`                 | RT-01              | reserved |
+| 0x4D | `ReservedRt01D`                 | RT-01              | reserved |
+| 0x4E | `MarketOracleGuards`            | OR-01 / exchange #522 | active |
+| 0x4F | `SubAccountRegistry`            | sub-accounts       | open PR  |
+| 0x50 | `SubAccountsByMaster`           | sub-accounts       | open PR  |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
@@ -316,7 +325,10 @@ share one namespace and must not be reused independently.
 | 0x0A | `NextEmergencyId`                | W29-04 / PR #282   | active   |
 | 0x0B | `LivePositionCount`              | W29-02 / PR #299   | open PR  |
 | 0x0C | `ActiveImpactMarketCount`        | W29-02 / PR #299   | open PR  |
-| 0x0D | _free_                           | —                  | —        |
+| 0x0D | `OracleGuardsActivation`         | OR-01 / exchange #522 | active |
+| 0x0E | `SubAccountCreationBlockHeight`  | sub-accounts       | open PR  |
+| 0x0F | `SubAccountCreationCount`        | sub-accounts       | open PR  |
+| 0x10 | `SubAccountRegistryCount`        | sub-accounts       | open PR  |
 | ...  | up to 0xFF                       | —                  | —        |
 
 ## Process for adding a new byte
@@ -349,10 +361,10 @@ that gives it behaviour.
 
 | Namespace | Reserved range | Mechanism | Status |
 |---|---|---|---|
-| Outer action bytes | `0x27`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
-| Inner admin tags | `0x09`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
-| State-key prefixes | `0x4A`–`0x4D` | `Prefix` variants, no keyspace written | parked |
-| Schema rungs | `v15`–`v16` | `SCHEMA_V15/16_*` + `UPGRADE_HEIGHT_V15/16_*` at `u64::MAX` | parked |
+| Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm); `0x27`–`0x29` are assigned above | parked |
+| Inner admin tags | `0x0A`–`0x0B` | `AdminActionType` discriminant-only variants; `0x09` is assigned above | parked |
+| State-key prefixes | `0x4C`–`0x4D` | `Prefix` variants, no keyspace written; `0x4A`–`0x4B` are assigned above | parked |
+| Schema rungs | `v12` (Window A), `v15`–`v16` | `SCHEMA_V12_RESERVED_WINDOW_A`; `SCHEMA_V15/16_LEVEL_*` + `UPGRADE_HEIGHT_LEVEL_AGGREGATES/SEQ` at `u64::MAX` | parked |
 
 ## History
 

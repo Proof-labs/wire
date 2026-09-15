@@ -192,6 +192,8 @@ define_actions! {
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
+    CreateSubAccount => 40,      // 0x28 — create a sub-account under an owner
+    SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
     SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
 }
 
@@ -254,7 +256,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ProposeAdminAction
         | ActionType::ApproveAdminAction
         | ActionType::RejectAdminAction
-        | ActionType::EmergencyAdminAction => BlockPhase::Ordinary,
+        | ActionType::EmergencyAdminAction
+        | ActionType::CreateSubAccount
+        | ActionType::SubAccountTransfer => BlockPhase::Ordinary,
     }
 }
 
@@ -770,9 +774,9 @@ mod tests {
     use crate::types::{
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier, MarkSourceMode,
-        MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent, Side,
-        TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent,
+        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -2914,6 +2918,8 @@ mod tests {
                 BlockPhase::TriggerManagement,
             ),
             (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (ActionType::CreateSubAccount, BlockPhase::Ordinary),
+            (ActionType::SubAccountTransfer, BlockPhase::Ordinary),
         ];
 
         assert_eq!(expected.len(), ActionType::ALL.len());
@@ -3612,6 +3618,54 @@ mod tests {
             matches!(decode_tx(&encoded), Err(ExecError::DecodeError(_))),
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
+    }
+
+    #[test]
+    fn test_round_trip_create_sub_account() {
+        let action = Action::CreateSubAccount(CreateSubAccount {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            name: [0xBB; 32],
+        });
+        assert_round_trip(&action, 100);
+    }
+
+    #[test]
+    fn test_round_trip_sub_account_transfer() {
+        let action = Action::SubAccountTransfer(SubAccountTransfer {
+            owner: [0xCC; 20],
+            from: [0xDD; 20],
+            to: [0xEE; 20],
+            amount: 1_000_000,
+        });
+        assert_round_trip(&action, 200);
+    }
+
+    #[test]
+    fn test_sub_account_action_types() {
+        assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
+        assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
+    }
+
+    #[test]
+    fn sub_account_record_preserves_creation_height() {
+        let record = SubAccount {
+            master: [0xAA; 20],
+            sub_account_id: 42,
+            address: [0xBB; 20],
+            name: [0xCC; 32],
+            created_height: u64::MAX,
+        };
+        let encoded = rmp_serde::to_vec(&record).expect("sub-account record encodes");
+        let decoded: SubAccount =
+            rmp_serde::from_slice(&encoded).expect("sub-account record decodes");
+        assert_eq!(decoded.created_height, u64::MAX);
+        assert_eq!(decoded.master, record.master);
+        assert_eq!(decoded.sub_account_id, record.sub_account_id);
+        assert_eq!(decoded.address, record.address);
+        assert_eq!(decoded.name, record.name);
+        let json = serde_json::to_value(&decoded).expect("sub-account JSON encodes");
+        assert_eq!(json["created_height"], serde_json::json!(u64::MAX));
     }
 
     /// The upgrade-plan admin arms round-trip through the canonical msgpack
