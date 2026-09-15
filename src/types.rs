@@ -552,6 +552,32 @@ pub struct AdminSignerRegistry {
 /// Why a `Pending` proposal expired. Stored in the status payload and
 /// committed by the governance digest, so engines cannot disagree on
 /// the reason.
+/// Why a scheduled funding interval was skipped without catch-up
+/// (`Event::FundingSkipped`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+pub enum FundingSkipReason {
+    /// The market's oracle is older than `mark_price_max_oracle_age_ms`.
+    #[display("oracle_stale")]
+    OracleStale,
+    /// The market has no `mark_price_max_oracle_age_ms` yet while the
+    /// oracle-guard gate is active.
+    #[display("oracle_guard_unset")]
+    OracleGuardUnset,
+}
+
+/// Why an `OracleUpdate` was refused by the per-market deviation guard
+/// (`Event::OracleUpdateRejected`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+pub enum OracleRejectReason {
+    /// The submitted price sits outside `last_good +- max_oracle_deviation_bps`.
+    #[display("deviation_exceeded")]
+    DeviationExceeded,
+    /// The market has no deviation band yet (`max_oracle_deviation_bps == 0`);
+    /// the guard gate is live, so the default fails closed.
+    #[display("deviation_band_unset")]
+    DeviationBandUnset,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum ExpiryReason {
     /// `expiry_ms` passed (the 72 h TTL, observed lazily).
@@ -718,6 +744,28 @@ pub enum AdminAction {
     CancelAllOrdersForAccount(CancelAllOrdersForAccount),
     /// Schedules a canonical, complete oracle-policy epoch after quorum approval.
     ConfigureOraclePolicy(ConfigureOraclePolicy),
+    /// Sets the per-market oracle guards (`mark_price_max_oracle_age_ms`
+    /// and `max_oracle_deviation_bps`) on one standalone perpetual through
+    /// the admin quorum. Admitted only from
+    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`; below it the
+    /// arm reads as an unknown variant exactly like an older binary.
+    SetOracleGuards(SetOracleGuards),
+}
+
+/// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
+/// values to write. `None` leaves a field untouched; at least one field must
+/// be `Some`, and a supplied value must be non-zero, because zero is the
+/// "unset" sentinel that fails closed once the guard gate is live. Clearing a
+/// guard is deliberately not expressible: to stop trading on a market, halt
+/// it, do not disarm its guards.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetOracleGuards {
+    pub market: MarketId,
+    /// New `MarketConfig::mark_price_max_oracle_age_ms` in milliseconds.
+    pub mark_price_max_oracle_age_ms: Option<u64>,
+    /// New `MarketOracleGuards::max_oracle_deviation_bps` in basis points, at
+    /// most 10_000.
+    pub max_oracle_deviation_bps: Option<u32>,
 }
 
 /// One operator-authority allowlist. On the `UpdateAuthoritySet` wire the
@@ -794,6 +842,9 @@ pub enum AdminActionType {
     /// Reserved by RT-01. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01C = 11,
     ConfigureOraclePolicy = 12,
+    /// Per-market oracle guards. Admitted from
+    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`.
+    SetOracleGuards = 13,
 }
 
 impl AdminAction {
@@ -810,6 +861,7 @@ impl AdminAction {
             Self::UpdateAuthoritySet(_) => AdminActionType::UpdateAuthoritySet,
             Self::CancelAllOrdersForAccount(_) => AdminActionType::CancelAllOrdersForAccount,
             Self::ConfigureOraclePolicy(_) => AdminActionType::ConfigureOraclePolicy,
+            Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
         }
     }
 
@@ -1466,6 +1518,33 @@ pub struct MarketConfig {
     /// compatibility for existing on-chain `MarketConfig` records.
     #[serde(default)]
     pub max_open_interest: u64,
+}
+
+/// Per-market oracle guards that live OUTSIDE `MarketConfig`, at
+/// `keys::market_oracle_guards(market)` (prefix `MarketOracleGuards`).
+/// Written only by the governed `AdminAction::SetOracleGuards`
+/// arm; absent until then.
+///
+/// Why a separate record: governance executions absorb their raw writes into
+/// the applied-state digest, so appending a field to `MarketConfig` would
+/// change the bytes a quorum `CreateMarket` writes and with them the app hash
+/// of every already-executed proposal on replay. A positional array whose
+/// length depends on a value is ruled out by the `CreateMarket` encoding rule
+/// ("one value, one encoding"). A new key that only exists after the gated
+/// arm has run leaves every pre-gate byte untouched.
+///
+/// Read only once the oracle-guard gate is active
+/// (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`): from then on an out-of-band
+/// `OracleUpdate` is REJECTED (event `OracleUpdateRejected`) rather than
+/// clipped, and an absent record (band zero) fails closed: every update after
+/// the first is rejected until a real band is set. Below the gate this record
+/// is inert and the schema-v9 clamp on `DEFAULT_MAX_ORACLE_DEVIATION_BPS`
+/// keeps applying, so replay is unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketOracleGuards {
+    /// Maximum per-update move from the stored last-good price, in basis
+    /// points. Zero means unset.
+    pub max_oracle_deviation_bps: u32,
 }
 
 /// Per-tier fee schedule for the volume-based maker-rebate program.
@@ -3353,6 +3432,39 @@ pub enum Event {
         removed: String,
         proposal_id: u64,
     },
+    /// The admin quorum wrote the per-market oracle guards. Carries
+    /// the FULL post-update guard set so consumers need not diff; zero means
+    /// the field is still unset.
+    OracleGuardsUpdated {
+        market: MarketId,
+        mark_price_max_oracle_age_ms: u64,
+        max_oracle_deviation_bps: u32,
+        proposal_id: u64,
+    },
+    /// An authorized `OracleUpdate` was refused by the per-market deviation
+    /// guard once the oracle-guard gate is active. The
+    /// transaction itself is accepted (nonce burned, no state written): the
+    /// submitted price is NOT stored, the publish time does NOT advance, and
+    /// this event records why. `max_oracle_deviation_bps == 0` with reason
+    /// `deviation_band_unset` is the fail-closed default before governance
+    /// sets a band.
+    OracleUpdateRejected {
+        market: MarketId,
+        submitted_price: u64,
+        last_good: u64,
+        max_oracle_deviation_bps: u32,
+        signer: Option<[u8; 20]>,
+        reason: OracleRejectReason,
+    },
+    /// A due funding interval on `market` was skipped because its mark was
+    /// stale or unguarded while the oracle-guard gate is active (pause,
+    /// no retroactive catch-up). The interval clock restarts at
+    /// `timestamp_ms`, so the missed interval is lost, not replayed.
+    FundingSkipped {
+        market: MarketId,
+        timestamp_ms: u64,
+        reason: FundingSkipReason,
+    },
     /// A multisig-approved trigger-market policy was stored for automatic
     /// application at `effective_height`. The complete replacement is evented
     /// so operators can audit the scheduled transition without interpreting
@@ -3801,6 +3913,14 @@ pub enum ExecError {
         /// Configured staleness cap from `MarketConfig`.
         max_staleness_ms: u64,
     },
+    /// A mark-dependent read on `market` was refused because the oracle-guard
+    /// gate (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`) is active and the market's
+    /// `mark_price_max_oracle_age_ms` is still the unset zero. Zero no longer
+    /// means "disabled": the default fails closed until the admin quorum sets
+    /// a real value through `AdminAction::SetOracleGuards`.
+    OracleGuardUnset {
+        market: MarketId,
+    },
     /// `SetUserMarketLeverage` rejected because the user attempted to
     /// pick an IM ratio LOWER than the market's risk floor. The
     /// engine only allows users to deleverage (more margin, less
@@ -3946,6 +4066,7 @@ impl ExecError {
             ExecError::BridgeReceiptMismatch(_) => 74,
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
+            ExecError::OracleGuardUnset { .. } => 82,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4212,6 +4333,9 @@ impl ExecError {
             ExecError::StaleOracle { .. } => {
                 "Oracle price is stale for this market; refresh the oracle before placing orders, reading margin, or liquidating."
             }
+            ExecError::OracleGuardUnset { .. } => {
+                "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
+            }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
             }
@@ -4260,6 +4384,7 @@ impl ExecError {
             self,
             ExecError::InvalidResolution(_)
                 | ExecError::StaleOracle { .. }
+                | ExecError::OracleGuardUnset { .. }
                 | ExecError::UnknownMarket(_)
         )
     }
@@ -4476,6 +4601,11 @@ impl fmt::Display for ExecError {
                 block time {block_time_ms}ms (age {age}ms > cap {max_staleness_ms}ms)",
                 age = block_time_ms.saturating_sub(*publish_time_ms),
             ),
+            ExecError::OracleGuardUnset { market } => write!(
+                f,
+                "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
+                oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
+            ),
             ExecError::UserLeverageBelowMarketIm {
                 market,
                 user_im_bps,
@@ -4543,14 +4673,15 @@ pub mod prelude {
         CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
         ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket, Deposit,
         DepositLocator, Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal,
-        FailWithdrawalReceipt, FillId, ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus,
-        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOrder,
-        OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleUpdate,
-        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveImpactMarket,
-        RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
-        SetUserMarketLeverage, Side, TimeInForce, TxContext, UpdateMarketFees, Withdraw,
-        WithdrawRequest, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
-        BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
+        FailWithdrawalReceipt, FillId, FundingSkipReason, ImpactMarketId, ImpactMarketInfo,
+        ImpactMarketStatus, LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind,
+        MarketOracleGuards, MarketOrder, OpenInterest, OperatorReceiptProof,
+        OperatorReceiptRegistry, OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order,
+        OrderId, Outcome, PlaceOrder, Position, ResolveEvent, ResolveImpactMarket, RevokeAgent,
+        RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride, SetUserMarketLeverage, Side,
+        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
+        DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
         MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
         PREDICTION_BINARY_TICK_SIZE,
