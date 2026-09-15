@@ -192,6 +192,9 @@ define_actions! {
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
+    CreateSubAccount => 40,      // 0x28 — create a sub-account under an owner
+    SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
+    SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -214,6 +217,7 @@ pub enum BlockPhase {
 pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
     match action_type {
         ActionType::OracleUpdate
+        | ActionType::SubmitOracleObservation
         | ActionType::OracleUpdateComposite
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
@@ -252,7 +256,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ProposeAdminAction
         | ActionType::ApproveAdminAction
         | ActionType::RejectAdminAction
-        | ActionType::EmergencyAdminAction => BlockPhase::Ordinary,
+        | ActionType::EmergencyAdminAction
+        | ActionType::CreateSubAccount
+        | ActionType::SubAccountTransfer => BlockPhase::Ordinary,
     }
 }
 
@@ -768,9 +774,9 @@ mod tests {
     use crate::types::{
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier, MarkSourceMode,
-        MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent, Side,
-        TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent,
+        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -923,6 +929,16 @@ mod tests {
     /// Helper: build one instance of every Action variant with realistic values.
     fn all_action_variants() -> Vec<Action> {
         vec![
+            Action::SubmitOracleObservation(SubmitOracleObservation {
+                market: 1,
+                policy_version: OraclePolicyVersion(3),
+                source_id: OracleSourceId(2),
+                publish_time_ms: 1_780_000_000_000,
+                price_micro: 9_007_199_254_740_993,
+                confidence_micro: Some(1),
+                evidence_digest: [8; 32],
+                signer: [7; 20],
+            }),
             // Governance wire actions (tags 30–33).
             Action::ProposeAdminAction(ProposeAdminAction {
                 proposer: SignerAddress([0xA1; 20]),
@@ -1498,6 +1514,50 @@ mod tests {
         }
     }
 
+    /// Frozen wire vectors for the tag-13 `SetOracleGuards` inner action:
+    /// both fields, and each field alone. The externally-tagged
+    /// variant name plus positional payload must never drift, since the
+    /// proposal content hash commits these bytes.
+    #[test]
+    fn set_oracle_guards_wire_vectors_frozen() {
+        use crate::types::SetOracleGuards;
+        for (max_age, band, expected) in [
+            (
+                Some(30_000u64),
+                Some(2_000u32),
+                "81af5365744f7261636c65477561726473930acd7530cd07d0",
+            ),
+            (
+                Some(30_000),
+                None,
+                "81af5365744f7261636c65477561726473930acd7530c0",
+            ),
+            (
+                None,
+                Some(2_000),
+                "81af5365744f7261636c65477561726473930ac0cd07d0",
+            ),
+        ] {
+            let action = AdminAction::SetOracleGuards(SetOracleGuards {
+                market: 10,
+                mark_price_max_oracle_age_ms: max_age,
+                max_oracle_deviation_bps: band,
+            });
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen SetOracleGuards wire vector drifted"
+            );
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(decoded.action_tag(), AdminActionType::SetOracleGuards as u8);
+        }
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -1567,15 +1627,11 @@ mod tests {
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
-        let last = ActionType::ALL
-            .iter()
-            .map(|action_type| *action_type as u8)
-            .max()
-            .expect("at least one action type is defined");
-        for byte in 1..=last {
+        for action_type in ActionType::ALL {
+            let byte = *action_type as u8;
             assert!(
                 ActionType::try_from(byte).is_ok(),
-                "outer action namespace unexpectedly has a hole at {byte:#04x}"
+                "assigned outer action must decode at {byte:#04x}"
             );
             let marker = format!("| 0x{byte:02X} |");
             let line = ledger
@@ -1660,7 +1716,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 11] = [
+        const ALL_INNER_TAGS: [AdminActionType; 13] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1672,6 +1728,8 @@ mod tests {
             AdminActionType::CreateEvent,
             AdminActionType::ReservedRt01B,
             AdminActionType::ReservedRt01C,
+            AdminActionType::ConfigureOraclePolicy,
+            AdminActionType::SetOracleGuards,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1685,7 +1743,9 @@ mod tests {
                 | AdminActionType::CancelAllOrdersForAccount
                 | AdminActionType::CreateEvent
                 | AdminActionType::ReservedRt01B
-                | AdminActionType::ReservedRt01C => {}
+                | AdminActionType::ReservedRt01C
+                | AdminActionType::ConfigureOraclePolicy
+                | AdminActionType::SetOracleGuards => {}
             }
         }
 
@@ -1698,26 +1758,31 @@ mod tests {
             .next()
             .expect("split always yields at least one piece");
 
-        // The assigned tags must also be contiguous from 1 — a hole would
-        // mean a burned value nobody recorded.
-        for (i, tag_type) in ALL_INNER_TAGS.into_iter().enumerate() {
-            let tag = tag_type as u8;
-            assert_eq!(
-                tag,
-                i as u8 + 1,
-                "inner admin-action namespace has a hole before {tag:#04x}"
-            );
+        // Every tag from 1 to the highest assigned one needs a row: assigned
+        // tags must not read free, and an unassigned tag below the highest
+        // must be recorded as reserved — a silent hole would mean a burned
+        // value nobody recorded.
+        let highest = ALL_INNER_TAGS
+            .iter()
+            .map(|tag_type| *tag_type as u8)
+            .max()
+            .expect("at least one inner admin tag is assigned");
+        for tag in 1..=highest {
             let marker = format!("| 0x{tag:02X} |");
             let line = section
                 .lines()
                 .find(|line| line.starts_with(&marker))
-                .unwrap_or_else(|| {
-                    panic!("BYTES.md inner-admin table is missing assigned tag {tag:#04x}")
-                });
+                .unwrap_or_else(|| panic!("BYTES.md inner-admin table has no row for {tag:#04x}"));
             assert!(
                 !line.contains("_free_"),
-                "BYTES.md marks assigned inner admin tag {tag:#04x} free"
+                "BYTES.md marks inner admin tag {tag:#04x} free"
             );
+            if !ALL_INNER_TAGS.iter().any(|tag_type| *tag_type as u8 == tag) {
+                assert!(
+                    line.contains("reserved"),
+                    "unassigned inner admin tag {tag:#04x} must be recorded as reserved"
+                );
+            }
         }
     }
 
@@ -2825,15 +2890,6 @@ mod tests {
             (ActionType::RejectAdminAction, BlockPhase::Ordinary),
             (ActionType::EmergencyAdminAction, BlockPhase::Ordinary),
             (
-                ActionType::SetPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (
-                ActionType::CancelPositionTriggers,
-                BlockPhase::TriggerManagement,
-            ),
-            (ActionType::ResolveEvent, BlockPhase::Ordinary),
-            (
                 ActionType::ConfirmWithdrawalReceipt,
                 BlockPhase::PriceCreditPrefix,
             ),
@@ -2845,9 +2901,24 @@ mod tests {
                 ActionType::AuthorizeWithdrawal,
                 BlockPhase::PriceCreditPrefix,
             ),
+            (
+                ActionType::SubmitOracleObservation,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::SetPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (
+                ActionType::CancelPositionTriggers,
+                BlockPhase::TriggerManagement,
+            ),
+            (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (ActionType::CreateSubAccount, BlockPhase::Ordinary),
+            (ActionType::SubAccountTransfer, BlockPhase::Ordinary),
         ];
 
-        assert_eq!(expected.len(), 39);
+        assert_eq!(expected.len(), ActionType::ALL.len());
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
         }
@@ -3543,5 +3614,32 @@ mod tests {
             matches!(decode_tx(&encoded), Err(ExecError::DecodeError(_))),
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
+    }
+
+    #[test]
+    fn test_round_trip_create_sub_account() {
+        let action = Action::CreateSubAccount(CreateSubAccount {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            name: [0xBB; 32],
+        });
+        assert_round_trip(&action, 100);
+    }
+
+    #[test]
+    fn test_round_trip_sub_account_transfer() {
+        let action = Action::SubAccountTransfer(SubAccountTransfer {
+            owner: [0xCC; 20],
+            from: [0xDD; 20],
+            to: [0xEE; 20],
+            amount: 1_000_000,
+        });
+        assert_round_trip(&action, 200);
+    }
+
+    #[test]
+    fn test_sub_account_action_types() {
+        assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
+        assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
     }
 }
