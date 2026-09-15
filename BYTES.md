@@ -141,6 +141,8 @@ They are not outer transaction action bytes.
 | 0x0B | `ReservedRt01C`                   | RT-01               | reserved; discriminant only, no behaviour |
 | 0x0C | `ConfigureOraclePolicy`           | oracle policy       | dormant behind oracle-policy gate |
 | 0x0D | `SetOracleGuards`                 | oracle guards       | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
+| 0x0E | `ScheduleUpgrade`                 | 1.8.0               | governed; schedules the pending protocol-upgrade plan |
+| 0x0F | `CancelUpgrade`                   | 1.8.0               | governed; cancels the pending plan (before H) |
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
