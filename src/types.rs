@@ -549,9 +549,6 @@ pub struct AdminSignerRegistry {
     pub members: Vec<SignerAddress>,
 }
 
-/// Why a `Pending` proposal expired. Stored in the status payload and
-/// committed by the governance digest, so engines cannot disagree on
-/// the reason.
 /// Why a scheduled funding interval was skipped without catch-up
 /// (`Event::FundingSkipped`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
@@ -578,6 +575,9 @@ pub enum OracleRejectReason {
     DeviationBandUnset,
 }
 
+/// Why a `Pending` proposal expired. Stored in the status payload and
+/// committed by the governance digest, so engines cannot disagree on
+/// the reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum ExpiryReason {
     /// `expiry_ms` passed (the 72 h TTL, observed lazily).
