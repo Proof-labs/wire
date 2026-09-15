@@ -1716,7 +1716,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 13] = [
+        const ALL_INNER_TAGS: [AdminActionType; 15] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::CreateImpactMarket,
@@ -1730,6 +1730,8 @@ mod tests {
             AdminActionType::ReservedRt01C,
             AdminActionType::ConfigureOraclePolicy,
             AdminActionType::SetOracleGuards,
+            AdminActionType::ScheduleUpgrade,
+            AdminActionType::CancelUpgrade,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -1745,7 +1747,9 @@ mod tests {
                 | AdminActionType::ReservedRt01B
                 | AdminActionType::ReservedRt01C
                 | AdminActionType::ConfigureOraclePolicy
-                | AdminActionType::SetOracleGuards => {}
+                | AdminActionType::SetOracleGuards
+                | AdminActionType::ScheduleUpgrade
+                | AdminActionType::CancelUpgrade => {}
             }
         }
 
@@ -3641,5 +3645,58 @@ mod tests {
     fn test_sub_account_action_types() {
         assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
         assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
+    }
+
+    #[test]
+    fn sub_account_record_preserves_creation_height() {
+        let record = SubAccount {
+            master: [0xAA; 20],
+            sub_account_id: 42,
+            address: [0xBB; 20],
+            name: [0xCC; 32],
+            created_height: u64::MAX,
+        };
+        let encoded = rmp_serde::to_vec(&record).expect("sub-account record encodes");
+        let decoded: SubAccount =
+            rmp_serde::from_slice(&encoded).expect("sub-account record decodes");
+        assert_eq!(decoded.created_height, u64::MAX);
+        assert_eq!(decoded.master, record.master);
+        assert_eq!(decoded.sub_account_id, record.sub_account_id);
+        assert_eq!(decoded.address, record.address);
+        assert_eq!(decoded.name, record.name);
+        let json = serde_json::to_value(&decoded).expect("sub-account JSON encodes");
+        assert_eq!(json["created_height"], serde_json::json!(u64::MAX));
+    }
+
+    /// The upgrade-plan admin arms round-trip through the canonical msgpack
+    /// encoding, and their engine-facing tags are the 0x0E/0x0F the BYTES.md
+    /// ledger claims.
+    #[test]
+    fn upgrade_plan_admin_actions_round_trip() {
+        let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
+            target_height: 50_780_000,
+            protocol_version: 2,
+            successor_sha256: [0xAB; 32],
+        });
+        let canonical = canonical_admin_action_bytes(&schedule).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(
+            &decoded,
+            AdminAction::ScheduleUpgrade(plan)
+                if plan.target_height == 50_780_000
+                    && plan.protocol_version == 2
+                    && plan.successor_sha256 == [0xAB; 32]
+        ));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(schedule.action_tag(), 0x0E);
+
+        let cancel = AdminAction::CancelUpgrade(CancelUpgrade {
+            target_height: 50_780_000,
+        });
+        let canonical = canonical_admin_action_bytes(&cancel).unwrap();
+        let (decoded, canonical2) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(decoded, AdminAction::CancelUpgrade(_)));
+        assert_eq!(canonical, canonical2);
+        assert_eq!(cancel.action_tag(), 0x0F);
     }
 }

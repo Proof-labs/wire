@@ -44,12 +44,16 @@ name = "proof-wire"
 # OracleRejectReason, FundingSkipReason types and ExecError::OracleGuardUnset
 # (code 82). Pre-existing bytes still decode unchanged -> MINOR.
 #
-# 1.7.0 -> 1.8.0: additive wire change (sub-accounts, SA-0/SA-1). New outer
+# 1.7.0 -> 1.8.0: additive admin-action tags. ScheduleUpgrade (0x0E) and
+# CancelUpgrade (0x0F) add the on-chain upgrade-plan path; pre-existing bytes
+# still decode unchanged -> MINOR.
+#
+# 1.8.0 -> 1.9.0: additive wire change (sub-accounts, SA-0/SA-1). New outer
 # actions CreateSubAccount at 0x28 and SubAccountTransfer at 0x29, the frozen
 # derive_sub_account, SubAccountCreated/SubAccountTransferCompleted events,
 # and sub-account ExecError codes at 83-88 (moved off the oracle-guard range
 # that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
-version = "1.8.0"
+version = "1.9.0"
 edition = "2021"
 
 [dependencies]
