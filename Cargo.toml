@@ -32,7 +32,12 @@ name = "proof-wire"
 # AdminAction::CreateEvent at inner tag 0x09 (claiming the RT-01 reservation),
 # plus the typed EventKey. Pre-existing bytes still decode unchanged -> MINOR.
 # still decode unchanged -> MINOR.
-version = "1.5.0"
+#
+# 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
+# resolves a standalone event; the impact-market resolution at 0x0F is renamed
+# ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
+# unchanged -> MINOR.
+version = "1.6.0"
 edition = "2021"
 
 [dependencies]

@@ -122,7 +122,7 @@ pub enum Outcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum EventOracleSource {
     /// Resolution determined by the underlying perp's oracle reading at
-    /// `ResolveEvent` time, compared against `strike_price`. The classic
+    /// `ResolveImpactMarket` time, compared against `strike_price`. The classic
     /// "is BTC above $X at expiry?" pattern.
     #[display("underlying_price_vs_strike:{strike_price}:{comparison}")]
     UnderlyingPriceVsStrike {
@@ -1312,7 +1312,7 @@ pub struct MarketConfig {
     /// Maximum age (ms) of the oracle reading at the time of any
     /// margin/order/liquidation read. `0 = no check (back-compat)`.
     ///
-    /// Oracle staleness was previously enforced only at `ResolveEvent`
+    /// Oracle staleness was previously enforced only at `ResolveImpactMarket`
     /// (60 s window) and replay-protection in `OracleUpdate`. Order
     /// placement, margin checks, and liquidation read `get_mark_price`
     /// without checking the oracle's age, so a node with a stuck
@@ -2327,7 +2327,7 @@ pub struct CreateImpactMarket {
     /// Optional — `None` (or absent on the wire, via `serde(default)`) means
     /// `RelayerAttested` (the legacy default — the resolver supplies the
     /// outcome). Two auto-resolve modes derive YES/NO from an on-chain
-    /// oracle; in those modes `ResolveEvent.outcome` becomes a verifiable
+    /// oracle; in those modes `ResolveImpactMarket.outcome` becomes a verifiable
     /// assertion (engine recomputes and rejects on mismatch). Field at the
     /// END of the struct so old SDK clients (12-element arrays) continue
     /// to decode cleanly via the wire's `serde(default)` rule.
@@ -2378,8 +2378,19 @@ pub struct CreateEvent {
 /// conditional-perp book and voids the loser; cash-settles both binary books
 /// to $1 (winner) / $0 (loser). Requires relayer authorization.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ResolveEvent {
+pub struct ResolveImpactMarket {
     pub impact_market_id: ImpactMarketId,
+    pub outcome: Outcome,
+    #[serde(with = "crate::wire_bytes")]
+    pub signer: [u8; 20],
+}
+
+/// Resolve a standalone event. Settles its two prediction-binary books to
+/// Yes/No only (there is no Void), reads no underlying price, and is
+/// authorized by the market-parameters key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResolveEvent {
+    pub event_id: EventId,
     pub outcome: Outcome,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
@@ -2937,12 +2948,20 @@ pub enum Event {
         timestamp_ms: u64,
     },
     /// Event was resolved with a definitive outcome. Emitted once per family.
-    EventResolved {
+    ImpactMarketResolved {
         impact_market_id: ImpactMarketId,
         outcome: Outcome,
         /// Oracle price of the underlying at resolution time (micro-USDC).
         /// Used as the settlement mark for the winning conditional perp.
         settlement_price: u64,
+        timestamp_ms: u64,
+        signer: Option<[u8; 20]>,
+    },
+    /// A standalone event resolved to Yes or No. No settlement price (no
+    /// underlying) and no Void.
+    EventResolved {
+        event_id: EventId,
+        outcome: Outcome,
         timestamp_ms: u64,
         signer: Option<[u8; 20]>,
     },
@@ -3617,7 +3636,7 @@ pub enum ExecError {
     MarketClosedForTrading(MarketId),
     /// Binary-book order outside the [0, BINARY_PRICE_MAX] range.
     BinaryPriceOutOfRange,
-    /// ResolveEvent called with an invalid outcome for the current state.
+    /// ResolveImpactMarket called with an invalid outcome for the current state.
     InvalidResolution(String),
     /// A fill would push the taker's absolute net position past
     /// `MarketConfig.max_position_size`. Engine-level cap enforced at
@@ -4113,7 +4132,7 @@ impl ExecError {
                 "Binary-book order price is outside the [0, BINARY_PRICE_MAX] range."
             }
             ExecError::InvalidResolution(_) => {
-                "ResolveEvent called with an outcome incompatible with the current state (already resolved, \
+                "ResolveImpactMarket called with an outcome incompatible with the current state (already resolved, \
                  outcome not in the configured set, etc.)."
             }
             ExecError::PositionLimitExceeded { .. } => {
@@ -4491,7 +4510,7 @@ pub mod prelude {
         FailWithdrawalReceipt, FillId, ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus,
         LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOrder,
         OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleUpdate,
-        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
+        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveImpactMarket,
         RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
         SetUserMarketLeverage, Side, TimeInForce, TxContext, UpdateMarketFees, Withdraw,
         WithdrawRequest, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
