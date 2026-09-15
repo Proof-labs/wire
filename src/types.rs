@@ -3950,11 +3950,13 @@ impl ExecError {
             ExecError::BridgeReceiptMismatch(_) => 74,
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
-            ExecError::SubAccountNotFound => 77,
-            ExecError::SubAccountAlreadyExists => 78,
-            ExecError::SubAccountTransferSameAccount => 79,
-            ExecError::SubAccountTransferBothChildren => 80,
-            ExecError::SubAccountTransferInsufficientBalance => 81,
+            // Sub-account codes start at 83 to avoid the oracle-guard
+            // range (77-82) merged in v1.5.0 via wire#15.
+            ExecError::SubAccountNotFound => 83,
+            ExecError::SubAccountAlreadyExists => 84,
+            ExecError::SubAccountTransferSameAccount => 85,
+            ExecError::SubAccountTransferBothChildren => 86,
+            ExecError::SubAccountTransferInsufficientBalance => 87,
             ExecError::InternalError(_) => 255,
         }
     }
