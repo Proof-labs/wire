@@ -799,6 +799,8 @@ mod tests {
         const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
         const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
         const ORACLE_HEX: &str = include_str!("../vectors/oracle_update.hex");
+        const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
+        const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
 
         let cases: Vec<(Action, u64, &str, u8)> = vec![
             (
@@ -836,6 +838,27 @@ mod tests {
                 3,
                 ORACLE_HEX.trim(),
                 OracleUpdate::ACTION_TYPE,
+            ),
+            (
+                Action::CreateSubAccount(CreateSubAccount {
+                    owner: [0xAA; 20],
+                    sub_account_id: 42,
+                    name: [0xBB; 32],
+                }),
+                100,
+                CREATE_SUB_ACCOUNT_HEX.trim(),
+                CreateSubAccount::ACTION_TYPE,
+            ),
+            (
+                Action::SubAccountTransfer(SubAccountTransfer {
+                    owner: [0xCC; 20],
+                    from: [0xDD; 20],
+                    to: [0xEE; 20],
+                    amount: 1_000_000,
+                }),
+                200,
+                SUB_ACCOUNT_TRANSFER_HEX.trim(),
+                SubAccountTransfer::ACTION_TYPE,
             ),
         ];
 
@@ -1115,6 +1138,17 @@ mod tests {
                 event_id: crate::types::EventId(7),
                 outcome: Outcome::Yes,
                 signer: [0x33; 20],
+            }),
+            Action::CreateSubAccount(crate::types::CreateSubAccount {
+                owner: [0xAA; 20],
+                sub_account_id: 42,
+                name: [0xBB; 32],
+            }),
+            Action::SubAccountTransfer(crate::types::SubAccountTransfer {
+                owner: [0xCC; 20],
+                from: [0xDD; 20],
+                to: [0xEE; 20],
+                amount: 1_000_000,
             }),
         ]
     }
@@ -3103,6 +3137,17 @@ mod tests {
             Action::RevokeAgent(RevokeAgent {
                 owner: [0xAA; 20],
                 agent_pubkey: [0xBB; 32],
+            }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0xAA; 20],
+                sub_account_id: 42,
+                name: [0xBB; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0xCC; 20],
+                from: [0xDD; 20],
+                to: [0xEE; 20],
+                amount: 1_000_000,
             }),
         ];
 

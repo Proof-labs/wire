@@ -36,7 +36,7 @@ decision-register references for each bump) lives in the header of
 - 1.4.0 → 1.5.0 — EN-01: `AdminAction::CreateEvent` (inner tag `0x09`, claiming the RT-01 reservation) and the typed `EventKey`
 - 1.5.0 → 1.6.0 — `ResolveEvent` (outer action `0x27`) for standalone events; the `0x0F` impact-market resolution is renamed `ResolveImpactMarket` (payload unchanged)
 - 1.7.0 → 1.8.0 — `ScheduleUpgrade` (inner tag `0x0E`) and `CancelUpgrade` (`0x0F`): the on-chain upgrade-plan path replacing `UPGRADE_PLAN` env coordination
-- 1.8.0 → 1.9.0 — `CreateSubAccount` (outer action `0x28`) and `SubAccountTransfer` (`0x29`), domain-separated child-address derivation, registry records including `created_height`, and sub-account error codes `83`–`88`
+- 1.8.0 → 1.9.0 — `CreateSubAccount` (outer action `0x28`) and `SubAccountTransfer` (`0x29`), domain-separated child-address derivation, registry records including `created_height`, and sub-account error codes `83`–`89`
 
 ## The byte ledger
 
