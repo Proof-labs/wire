@@ -290,8 +290,8 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x4F | `OracleEpoch`                   | F16 / exchange #508 | active   |
 | 0x50 | `PendingOracleEpoch`            | F16 / exchange #508 | active   |
 | 0x51 | `OraclePrefix`                  | F16 / exchange #508 | active   |
-| 0x52 | `SubAccountRegistry`            | sub-accounts       | open PR  |
-| 0x53 | `SubAccountsByMaster`           | sub-accounts       | open PR  |
+| 0x56 | `SubAccountRegistry`            | sub-accounts       | open PR  |
+| 0x57 | `SubAccountsByMaster`           | sub-accounts       | open PR  |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
@@ -371,14 +371,17 @@ that gives it behaviour.
 
 ## History
 
-- **2026-09-16 — Sub-accounts prefix renumber (PR #21).** The F16 runtime
+- **2026-09-16 — Sub-accounts prefix allocation (PR #21).** The F16 runtime
   reconcile (exchange #508) landed `OracleEpoch = 0x4F`,
   `PendingOracleEpoch = 0x50`, and `OraclePrefix = 0x51` in the engine's
   `Prefix` enum while this branch still claimed `0x4F`/`0x50` for the
-  sub-account registry. Per the second-lander-renumbers rule the registry
-  moves to `0x52` (`SubAccountRegistry`) and `0x53` (`SubAccountsByMaster`);
-  the oracle rows are recorded here from exchange `dev`. No wire byte, code,
-  or encoding change.
+  sub-account registry, and the oracle-policy wave holds the re-based
+  `0x52`–`0x53` reservation, with the on-chain upgrade-plan PR claiming
+  `0x54`/`0x55`. Per the second-lander-renumbers rule the registry takes the
+  next free pair, `0x56` (`SubAccountRegistry`) and `0x57`
+  (`SubAccountsByMaster`), after a scan of every in-flight branch; the oracle
+  rows are recorded here from exchange `dev`. No wire byte, code, or encoding
+  change.
 - **2026-08-06 — W29-02 bounded-work indexes (PR #299).** Assigned
   `MarketPositionOwner = 0x34`, `PoolPosition = 0x3D`, and
   `ActiveImpactMarket = 0x3E`, plus Meta subkeys `0x0B`/`0x0C`. The
