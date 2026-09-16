@@ -4084,6 +4084,10 @@ pub enum ExecError {
     SubAccountIdZero,
     /// Transfer rejected: the amount must be greater than zero.
     SubAccountTransferZeroAmount,
+    /// Sub-account actions are decoded by this wire version but the chain
+    /// has not enabled them yet: the SA-1 handlers land behind a parked
+    /// activation, so pre-activation submissions reject closed.
+    SubAccountsInactive,
 }
 
 impl ExecError {
@@ -4183,6 +4187,7 @@ impl ExecError {
             ExecError::SubAccountTransferInsufficientBalance => 87,
             ExecError::SubAccountIdZero => 88,
             ExecError::SubAccountTransferZeroAmount => 89,
+            ExecError::SubAccountsInactive => 90,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4368,6 +4373,9 @@ impl ExecError {
             }
             ExecError::SubAccountTransferZeroAmount => {
                 "Sub-account transfer amount must be greater than zero."
+            }
+            ExecError::SubAccountsInactive => {
+                "Sub-account actions are not enabled on this chain yet; the handlers land behind a parked activation."
             }
             ExecError::InternalError(_) => {
                 "Catch-all for unexpected runtime failures (panics caught by the FFI boundary, etc.). \
@@ -4814,6 +4822,9 @@ impl fmt::Display for ExecError {
             }
             ExecError::SubAccountTransferZeroAmount => {
                 write!(f, "sub-account transfer amount must be greater than zero")
+            }
+            ExecError::SubAccountsInactive => {
+                write!(f, "sub-account actions are not enabled on this chain")
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
