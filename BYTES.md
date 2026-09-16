@@ -335,9 +335,9 @@ that gives it behaviour.
 
 | Namespace | Reserved range | Mechanism | Status |
 |---|---|---|---|
-| Outer action bytes | `0x27`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
-| Inner admin tags | `0x09`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
-| State-key prefixes | `0x4A`–`0x4D` | `Prefix` variants, no keyspace written | parked |
+| Outer action bytes | `0x28`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
+| Inner admin tags | `0x0A`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
+| State-key prefixes | `0x4C`–`0x4D` | `Prefix` variants, no keyspace written | parked |
 | Schema rungs | `v12`–`v16` | `SCHEMA_V12_LEVEL_AGGREGATES`, `SCHEMA_V13_LEVEL_SEQ`, `SCHEMA_V14_ATTESTED_STATE_ROOT`, `SCHEMA_V15/16_RESERVED_RT01A/B` — `UPGRADE_HEIGHT_*` at `u64::MAX` | parked |
 
 ## History
