@@ -329,9 +329,10 @@ share one namespace and must not be reused independently.
 | 0x0B | `LivePositionCount`              | W29-02 / PR #299   | open PR  |
 | 0x0C | `ActiveImpactMarketCount`        | W29-02 / PR #299   | open PR  |
 | 0x0D | `OracleGuardsActivation`         | OR-01 / exchange #522 | active |
-| 0x0E | `SubAccountCreationBlockHeight`  | sub-accounts       | open PR  |
-| 0x0F | `SubAccountCreationCount`        | sub-accounts       | open PR  |
-| 0x10 | `SubAccountRegistryCount`        | sub-accounts       | open PR  |
+| 0x0E | `PreparedProtocolVersion`        | upgrade-plan       | active   |
+| 0x0F | `SubAccountCreationBlockHeight`  | sub-accounts       | open PR  |
+| 0x10 | `SubAccountCreationCount`        | sub-accounts       | open PR  |
+| 0x11 | `SubAccountRegistryCount`        | sub-accounts       | open PR  |
 | ...  | up to 0xFF                       | —                  | —        |
 
 ## Process for adding a new byte
@@ -371,6 +372,14 @@ that gives it behaviour.
 
 ## History
 
+- **2026-09-16 — Sub-accounts Meta subkey renumber (PR #21).** The
+  upgrade-plan wave landed `PreparedProtocolVersion = 0x0E` in the engine's
+  `MetaKey` enum after this branch claimed `0x0E`–`0x10` for the sub-account
+  admission counters. Per the second-lander-renumbers rule the counters move
+  to `0x0F` (`SubAccountCreationBlockHeight`), `0x10`
+  (`SubAccountCreationCount`), and `0x11` (`SubAccountRegistryCount`); the
+  `0x0E` row is recorded from exchange `dev`. No wire byte, code, or
+  encoding change.
 - **2026-09-16 — Sub-accounts prefix allocation (PR #21).** The F16 runtime
   reconcile (exchange #508) landed `OracleEpoch = 0x4F`,
   `PendingOracleEpoch = 0x50`, and `OraclePrefix = 0x51` in the engine's
