@@ -2455,6 +2455,44 @@ pub struct RevokeAgent {
     pub agent_pubkey: [u8; 32],
 }
 
+/// Create a new sub-account under an owner. The derived address is computed
+/// via `derive_sub_account(owner, sub_account_id)`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CreateSubAccount {
+    #[serde(with = "crate::wire_bytes")]
+    pub owner: [u8; 20],
+    pub sub_account_id: u32,
+    #[serde(with = "crate::wire_bytes")]
+    pub name: [u8; 32],
+}
+
+/// Transfer balance between two addresses. At least one side must be the
+/// master owner (the address that created the sub-accounts). The source
+/// must pass the maintenance-margin solvency check.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubAccountTransfer {
+    #[serde(with = "crate::wire_bytes")]
+    pub owner: [u8; 20],
+    #[serde(with = "crate::wire_bytes")]
+    pub from: [u8; 20],
+    #[serde(with = "crate::wire_bytes")]
+    pub to: [u8; 20],
+    pub amount: u64,
+}
+
+/// Registry row for a sub-account.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubAccount {
+    #[serde(with = "crate::wire_bytes")]
+    pub master: [u8; 20],
+    pub sub_account_id: u32,
+    #[serde(with = "crate::wire_bytes")]
+    pub address: [u8; 20],
+    #[serde(with = "crate::wire_bytes")]
+    pub name: [u8; 32],
+    pub created_height: u64,
+}
+
 /// Admin action to create a new impact market family. Atomically registers
 /// the 4 child markets (CPY / CPN / EBY / EBN) with sequential IDs starting
 /// at `child_market_base` and writes the [`ImpactMarketInfo`] record.
@@ -3633,6 +3671,18 @@ pub enum Event {
         market: MarketId,
         previous_reason: String,
     },
+    SubAccountCreated {
+        owner: [u8; 20],
+        sub_account_id: u32,
+        address: [u8; 20],
+        name: [u8; 32],
+    },
+    SubAccountTransferCompleted {
+        owner: [u8; 20],
+        from: [u8; 20],
+        to: [u8; 20],
+        amount: u64,
+    },
 }
 
 impl Event {
@@ -4020,6 +4070,24 @@ pub enum ExecError {
         aggregate_bps: u32,
         max_slippage_bps: u32,
     },
+    /// Registry lookup miss: no sub-account exists for the given master/id.
+    SubAccountNotFound,
+    /// Duplicate create: a sub-account with this master/id already exists.
+    SubAccountAlreadyExists,
+    /// Transfer from == to (no-op rejected).
+    SubAccountTransferSameAccount,
+    /// Neither side of a transfer is the master owner; both are derived children.
+    SubAccountTransferBothChildren,
+    /// Source balance is below the transfer amount.
+    SubAccountTransferInsufficientBalance,
+    /// Create rejected: `sub_account_id` is zero, which is not a valid id.
+    SubAccountIdZero,
+    /// Transfer rejected: the amount must be greater than zero.
+    SubAccountTransferZeroAmount,
+    /// Sub-account actions are decoded by this wire version but the chain
+    /// has not enabled them yet: the SA-1 handlers land behind a parked
+    /// activation, so pre-activation submissions reject closed.
+    SubAccountsInactive,
 }
 
 impl ExecError {
@@ -4112,6 +4180,14 @@ impl ExecError {
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
             ExecError::OracleGuardUnset { .. } => 82,
+            ExecError::SubAccountNotFound => 83,
+            ExecError::SubAccountAlreadyExists => 84,
+            ExecError::SubAccountTransferSameAccount => 85,
+            ExecError::SubAccountTransferBothChildren => 86,
+            ExecError::SubAccountTransferInsufficientBalance => 87,
+            ExecError::SubAccountIdZero => 88,
+            ExecError::SubAccountTransferZeroAmount => 89,
+            ExecError::SubAccountsInactive => 90,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4276,6 +4352,30 @@ impl ExecError {
                  was submitted at or after the bridge receipt cutover. (An operator-receipt \
                  terminal submitted before the cutover instead fails as a decode error, code 1, \
                  byte-identically to the pre-upgrade binary.)"
+            }
+            ExecError::SubAccountNotFound => {
+                "No sub-account exists in the registry for the given master address and sub-account id."
+            }
+            ExecError::SubAccountAlreadyExists => {
+                "A sub-account with this master address and sub-account id already exists in the registry."
+            }
+            ExecError::SubAccountTransferSameAccount => {
+                "Transfer from and to addresses are identical; no-op transfers are rejected."
+            }
+            ExecError::SubAccountTransferBothChildren => {
+                "Neither side of a transfer is the master owner address; at least one side must be the master."
+            }
+            ExecError::SubAccountTransferInsufficientBalance => {
+                "Source account has insufficient balance to complete the transfer."
+            }
+            ExecError::SubAccountIdZero => {
+                "Sub-account id must be non-zero; id 0 is not a valid sub-account id."
+            }
+            ExecError::SubAccountTransferZeroAmount => {
+                "Sub-account transfer amount must be greater than zero."
+            }
+            ExecError::SubAccountsInactive => {
+                "Sub-account actions are not enabled on this chain yet; the handlers land behind a parked activation."
             }
             ExecError::InternalError(_) => {
                 "Catch-all for unexpected runtime failures (panics caught by the FFI boundary, etc.). \
@@ -4702,6 +4802,30 @@ impl fmt::Display for ExecError {
             ExecError::WithdrawalTerminalGated(msg) => {
                 write!(f, "withdrawal terminal gated by receipt cutover: {msg}")
             }
+            ExecError::SubAccountNotFound => {
+                write!(f, "sub-account not found in registry")
+            }
+            ExecError::SubAccountAlreadyExists => {
+                write!(f, "sub-account already exists in registry")
+            }
+            ExecError::SubAccountTransferSameAccount => {
+                write!(f, "transfer from and to are the same address")
+            }
+            ExecError::SubAccountTransferBothChildren => {
+                write!(f, "transfer requires at least one side to be the master owner")
+            }
+            ExecError::SubAccountTransferInsufficientBalance => {
+                write!(f, "insufficient balance for sub-account transfer")
+            }
+            ExecError::SubAccountIdZero => {
+                write!(f, "sub-account id must be non-zero")
+            }
+            ExecError::SubAccountTransferZeroAmount => {
+                write!(f, "sub-account transfer amount must be greater than zero")
+            }
+            ExecError::SubAccountsInactive => {
+                write!(f, "sub-account actions are not enabled on this chain")
+            }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
@@ -4716,14 +4840,15 @@ pub mod prelude {
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
         AuthorizeWithdrawal, Branch, BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder,
         CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket, Deposit,
-        DepositLocator, Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal,
-        FailWithdrawalReceipt, FillId, FundingSkipReason, ImpactMarketId, ImpactMarketInfo,
-        ImpactMarketStatus, LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind,
-        MarketOracleGuards, MarketOrder, OpenInterest, OperatorReceiptProof,
-        OperatorReceiptRegistry, OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order,
-        OrderId, Outcome, PlaceOrder, Position, ResolveEvent, ResolveImpactMarket, RevokeAgent,
-        RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride, SetUserMarketLeverage, Side,
+        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket,
+        CreateSubAccount, Deposit, DepositLocator, Event, EventOracleSource, ExecError,
+        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
+        ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus, LiquidateAccounts, MarkSourceMode,
+        MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
+        OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason, OracleUpdate,
+        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
+        ResolveImpactMarket, RevokeAgent, RunFundingTick, RunLiquidationSweep,
+        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
         TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
         WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
         DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
