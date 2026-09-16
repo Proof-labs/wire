@@ -287,8 +287,11 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x4C | `ReservedRt01C`                 | RT-01              | reserved |
 | 0x4D | `ReservedRt01D`                 | RT-01              | reserved |
 | 0x4E | `MarketOracleGuards`            | OR-01 / exchange #522 | active |
-| 0x4F | `SubAccountRegistry`            | sub-accounts       | open PR  |
-| 0x50 | `SubAccountsByMaster`           | sub-accounts       | open PR  |
+| 0x4F | `OracleEpoch`                   | F16 / exchange #508 | active   |
+| 0x50 | `PendingOracleEpoch`            | F16 / exchange #508 | active   |
+| 0x51 | `OraclePrefix`                  | F16 / exchange #508 | active   |
+| 0x52 | `SubAccountRegistry`            | sub-accounts       | open PR  |
+| 0x53 | `SubAccountsByMaster`           | sub-accounts       | open PR  |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
@@ -364,10 +367,18 @@ that gives it behaviour.
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm); `0x27`–`0x29` are assigned above | parked |
 | Inner admin tags | `0x0A`–`0x0B` | `AdminActionType` discriminant-only variants; `0x09` is assigned above | parked |
 | State-key prefixes | `0x4C`–`0x4D` | `Prefix` variants, no keyspace written; `0x4A`–`0x4B` are assigned above | parked |
-| Schema rungs | `v12` (Window A), `v15`–`v16` | `SCHEMA_V12_RESERVED_WINDOW_A`; `SCHEMA_V15/16_LEVEL_*` + `UPGRADE_HEIGHT_LEVEL_AGGREGATES/SEQ` at `u64::MAX` | parked |
+| Schema rungs | `v12`–`v16` | `SCHEMA_V12_LEVEL_AGGREGATES`, `SCHEMA_V13_LEVEL_SEQ`, `SCHEMA_V14_ATTESTED_STATE_ROOT`, `SCHEMA_V15/16_RESERVED_RT01A/B` — `UPGRADE_HEIGHT_*` at `u64::MAX` | parked |
 
 ## History
 
+- **2026-09-16 — Sub-accounts prefix renumber (PR #21).** The F16 runtime
+  reconcile (exchange #508) landed `OracleEpoch = 0x4F`,
+  `PendingOracleEpoch = 0x50`, and `OraclePrefix = 0x51` in the engine's
+  `Prefix` enum while this branch still claimed `0x4F`/`0x50` for the
+  sub-account registry. Per the second-lander-renumbers rule the registry
+  moves to `0x52` (`SubAccountRegistry`) and `0x53` (`SubAccountsByMaster`);
+  the oracle rows are recorded here from exchange `dev`. No wire byte, code,
+  or encoding change.
 - **2026-08-06 — W29-02 bounded-work indexes (PR #299).** Assigned
   `MarketPositionOwner = 0x34`, `PoolPosition = 0x3D`, and
   `ActiveImpactMarket = 0x3E`, plus Meta subkeys `0x0B`/`0x0C`. The
