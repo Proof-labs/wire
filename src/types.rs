@@ -34,7 +34,7 @@ pub type FillId = u64;
 /// Impact market family identifier (1 family owns 4 child markets — CPY/CPN/EBY/EBN).
 pub type ImpactMarketId = u32;
 
-/// Identifier of a standalone event (G17 re-root), structurally distinct
+/// Identifier of a standalone event (re-rooted), structurally distinct
 /// from [`ImpactMarketId`] per the domain-newtype convention. `#[serde(transparent)]`
 /// so it encodes as a bare `u32`, keeping the wire unchanged. The
 /// underlying value space is currently shared with families (a legacy family's
@@ -122,7 +122,7 @@ pub enum Outcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum EventOracleSource {
     /// Resolution determined by the underlying perp's oracle reading at
-    /// `ResolveEvent` time, compared against `strike_price`. The classic
+    /// `ResolveImpactMarket` time, compared against `strike_price`. The classic
     /// "is BTC above $X at expiry?" pattern.
     #[display("underlying_price_vs_strike:{strike_price}:{comparison}")]
     UnderlyingPriceVsStrike {
@@ -206,7 +206,7 @@ pub enum MarketKind {
     },
     /// Prediction-binary token — trades on [0, BINARY_PRICE_MAX] µUSDC.
     /// Settles to $1 if the branch wins at resolution, $0 otherwise.
-    /// G17 re-root: parented by an [`EventInfo`] via `event_id`, not a family.
+    /// Re-rooted: parented by an [`EventInfo`] via `event_id`, not a family.
     PredictionBinary { event_id: EventId, branch: Branch },
 }
 
@@ -306,7 +306,7 @@ pub const DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR: u64 = 10;
 impl MarketKind {
     /// Returns the parent id this market belongs to, if any. For a
     /// conditional perp that is its impact-market family; for a prediction
-    /// binary that is its [`EventInfo`] (G17 re-root). Currently the two id
+    /// binary that is its [`EventInfo`] (re-rooted). Currently the two id
     /// spaces share values, so a legacy family's binary still resolves to it.
     pub fn impact_market_id(&self) -> Option<ImpactMarketId> {
         match self {
@@ -319,7 +319,7 @@ impl MarketKind {
     }
 
     /// The event this market is parented by, if it is a prediction binary
-    /// (G17 re-root). `None` for perps and conditional perps.
+    /// (re-rooted). `None` for perps and conditional perps.
     pub fn event_id(&self) -> Option<EventId> {
         match self {
             MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
@@ -357,7 +357,7 @@ pub enum ImpactMarketStatus {
     Resolved(Outcome),
 }
 
-/// Stored on-chain record for a standalone event (G17 re-root). Owns its two
+/// Stored on-chain record for a standalone event (re-rooted). Owns its two
 /// prediction-binary books (EBY, EBN) and its resolution rule. Unlike an
 /// impact-market family it has no underlying perp and no conditional legs, so
 /// its binaries never enter the scenario evaluator (they are backed by the
@@ -547,6 +547,32 @@ pub struct AdminSignerRegistry {
 /// Why a `Pending` proposal expired. Stored in the status payload and
 /// committed by the governance digest, so engines cannot disagree on
 /// the reason.
+/// Why a scheduled funding interval was skipped without catch-up
+/// (`Event::FundingSkipped`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+pub enum FundingSkipReason {
+    /// The market's oracle is older than `mark_price_max_oracle_age_ms`.
+    #[display("oracle_stale")]
+    OracleStale,
+    /// The market has no `mark_price_max_oracle_age_ms` yet while the
+    /// oracle-guard gate is active.
+    #[display("oracle_guard_unset")]
+    OracleGuardUnset,
+}
+
+/// Why an `OracleUpdate` was refused by the per-market deviation guard
+/// (`Event::OracleUpdateRejected`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
+pub enum OracleRejectReason {
+    /// The submitted price sits outside `last_good +- max_oracle_deviation_bps`.
+    #[display("deviation_exceeded")]
+    DeviationExceeded,
+    /// The market has no deviation band yet (`max_oracle_deviation_bps == 0`);
+    /// the guard gate is live, so the default fails closed.
+    #[display("deviation_band_unset")]
+    DeviationBandUnset,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum ExpiryReason {
     /// `expiry_ms` passed (the 72 h TTL, observed lazily).
@@ -704,6 +730,17 @@ pub enum AdminAction {
     /// allowlists otherwise lack. Admitted only from the lineage's
     /// authority-governance activation height.
     UpdateAuthoritySet(UpdateAuthoritySet),
+    /// Schedules (or reschedules) the pending protocol upgrade: the target
+    /// height, the protocol version that must be staged, and the SHA-256 of
+    /// the successor library file. One pending plan; rescheduling replaces.
+    /// Governed via the signer registry; the hash is re-verified against the
+    /// staged file at the swap (fail-closed on mismatch).
+    ScheduleUpgrade(ScheduleUpgrade),
+    /// Cancels the pending protocol upgrade plan. Must commit before the
+    /// plan's target height; a cancellation that has not committed on every
+    /// validator before the boundary is not a cancellation (roll-forward
+    /// only).
+    CancelUpgrade(CancelUpgrade),
     /// Cancels every resting order of one account, optionally confined to
     /// one market, through the same store path as the owner's own
     /// cancel-all: reserved margin is released and one `OrderCancelled`
@@ -711,6 +748,30 @@ pub enum AdminAction {
     /// freeze: the account may place again in the next block. Admitted
     /// only from the lineage's cancel-all-for-account activation height.
     CancelAllOrdersForAccount(CancelAllOrdersForAccount),
+    /// Schedules a canonical, complete oracle-policy epoch after quorum approval.
+    ConfigureOraclePolicy(ConfigureOraclePolicy),
+    /// Sets the per-market oracle guards (`mark_price_max_oracle_age_ms`
+    /// and `max_oracle_deviation_bps`) on one standalone perpetual through
+    /// the admin quorum. Admitted only from
+    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`; below it the
+    /// arm reads as an unknown variant exactly like an older binary.
+    SetOracleGuards(SetOracleGuards),
+}
+
+/// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
+/// values to write. `None` leaves a field untouched; at least one field must
+/// be `Some`, and a supplied value must be non-zero, because zero is the
+/// "unset" sentinel that fails closed once the guard gate is live. Clearing a
+/// guard is deliberately not expressible: to stop trading on a market, halt
+/// it, do not disarm its guards.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetOracleGuards {
+    pub market: MarketId,
+    /// New `MarketConfig::mark_price_max_oracle_age_ms` in milliseconds.
+    pub mark_price_max_oracle_age_ms: Option<u64>,
+    /// New `MarketOracleGuards::max_oracle_deviation_bps` in basis points, at
+    /// most 10_000.
+    pub max_oracle_deviation_bps: Option<u32>,
 }
 
 /// One operator-authority allowlist. On the `UpdateAuthoritySet` wire the
@@ -751,6 +812,31 @@ pub struct CancelAllOrdersForAccount {
     pub market: Option<MarketId>,
 }
 
+/// Payload of [`AdminAction::ScheduleUpgrade`]: one pending protocol-upgrade
+/// plan. `successor_sha256` pins the staged successor library file — verified
+/// at schedule time and re-verified at the swap (fail-closed on mismatch).
+/// `protocol_version` must differ from the active version: scheduling a
+/// self-upgrade is a no-op by construction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleUpgrade {
+    /// Consensus height at which the successor becomes active.
+    pub target_height: u64,
+    /// The successor's monotonic protocol version.
+    pub protocol_version: u32,
+    /// SHA-256 of the staged successor library file.
+    #[serde(with = "crate::wire_bytes")]
+    pub successor_sha256: [u8; 32],
+}
+
+/// Payload of [`AdminAction::CancelUpgrade`]: which plan is being cancelled,
+/// by target height, so a cancellation names the plan it retires. Cancelling
+/// a non-existent plan is a no-op, not an error: the plan is gone either way.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelUpgrade {
+    /// The `target_height` of the plan being cancelled.
+    pub target_height: u64,
+}
+
 /// The closed set of actions a `Batch` may carry: market creations only.
 /// A registry change must be its own reviewable proposal — a roster
 /// rewrite hidden among market operations is precisely the review hazard
@@ -780,12 +866,23 @@ pub enum AdminActionType {
     UnpauseBridge = 6,
     UpdateAuthoritySet = 7,
     CancelAllOrdersForAccount = 8,
-    /// Create a standalone event (G17). Governed like `CreateImpactMarket`.
+    /// Create a standalone event. Governed like `CreateImpactMarket`.
     CreateEvent = 9,
     /// Reserved. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01B = 10,
     /// Reserved. See [`AdminActionType::ReservedRt01A`].
     ReservedRt01C = 11,
+    ConfigureOraclePolicy = 12,
+    /// Per-market oracle guards. Admitted from
+    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`.
+    SetOracleGuards = 13,
+    /// Schedules (or reschedules) the pending protocol upgrade plan.
+    /// Governed like `UpdateAuthoritySet`: signer-registry path, one
+    /// pending plan, target height never decreases.
+    ScheduleUpgrade = 14,
+    /// Cancels the pending protocol upgrade plan. Must commit before the
+    /// plan's target height to have effect.
+    CancelUpgrade = 15,
 }
 
 impl AdminAction {
@@ -801,6 +898,10 @@ impl AdminAction {
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
             Self::UpdateAuthoritySet(_) => AdminActionType::UpdateAuthoritySet,
             Self::CancelAllOrdersForAccount(_) => AdminActionType::CancelAllOrdersForAccount,
+            Self::ConfigureOraclePolicy(_) => AdminActionType::ConfigureOraclePolicy,
+            Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
+            Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
+            Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
         }
     }
 
@@ -1304,7 +1405,7 @@ pub struct MarketConfig {
     /// Maximum age (ms) of the oracle reading at the time of any
     /// margin/order/liquidation read. `0 = no check (back-compat)`.
     ///
-    /// Oracle staleness was previously enforced only at `ResolveEvent`
+    /// Oracle staleness was previously enforced only at `ResolveImpactMarket`
     /// (60 s window) and replay-protection in `OracleUpdate`. Order
     /// placement, margin checks, and liquidation read `get_mark_price`
     /// without checking the oracle's age, so a node with a stuck
@@ -1449,6 +1550,33 @@ pub struct MarketConfig {
     /// compatibility for existing on-chain `MarketConfig` records.
     #[serde(default)]
     pub max_open_interest: u64,
+}
+
+/// Per-market oracle guards that live OUTSIDE `MarketConfig`, at
+/// `keys::market_oracle_guards(market)` (prefix `MarketOracleGuards`).
+/// Written only by the governed `AdminAction::SetOracleGuards`
+/// arm; absent until then.
+///
+/// Why a separate record: governance executions absorb their raw writes into
+/// the applied-state digest, so appending a field to `MarketConfig` would
+/// change the bytes a quorum `CreateMarket` writes and with them the app hash
+/// of every already-executed proposal on replay. A positional array whose
+/// length depends on a value is ruled out by the `CreateMarket` encoding rule
+/// ("one value, one encoding"). A new key that only exists after the gated
+/// arm has run leaves every pre-gate byte untouched.
+///
+/// Read only once the oracle-guard gate is active
+/// (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`): from then on an out-of-band
+/// `OracleUpdate` is REJECTED (event `OracleUpdateRejected`) rather than
+/// clipped, and an absent record (band zero) fails closed: every update after
+/// the first is rejected until a real band is set. Below the gate this record
+/// is inert and the schema-v9 clamp on `DEFAULT_MAX_ORACLE_DEVIATION_BPS`
+/// keeps applying, so replay is unchanged.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketOracleGuards {
+    /// Maximum per-update move from the stored last-good price, in basis
+    /// points. Zero means unset.
+    pub max_oracle_deviation_bps: u32,
 }
 
 /// Per-tier fee schedule for the volume-based maker-rebate program.
@@ -1815,6 +1943,38 @@ pub struct OracleUpdate {
     /// `publish_time_ms` for the same market.
     #[serde(default)]
     pub publish_time_ms: u64,
+}
+
+/// A source identifier scoped to one policy epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OracleSourceId(pub u32);
+
+/// A monotonically increasing oracle-policy epoch identifier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OraclePolicyVersion(pub u64);
+
+/// A normalized observation attested by the exact source key in its policy.
+/// The envelope signature authenticates the relay, not the external provider.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SubmitOracleObservation {
+    pub market: MarketId,
+    pub policy_version: OraclePolicyVersion,
+    pub source_id: OracleSourceId,
+    pub publish_time_ms: u64,
+    pub price_micro: u64,
+    pub confidence_micro: Option<u64>,
+    #[serde(with = "crate::wire_bytes")]
+    pub evidence_digest: [u8; 32],
+    #[serde(with = "crate::wire_bytes")]
+    pub signer: [u8; 20],
+}
+
+/// Canonical MessagePack policy bytes and the first block that may use them.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ConfigureOraclePolicy {
+    pub effective_height: u64,
+    #[serde(with = "crate::wire_bytes::vec")]
+    pub bundle: Vec<u8>,
 }
 
 /// Composite-CEX price update: the third source for the
@@ -2309,7 +2469,7 @@ pub struct CreateImpactMarket {
     /// Optional — `None` (or absent on the wire, via `serde(default)`) means
     /// `RelayerAttested` (the legacy default — the resolver supplies the
     /// outcome). Two auto-resolve modes derive YES/NO from an on-chain
-    /// oracle; in those modes `ResolveEvent.outcome` becomes a verifiable
+    /// oracle; in those modes `ResolveImpactMarket.outcome` becomes a verifiable
     /// assertion (engine recomputes and rejects on mismatch). Field at the
     /// END of the struct so old SDK clients (12-element arrays) continue
     /// to decode cleanly via the wire's `serde(default)` rule.
@@ -2329,7 +2489,7 @@ pub struct CreateImpactMarket {
 
 /// Create a standalone event: mints two prediction-binary books (EBY at
 /// `child_market_base+0`, EBN at `+1`) under a new [`EventInfo`], with no
-/// underlying perp and no conditional legs (G17). Requires relayer
+/// underlying perp and no conditional legs. Requires relayer
 /// authorization; governed like `CreateImpactMarket`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateEvent {
@@ -2360,8 +2520,19 @@ pub struct CreateEvent {
 /// conditional-perp book and voids the loser; cash-settles both binary books
 /// to $1 (winner) / $0 (loser). Requires relayer authorization.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ResolveEvent {
+pub struct ResolveImpactMarket {
     pub impact_market_id: ImpactMarketId,
+    pub outcome: Outcome,
+    #[serde(with = "crate::wire_bytes")]
+    pub signer: [u8; 20],
+}
+
+/// Resolve a standalone event. Settles its two prediction-binary books to
+/// Yes/No only (there is no Void), reads no underlying price, and is
+/// authorized by the market-parameters key.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ResolveEvent {
+    pub event_id: EventId,
     pub outcome: Outcome,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
@@ -2900,7 +3071,7 @@ pub enum Event {
         rules: String,
     },
     /// A standalone event was created: two prediction-binary books under a
-    /// new [`EventInfo`], no underlying perp (G17).
+    /// new [`EventInfo`], no underlying perp.
     EventCreated {
         event_id: EventId,
         eby_market: MarketId,
@@ -2919,12 +3090,20 @@ pub enum Event {
         timestamp_ms: u64,
     },
     /// Event was resolved with a definitive outcome. Emitted once per family.
-    EventResolved {
+    ImpactMarketResolved {
         impact_market_id: ImpactMarketId,
         outcome: Outcome,
         /// Oracle price of the underlying at resolution time (micro-USDC).
         /// Used as the settlement mark for the winning conditional perp.
         settlement_price: u64,
+        timestamp_ms: u64,
+        signer: Option<[u8; 20]>,
+    },
+    /// A standalone event resolved to Yes or No. No settlement price (no
+    /// underlying) and no Void.
+    EventResolved {
+        event_id: EventId,
+        outcome: Outcome,
         timestamp_ms: u64,
         signer: Option<[u8; 20]>,
     },
@@ -3280,6 +3459,39 @@ pub enum Event {
         removed: String,
         proposal_id: u64,
     },
+    /// The admin quorum wrote the per-market oracle guards. Carries
+    /// the FULL post-update guard set so consumers need not diff; zero means
+    /// the field is still unset.
+    OracleGuardsUpdated {
+        market: MarketId,
+        mark_price_max_oracle_age_ms: u64,
+        max_oracle_deviation_bps: u32,
+        proposal_id: u64,
+    },
+    /// An authorized `OracleUpdate` was refused by the per-market deviation
+    /// guard once the oracle-guard gate is active. The
+    /// transaction itself is accepted (nonce burned, no state written): the
+    /// submitted price is NOT stored, the publish time does NOT advance, and
+    /// this event records why. `max_oracle_deviation_bps == 0` with reason
+    /// `deviation_band_unset` is the fail-closed default before governance
+    /// sets a band.
+    OracleUpdateRejected {
+        market: MarketId,
+        submitted_price: u64,
+        last_good: u64,
+        max_oracle_deviation_bps: u32,
+        signer: Option<[u8; 20]>,
+        reason: OracleRejectReason,
+    },
+    /// A due funding interval on `market` was skipped because its mark was
+    /// stale or unguarded while the oracle-guard gate is active (pause,
+    /// no retroactive catch-up). The interval clock restarts at
+    /// `timestamp_ms`, so the missed interval is lost, not replayed.
+    FundingSkipped {
+        market: MarketId,
+        timestamp_ms: u64,
+        reason: FundingSkipReason,
+    },
     /// A multisig-approved trigger-market policy was stored for automatic
     /// application at `effective_height`. The complete replacement is evented
     /// so operators can audit the scheduled transition without interpreting
@@ -3599,7 +3811,7 @@ pub enum ExecError {
     MarketClosedForTrading(MarketId),
     /// Binary-book order outside the [0, BINARY_PRICE_MAX] range.
     BinaryPriceOutOfRange,
-    /// ResolveEvent called with an invalid outcome for the current state.
+    /// ResolveImpactMarket called with an invalid outcome for the current state.
     InvalidResolution(String),
     /// A fill would push the taker's absolute net position past
     /// `MarketConfig.max_position_size`. Engine-level cap enforced at
@@ -3724,6 +3936,14 @@ pub enum ExecError {
         block_time_ms: u64,
         /// Configured staleness cap from `MarketConfig`.
         max_staleness_ms: u64,
+    },
+    /// A mark-dependent read on `market` was refused because the oracle-guard
+    /// gate (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`) is active and the market's
+    /// `mark_price_max_oracle_age_ms` is still the unset zero. Zero no longer
+    /// means "disabled": the default fails closed until the admin quorum sets
+    /// a real value through `AdminAction::SetOracleGuards`.
+    OracleGuardUnset {
+        market: MarketId,
     },
     /// `SetUserMarketLeverage` rejected because the user attempted to
     /// pick an IM ratio LOWER than the market's risk floor. The
@@ -3870,6 +4090,7 @@ impl ExecError {
             ExecError::BridgeReceiptMismatch(_) => 74,
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
+            ExecError::OracleGuardUnset { .. } => 82,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4092,7 +4313,7 @@ impl ExecError {
                 "Binary-book order price is outside the [0, BINARY_PRICE_MAX] range."
             }
             ExecError::InvalidResolution(_) => {
-                "ResolveEvent called with an outcome incompatible with the current state (already resolved, \
+                "ResolveImpactMarket called with an outcome incompatible with the current state (already resolved, \
                  outcome not in the configured set, etc.)."
             }
             ExecError::PositionLimitExceeded { .. } => {
@@ -4135,6 +4356,9 @@ impl ExecError {
             }
             ExecError::StaleOracle { .. } => {
                 "Oracle price is stale for this market; refresh the oracle before placing orders, reading margin, or liquidating."
+            }
+            ExecError::OracleGuardUnset { .. } => {
+                "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
             }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
@@ -4184,6 +4408,7 @@ impl ExecError {
             self,
             ExecError::InvalidResolution(_)
                 | ExecError::StaleOracle { .. }
+                | ExecError::OracleGuardUnset { .. }
                 | ExecError::UnknownMarket(_)
         )
     }
@@ -4400,6 +4625,11 @@ impl fmt::Display for ExecError {
                 block time {block_time_ms}ms (age {age}ms > cap {max_staleness_ms}ms)",
                 age = block_time_ms.saturating_sub(*publish_time_ms),
             ),
+            ExecError::OracleGuardUnset { market } => write!(
+                f,
+                "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
+                oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
+            ),
             ExecError::UserLeverageBelowMarketIm {
                 market,
                 user_im_bps,
@@ -4467,14 +4697,15 @@ pub mod prelude {
         CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
         ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket, Deposit,
         DepositLocator, Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal,
-        FailWithdrawalReceipt, FillId, ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus,
-        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOrder,
-        OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleUpdate,
-        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
-        RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
-        SetUserMarketLeverage, Side, TimeInForce, TxContext, UpdateMarketFees, Withdraw,
-        WithdrawRequest, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
-        BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
+        FailWithdrawalReceipt, FillId, FundingSkipReason, ImpactMarketId, ImpactMarketInfo,
+        ImpactMarketStatus, LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind,
+        MarketOracleGuards, MarketOrder, OpenInterest, OperatorReceiptProof,
+        OperatorReceiptRegistry, OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order,
+        OrderId, Outcome, PlaceOrder, Position, ResolveEvent, ResolveImpactMarket, RevokeAgent,
+        RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride, SetUserMarketLeverage, Side,
+        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
+        DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
         MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
         PREDICTION_BINARY_TICK_SIZE,

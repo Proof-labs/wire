@@ -27,7 +27,22 @@ name = "proof-wire"
 # 1.4.0 -> 1.5.0: additive wire change (standalone events). New
 # AdminAction::CreateEvent at inner tag 0x09, plus the typed EventKey.
 # Pre-existing bytes still decode unchanged -> MINOR.
-version = "1.5.0"
+#
+# 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
+# resolves a standalone event; the impact-market resolution at 0x0F is renamed
+# ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
+# unchanged -> MINOR.
+#
+# 1.6.0 -> 1.7.0: additive wire changes. New outer action
+# SubmitOracleObservation at 0x2D, new inner admin ConfigureOraclePolicy at
+# 0x0C, new inner admin SetOracleGuards at 0x0D, plus MarketOracleGuards,
+# OracleRejectReason, FundingSkipReason types and ExecError::OracleGuardUnset
+# (code 82). Pre-existing bytes still decode unchanged -> MINOR.
+#
+# 1.7.0 -> 1.8.0: additive admin-action tags. ScheduleUpgrade (0x0E) and
+# CancelUpgrade (0x0F) add the on-chain upgrade-plan path; pre-existing bytes
+# still decode unchanged -> MINOR.
+version = "1.8.0"
 edition = "2021"
 
 [dependencies]

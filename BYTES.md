@@ -36,7 +36,7 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x0C | `ACTION_APPROVE_AGENT`            | shipped  |
 | 0x0D | `ACTION_REVOKE_AGENT`             | shipped  |
 | 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | shipped  |
-| 0x0F | `ACTION_RESOLVE_EVENT`            | shipped  |
+| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | shipped  |
 | 0x10 | `ACTION_UPDATE_MARKET_FEES`       | shipped  |
 | 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | shipped  |
 | 0x12 | `ACTION_RUN_FUNDING_TICK`         | shipped  |
@@ -60,13 +60,14 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x24 | `AuthorizeWithdrawal`               | engine-native |
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
-| 0x27 | `ReservedRt01`                      | reserved range, no action arm (see `external_action_reservations`) |
+| 0x27 | `ResolveEvent`                      | shipped  |
 | 0x28 | `ReservedRt01`                      | reserved |
 | 0x29 | `ReservedRt01`                      | reserved |
 | 0x2A | `ReservedRt01`                      | reserved |
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
-| 0x2D | _free_                              | —        |
+| 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
+| 0x2E | _free_                              | —        |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types
@@ -88,6 +89,14 @@ are not outer transaction action bytes.
 | 0x09 | `CreateEvent`                     | governed; creates a standalone event |
 | 0x0A | `ReservedRt01B`                   | reserved; discriminant only, no behaviour |
 | 0x0B | `ReservedRt01C`                   | reserved; discriminant only, no behaviour |
+| 0x0C | `ConfigureOraclePolicy`           | dormant behind oracle-policy gate |
+| 0x0D | `SetOracleGuards`                 | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
+| 0x0E | `ScheduleUpgrade`                 | governed; schedules the pending protocol-upgrade plan |
+| 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
+
+The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
+are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
+u64::MAX`. Source messages authenticate an approved relay, not a provider proof.
 
 Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
@@ -103,6 +112,11 @@ Tags `0x07` and `0x08` are admission-gated per lineage
 (`AUTHORITY_GOVERNANCE_ACTIVATIONS` and `CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS`):
 each is ASSIGNED from this commit, the content hash commits it, and each
 lineage decides independently when to activate it.
+
+Tag `0x0D` (`SetOracleGuards`) is admission-gated by the compiled
+`UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` (parked at `u64::MAX` on trunk; a
+release branch pins it). Same rule:
+the tag is ASSIGNED from this commit regardless of when it activates.
 
 ## Emergency action arm tags
 
