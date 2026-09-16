@@ -115,7 +115,7 @@ carries the authoritative names.
 | 0x2B | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2C | `ReservedRt01`                      | RT-01              | reserved |
 | 0x2D | `SubmitOracleObservation`            | oracle policy | dormant behind oracle-policy gate |
-| 0x2E | _free_                              | —                  | —        |
+| 0x2E | `ClaimWithdrawalPayout`             | W29-15 / troll#11 (DEC-173) | single-holder Solana payout claim on a `Pending` withdrawal |
 | ...  | up to 0xFF                         | —                  | —        |
 
 Bytes 0x00 and 0xFF are reserved as sentinels (unused / max).
@@ -280,6 +280,7 @@ Consensus constants: never renumber once absorbed on a persistent chain.
 | 0x45 | `TriggerClientState`            | W32-10 / TR-1      | dormant allocation |
 | 0x46 | `TriggerMeta`                   | W32-10 / TR-1      | dormant allocation |
 | 0x47 | `QueuePriorityLevel`            | W32-10 / TR-3      | active behind trigger-index migration |
+| 0x59 | `WithdrawalPayoutLease`         | W29-15 / troll#11 (DEC-173) | single-holder payout claim, one key per withdrawal id |
 | ...  | up to 0xFF                      | —                  | —        |
 
 ### TriggerMeta subkeys
@@ -355,6 +356,18 @@ that gives it behaviour.
 | Schema rungs | `v15`–`v16` | `SCHEMA_V15/16_*` + `UPGRADE_HEIGHT_V15/16_*` at `u64::MAX` | parked |
 
 ## History
+
+- **2026-09-16 — Withdrawal payout lease (W29-15 / troll#11, DEC-173).** Outer
+  action `ClaimWithdrawalPayout = 0x2E` and state prefix
+  `WithdrawalPayoutLease = 0x59`. The prefix skips `0x48`–`0x58` because
+  those bytes are claimed in the engine's `keys.rs` across merged and
+  unmerged exchange branches (triggers, capabilities, RT-01, oracle,
+  upgrade-plan, sub-accounts) — the collision scan ran against every
+  exchange ref, not just this table. ExecError code 91
+  (`WithdrawalPayoutLeaseActive`); codes 83-90 belong to the sub-account
+  errors on this repository's dev. This branch is based on the v1.8.0 tag —
+  the exchange dev pin — so the engine pin drags no dev-only content in;
+  whoever merges into dev second resolves the version/history hunks.
 
 - **2026-08-06 — W29-02 bounded-work indexes (PR #299).** Assigned
   `MarketPositionOwner = 0x34`, `PoolPosition = 0x3D`, and

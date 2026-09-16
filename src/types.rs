@@ -2350,6 +2350,24 @@ pub struct AuthorizeWithdrawal {
     pub proof: OperatorReceiptProof,
 }
 
+/// Single-holder claim on a `Pending` withdrawal's Solana payout (W29-15,
+/// DEC-173). The holder named here is the only watcher that may sign the
+/// payout while the lease is live, so an active/active fleet cannot both
+/// sign: the engine-side claim precedes any signing, and the engine rejects
+/// a second claim while a live lease is held by someone else. Custody-
+/// authorized submitters only — a lease blocks the payout path, so an
+/// unauthorized claim would be a stranding DoS.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClaimWithdrawalPayout {
+    pub withdrawal_id: u64,
+    /// The claiming watcher's owner address (keccak-256 of its engine key,
+    /// last 20 bytes). Must equal the envelope signer's owner — a claim is
+    /// always made by the watcher that will hold it, never on another's
+    /// behalf.
+    #[serde(with = "crate::wire_bytes")]
+    pub holder: [u8; 20],
+}
+
 /// Engine operator receipt registry (W28-20 #28): the epoch-pinned named
 /// operator set the terminal receipts are verified against. Stored per epoch
 /// (W28-20 #316); presence of any registry activates the operator-multisig
@@ -2820,6 +2838,27 @@ pub struct WithdrawalReceiptSidecar {
     pub fee: u64,
 }
 
+/// The single-holder Solana payout claim on one withdrawal (W29-15, DEC-173),
+/// stored under its own key (`keys::withdrawal_payout_lease`). Absent means
+/// unclaimed. At most one lease is live per withdrawal at any height: a
+/// second claim rejects while an unexpired lease is held, and a lease only
+/// becomes replaceable once `expires_at_height` is reached (or the
+/// withdrawal reaches a terminal status, which clears it), so double-pay
+/// coordination never depends on the watchers' local state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalPayoutLease {
+    /// The watcher that may sign the payout (owner address of its engine
+    /// key). Mirror of the claim's `holder`.
+    #[serde(with = "crate::wire_bytes")]
+    pub holder: [u8; 20],
+    /// Height at which the claim was accepted.
+    pub acquired_height: u64,
+    /// Exclusive: the first height at which the lease no longer binds and a
+    /// new claim may replace it. Engine-set from the protocol lease length,
+    /// not claimer-chosen, so no claimer can extend its own exclusivity.
+    pub expires_at_height: u64,
+}
+
 /// Protocol withdrawal policy: the flat fee and the minimum net withdrawal.
 /// Singleton at `keys::WITHDRAWAL_POLICY`; absent decodes as all-zero (no fee,
 /// no minimum), so the legacy path is unaffected. Adjustable only through the
@@ -3273,6 +3312,17 @@ pub enum Event {
         owner: [u8; 20],
         amount: u64,
         solana_destination: [u8; 32],
+    },
+    /// A custody-authorized watcher acquired the single-holder payout claim
+    /// on a `Pending` withdrawal (W29-15, DEC-173). Peer watchers must not
+    /// sign a Solana payout for this withdrawal while the lease is live —
+    /// the claim replaces the "engine dedups after the fact" argument on the
+    /// payout path, where the external effect precedes the engine terminal.
+    WithdrawalPayoutLeaseAcquired {
+        withdrawal_id: u64,
+        holder: [u8; 20],
+        /// Exclusive expiry height, as in [`WithdrawalPayoutLease`].
+        expires_at_height: u64,
     },
     DepositConfirmed {
         owner: [u8; 20],
@@ -4020,6 +4070,13 @@ pub enum ExecError {
         aggregate_bps: u32,
         max_slippage_bps: u32,
     },
+    /// A live Solana payout lease on this withdrawal is held by a different
+    /// watcher, so this `ClaimWithdrawalPayout` is rejected (W29-15,
+    /// DEC-173). Fail-closed: the rejected claimer must not sign a payout.
+    /// An expired lease does not reach this error — it is replaced. Codes
+    /// 83-90 are reserved by the sub-account errors already merged to this
+    /// repository's dev; 91 skips them deliberately.
+    WithdrawalPayoutLeaseActive,
 }
 
 impl ExecError {
@@ -4112,6 +4169,9 @@ impl ExecError {
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
             ExecError::OracleGuardUnset { .. } => 82,
+            // 83-90: sub-account errors, already merged to this repository's
+            // dev ahead of the engine pin this release serves.
+            ExecError::WithdrawalPayoutLeaseActive => 91,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4380,6 +4440,9 @@ impl ExecError {
             }
             ExecError::OracleGuardUnset { .. } => {
                 "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
+            }
+            ExecError::WithdrawalPayoutLeaseActive => {
+                "A live Solana payout lease on this withdrawal is held by another watcher; the claim is rejected so the rejected watcher cannot also sign a payout."
             }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
@@ -4651,6 +4714,9 @@ impl fmt::Display for ExecError {
                 "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
                 oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
             ),
+            ExecError::WithdrawalPayoutLeaseActive => {
+                write!(f, "payout lease live and held by another watcher")
+            }
             ExecError::UserLeverageBelowMarketIm {
                 market,
                 user_im_bps,
@@ -4716,15 +4782,16 @@ pub mod prelude {
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
         AuthorizeWithdrawal, Branch, BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder,
         CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket, Deposit,
-        DepositLocator, Event, EventOracleSource, ExecError, FailDeposit, FailWithdrawal,
-        FailWithdrawalReceipt, FillId, FundingSkipReason, ImpactMarketId, ImpactMarketInfo,
-        ImpactMarketStatus, LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind,
-        MarketOracleGuards, MarketOrder, OpenInterest, OperatorReceiptProof,
-        OperatorReceiptRegistry, OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order,
-        OrderId, Outcome, PlaceOrder, Position, ResolveEvent, ResolveImpactMarket, RevokeAgent,
-        RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride, SetUserMarketLeverage, Side,
-        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        ConfirmWithdrawal, ConfirmWithdrawalReceipt, ClaimWithdrawalPayout, CreateImpactMarket,
+        CreateMarket, Deposit, DepositLocator, Event, EventOracleSource, ExecError, FailDeposit,
+        FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason, ImpactMarketId,
+        ImpactMarketInfo, ImpactMarketStatus, LiquidateAccounts, MarkSourceMode, MarketConfig,
+        MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
+        OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason, OracleUpdate,
+        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
+        ResolveImpactMarket, RevokeAgent, RunFundingTick, RunLiquidationSweep,
+        SetAccountFeeOverride, SetUserMarketLeverage, Side, TimeInForce, TxContext,
+        UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
         WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
         DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,

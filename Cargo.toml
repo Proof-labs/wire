@@ -47,7 +47,18 @@ name = "proof-wire"
 # 1.7.0 -> 1.8.0: additive admin-action tags. ScheduleUpgrade (0x0E) and
 # CancelUpgrade (0x0F) add the on-chain upgrade-plan path; pre-existing bytes
 # still decode unchanged -> MINOR.
-version = "1.8.0"
+#
+# 1.8.0 -> 1.10.0: additive wire change (W29-15 / troll#11, DEC-173). New
+# outer action ClaimWithdrawalPayout at 0x2E — the single-holder Solana
+# payout claim a custody-authorized watcher must hold before signing a
+# payout — plus the WithdrawalPayoutLease state type,
+# Event::WithdrawalPayoutLeaseAcquired, and
+# ExecError::WithdrawalPayoutLeaseActive (code 91; 83-90 are reserved by the
+# sub-accounts wave already merged to this repository's dev). Pre-existing
+# bytes still decode unchanged -> MINOR. Based on the v1.8.0 tag (the
+# exchange dev pin) rather than dev, so the engine pin drags no 1.9.0
+# content in; whoever merges second resolves the version/history hunks.
+version = "1.10.0"
 edition = "2021"
 
 [dependencies]

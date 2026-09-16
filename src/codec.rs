@@ -193,6 +193,10 @@ define_actions! {
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
     SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
+    // W29-15 bridge custody: the single-holder payout claim. Exactly one
+    // watcher may hold the lease on a `Pending` withdrawal, so an
+    // active/active fleet cannot both sign a Solana payout (troll #11).
+    ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
 }
 
 /// State-independent transaction phase enforced once position triggers are
@@ -222,9 +226,13 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::FailWithdrawal
         // W28-20 receipt-gated terminals replace the legacy relayer
         // Confirm/FailWithdrawal and take the same credit-band phase.
+        // The payout claim pairs with them: a lease must be acquirable in
+        // the same band the bridge custody actions run in, before any
+        // terminal can settle the withdrawal.
         | ActionType::ConfirmWithdrawalReceipt
         | ActionType::FailWithdrawalReceipt
-        | ActionType::AuthorizeWithdrawal => BlockPhase::PriceCreditPrefix,
+        | ActionType::AuthorizeWithdrawal
+        | ActionType::ClaimWithdrawalPayout => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
         ActionType::CancelOrder
@@ -1241,6 +1249,52 @@ mod tests {
         assert!(matches!(
             decode_tx(&fail_bytes).unwrap().action,
             Action::FailWithdrawal(_)
+        ));
+    }
+
+    // -- W29-15 single-holder payout claim ----------------------------------
+
+    /// Golden wire vector for the NEW action_type 0x2E plus a determinism +
+    /// round-trip check — same recipe as the receipt actions: payload-only
+    /// hex so the vector does not depend on a signing key, and an explicit
+    /// byte assertion so a renumber cannot slip through silently.
+    #[test]
+    fn w29_15_payout_claim_golden_vector() {
+        let claim = Action::ClaimWithdrawalPayout(ClaimWithdrawalPayout {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+        });
+        assert_eq!(ClaimWithdrawalPayout::ACTION_TYPE, 0x2E);
+
+        const CLAIM_PAYLOAD_HEX: &str = include_str!("../vectors/claim_withdrawal_payout.hex");
+        let payload = hex_string(&claim.encode_action().unwrap().payload.0);
+        assert_eq!(payload, CLAIM_PAYLOAD_HEX.trim(), "golden vector mismatch");
+
+        assert_round_trip(&claim, 9);
+        let encoded = encode_tx(&claim, 9).unwrap();
+        assert_eq!(encode_tx(&claim, 9).unwrap(), encoded, "deterministic");
+        assert_eq!(peek_action_type(&encoded), Some(0x2E));
+        assert!(matches!(
+            decode_tx(&encoded).unwrap().action,
+            Action::ClaimWithdrawalPayout(_)
+        ));
+    }
+
+    /// Decode-compat for the lease wave: the new 0x2E arm must not disturb
+    /// any pre-existing byte — the actions around it (0x2D assigned, 0x2A-0x2C
+    /// reserved) keep their discriminants, and the wire's older golden
+    /// vectors above cover the assigned ones.
+    #[test]
+    fn payout_claim_leaves_neighbouring_bytes_untouched() {
+        assert_eq!(SubmitOracleObservation::ACTION_TYPE, 0x2D);
+        assert_eq!(ClaimWithdrawalPayout::ACTION_TYPE, 0x2E);
+        assert!(matches!(
+            ActionType::try_from(0x2Du8),
+            Ok(ActionType::SubmitOracleObservation)
+        ));
+        assert!(matches!(
+            ActionType::try_from(0x2Eu8),
+            Ok(ActionType::ClaimWithdrawalPayout)
         ));
     }
 
@@ -2899,6 +2953,10 @@ mod tests {
             ),
             (
                 ActionType::AuthorizeWithdrawal,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::ClaimWithdrawalPayout,
                 BlockPhase::PriceCreditPrefix,
             ),
             (
