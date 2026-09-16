@@ -2519,6 +2519,17 @@ mod tests {
                 reason: "x".repeat(1024),
                 signer: [0xFF; 20],
             }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0xFF; 20],
+                sub_account_id: u32::MAX,
+                name: [0xFF; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0xFF; 20],
+                from: [0xFF; 20],
+                to: [0xFF; 20],
+                amount: u64::MAX,
+            }),
         ]
     }
 
@@ -2597,6 +2608,17 @@ mod tests {
                 withdrawal_id: 0,
                 reason: String::new(),
                 signer: [0u8; 20],
+            }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0u8; 20],
+                sub_account_id: 0,
+                name: [0u8; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0u8; 20],
+                from: [0u8; 20],
+                to: [0u8; 20],
+                amount: 0,
             }),
         ]
     }
@@ -3690,6 +3712,69 @@ mod tests {
     fn test_sub_account_action_types() {
         assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
         assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
+    }
+
+    /// The two sub-account events are new indexer-facing surface: the msgpack
+    /// round-trip must preserve every field, and appending them at the end of
+    /// the `Event` enum must not have shifted any pre-existing variant's
+    /// encoding (the decoded variant identity is asserted explicitly).
+    #[test]
+    fn sub_account_events_round_trip_without_shifting_existing_variants() {
+        use crate::types::Event;
+
+        let created = Event::SubAccountCreated {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            address: [0xBB; 20],
+            name: [0xCC; 32],
+        };
+        let transferred = Event::SubAccountTransferCompleted {
+            owner: [0xDD; 20],
+            from: [0xEE; 20],
+            to: [0xFF; 20],
+            amount: u64::MAX,
+        };
+
+        for event in [created, transferred] {
+            let encoded = rmp_serde::to_vec(&event).expect("sub-account event encodes");
+            let decoded: Event =
+                rmp_serde::from_slice(&encoded).expect("sub-account event decodes");
+            let re_encoded =
+                rmp_serde::to_vec(&decoded).expect("decoded sub-account event re-encodes");
+            assert_eq!(encoded, re_encoded, "event encoding must be a fixed point");
+            match (&event, &decoded) {
+                (
+                    Event::SubAccountCreated { sub_account_id, .. },
+                    Event::SubAccountCreated {
+                        sub_account_id: decoded_id,
+                        ..
+                    },
+                ) => assert_eq!(sub_account_id, decoded_id),
+                (
+                    Event::SubAccountTransferCompleted { amount, .. },
+                    Event::SubAccountTransferCompleted {
+                        amount: decoded_amount,
+                        ..
+                    },
+                ) => assert_eq!(amount, decoded_amount),
+                _ => panic!("sub-account event decoded into the wrong variant"),
+            }
+        }
+
+        // The pre-existing variant that immediately precedes the appended
+        // block must still decode to itself: an accidental reordering of the
+        // enum would renumber every later variant silently.
+        let funding = Event::FundingSkipped {
+            market: 7,
+            timestamp_ms: 1_000,
+            reason: crate::types::FundingSkipReason::OracleStale,
+        };
+        let encoded = rmp_serde::to_vec(&funding).expect("funding event encodes");
+        let decoded: Event = rmp_serde::from_slice(&encoded).expect("funding event decodes");
+        assert!(
+            matches!(decoded, Event::FundingSkipped { .. }),
+            "a pre-existing event variant shifted position"
+        );
     }
 
     #[test]
