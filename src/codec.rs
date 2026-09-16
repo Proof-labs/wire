@@ -1161,7 +1161,7 @@ mod tests {
     /// determinism + round-trip check. If a serializer change moves these
     /// bytes, the SDK conformance contract broke.
     #[test]
-    fn w28_20_receipt_action_golden_vectors() {
+    fn receipt_action_golden_vectors() {
         let confirm = Action::ConfirmWithdrawalReceipt(ConfirmWithdrawalReceipt {
             receipt: golden_receipt(1),
             proof: golden_proof(),
@@ -1214,7 +1214,7 @@ mod tests {
     /// receipt widening a MINOR (additive), not a MAJOR, wire change — old
     /// encoders/decoders are untouched.
     #[test]
-    fn w28_20_legacy_terminal_actions_still_decode() {
+    fn legacy_terminal_actions_still_decode() {
         assert_eq!(ConfirmWithdrawal::ACTION_TYPE, 0x0A);
         assert_eq!(FailWithdrawal::ACTION_TYPE, 0x0B);
 
