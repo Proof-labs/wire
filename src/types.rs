@@ -3831,7 +3831,8 @@ pub enum ExecError {
     /// `AttachConditional` would exceed the event's attachment cap.
     TooManyAttachedConditionals {
         event_id: EventId,
-        limit: u32,
+        current: u32,
+        max: u32,
     },
     /// Attempted to place an order on a conditional/binary book whose event
     /// is no longer trading (past its settlement time or resolved).
@@ -4621,9 +4622,13 @@ impl fmt::Display for ExecError {
                 f,
                 "underlying {underlying_market} is already attached to event {event_id}"
             ),
-            ExecError::TooManyAttachedConditionals { event_id, limit } => write!(
+            ExecError::TooManyAttachedConditionals {
+                event_id,
+                current,
+                max,
+            } => write!(
                 f,
-                "event {event_id} is at its attachment cap of {limit} conditionals"
+                "event {event_id} carries {current} conditionals; the cap is {max}"
             ),
             ExecError::MarketClosedForTrading(id) => {
                 write!(f, "market closed for trading: {id}")
