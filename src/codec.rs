@@ -195,9 +195,9 @@ define_actions! {
     CreateSubAccount => 40,      // 0x28 — create a sub-account under an owner
     SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
     SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
-    // W29-15 bridge custody: the single-holder payout claim. Exactly one
-    // watcher may hold the lease on a `Pending` withdrawal, so an
-    // active/active fleet cannot both sign a Solana payout (troll #11).
+    // Bridge custody: the single-holder payout claim. Exactly one watcher
+    // may hold the lease on a `Pending` withdrawal, so an active/active
+    // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
 }
 
@@ -1289,14 +1289,14 @@ mod tests {
         ));
     }
 
-    // -- W29-15 single-holder payout claim ----------------------------------
+    // -- single-holder payout claim -----------------------------------------
 
     /// Golden wire vector for the NEW action_type 0x2E plus a determinism +
     /// round-trip check — same recipe as the receipt actions: payload-only
     /// hex so the vector does not depend on a signing key, and an explicit
     /// byte assertion so a renumber cannot slip through silently.
     #[test]
-    fn w29_15_payout_claim_golden_vector() {
+    fn payout_claim_golden_vector() {
         let claim = Action::ClaimWithdrawalPayout(ClaimWithdrawalPayout {
             withdrawal_id: 777,
             holder: [0x05; 20],

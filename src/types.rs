@@ -2332,8 +2332,8 @@ pub struct AuthorizeWithdrawal {
     pub proof: OperatorReceiptProof,
 }
 
-/// Single-holder claim on a `Pending` withdrawal's Solana payout (W29-15,
-/// DEC-173). The holder named here is the only watcher that may sign the
+/// Single-holder claim on a `Pending` withdrawal's Solana payout. The
+/// holder named here is the only watcher that may sign the
 /// payout while the lease is live, so an active/active fleet cannot both
 /// sign: the engine-side claim precedes any signing, and the engine rejects
 /// a second claim while a live lease is held by someone else. Custody-
@@ -2858,8 +2858,8 @@ pub struct WithdrawalReceiptSidecar {
     pub fee: u64,
 }
 
-/// The single-holder Solana payout claim on one withdrawal (W29-15, DEC-173),
-/// stored under its own key (`keys::withdrawal_payout_lease`). Absent means
+/// The single-holder Solana payout claim on one withdrawal, stored under
+/// its own key (`keys::withdrawal_payout_lease`). Absent means
 /// unclaimed. At most one lease is live per withdrawal at any height: a
 /// second claim rejects while an unexpired lease is held, and a lease only
 /// becomes replaceable once `expires_at_height` is reached (or the
@@ -3334,7 +3334,7 @@ pub enum Event {
         solana_destination: [u8; 32],
     },
     /// A custody-authorized watcher acquired the single-holder payout claim
-    /// on a `Pending` withdrawal (W29-15, DEC-173). Peer watchers must not
+    /// on a `Pending` withdrawal. Peer watchers must not
     /// sign a Solana payout for this withdrawal while the lease is live —
     /// the claim replaces the "engine dedups after the fact" argument on the
     /// payout path, where the external effect precedes the engine terminal.
@@ -4118,8 +4118,8 @@ pub enum ExecError {
     /// activation, so pre-activation submissions reject closed.
     SubAccountsInactive,
     /// A live Solana payout lease on this withdrawal is held by a different
-    /// watcher, so this `ClaimWithdrawalPayout` is rejected (W29-15,
-    /// DEC-173). Fail-closed: the rejected claimer must not sign a payout.
+    /// watcher, so this `ClaimWithdrawalPayout` is rejected. Fail-closed:
+    /// the rejected claimer must not sign a payout.
     /// An expired lease does not reach this error — it is replaced. Codes
     /// 83-90 are reserved by the sub-account errors already merged to this
     /// repository's dev; 91 skips them deliberately.
