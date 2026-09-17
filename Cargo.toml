@@ -1,44 +1,39 @@
 [package]
 name = "proof-wire"
 #
-# Renamed from `exchange-wire` and extracted to this public repository
-# (Proof-labs/wire) on 2026-09-09 — see the README for consumers and the
-# versioning discipline. The bytes have not changed.
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire
-# types, and the ExecError code table. Extracted from exchange-core so both
-# the private engine and the public SDK compile ONE definition — drift is
-# impossible by construction. Kept dep-light and wasm/pyo3-clean: no
-# bridge-core, no rand_core/getrandom. Versioned on the full MAJOR.MINOR.PATCH
-# line (>=1.0.0); every wire-format change is >=MINOR.
+# types, and the ExecError code table. Both the engine and the SDK compile ONE
+# definition, so drift is impossible by construction. Kept dep-light and
+# wasm/pyo3-clean: no rand_core/getrandom. Versioned on the full
+# MAJOR.MINOR.PATCH line (>=1.0.0); every wire-format change is >=MINOR.
 #
-# 1.0.0 -> 1.1.0: additive wire change (DEC-66). ConfirmDeposit/FailDeposit
-# gain a trailing Option<DepositLocator> that encodes as nil when absent, so
+# 1.0.0 -> 1.1.0: additive wire change. ConfirmDeposit/FailDeposit gain a
+# trailing Option<DepositLocator> that encodes as nil when absent, so
 # pre-locator bytes still decode -> MINOR.
 #
-# 1.1.0 -> 1.2.0: additive wire change (DEC-65). New AdminAction::UnpauseBridge
-# inner tag 0x06 and Event::BridgeUnpauseAuthorized. Pre-existing bytes still
-# decode unchanged -> MINOR.
+# 1.1.0 -> 1.2.0: additive wire change. New AdminAction::UnpauseBridge inner
+# tag 0x06 and Event::BridgeUnpauseAuthorized. Pre-existing bytes still decode
+# unchanged -> MINOR.
 #
-# 1.2.0 -> 1.3.0: additive wire change (#422 / DEC-87). New
-# AdminAction::UpdateAuthoritySet (inner tag 0x07), AuthorityDomain, and
-# Event::AuthoritySetUpdated. Pre-existing bytes still decode unchanged
-# -> MINOR.
+# 1.2.0 -> 1.3.0: additive wire change. New AdminAction::UpdateAuthoritySet
+# (inner tag 0x07), AuthorityDomain, and Event::AuthoritySetUpdated.
+# Pre-existing bytes still decode unchanged -> MINOR.
 #
-# 1.3.0 -> 1.4.0: additive wire change (#467). New
+# 1.3.0 -> 1.4.0: additive wire change. New
 # AdminAction::CancelAllOrdersForAccount (inner tag 0x08). Pre-existing bytes
-#
-# 1.4.0 -> 1.5.0: additive wire change (EN-01 standalone events). New
-# AdminAction::CreateEvent at inner tag 0x09 (claiming the RT-01 reservation),
-# plus the typed EventKey. Pre-existing bytes still decode unchanged -> MINOR.
 # still decode unchanged -> MINOR.
+#
+# 1.4.0 -> 1.5.0: additive wire change (standalone events). New
+# AdminAction::CreateEvent at inner tag 0x09, plus the typed EventKey.
+# Pre-existing bytes still decode unchanged -> MINOR.
 #
 # 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
 # resolves a standalone event; the impact-market resolution at 0x0F is renamed
 # ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
 # unchanged -> MINOR.
 #
-# 1.6.0 -> 1.7.0: additive wire changes (F16 oracle epic). New outer action
+# 1.6.0 -> 1.7.0: additive wire changes. New outer action
 # SubmitOracleObservation at 0x2D, new inner admin ConfigureOraclePolicy at
 # 0x0C, new inner admin SetOracleGuards at 0x0D, plus MarketOracleGuards,
 # OracleRejectReason, FundingSkipReason types and ExecError::OracleGuardUnset
@@ -48,16 +43,18 @@ name = "proof-wire"
 # CancelUpgrade (0x0F) add the on-chain upgrade-plan path; pre-existing bytes
 # still decode unchanged -> MINOR.
 #
-# 1.8.0 -> 1.10.0: additive wire change (W29-15 / troll#11, DEC-173). New
-# outer action ClaimWithdrawalPayout at 0x2E — the single-holder Solana
-# payout claim a custody-authorized watcher must hold before signing a
-# payout — plus the WithdrawalPayoutLease state type,
-# Event::WithdrawalPayoutLeaseAcquired, and
-# ExecError::WithdrawalPayoutLeaseActive (code 91; 83-90 are reserved by the
-# sub-accounts wave already merged to this repository's dev). Pre-existing
-# bytes still decode unchanged -> MINOR. Based on the v1.8.0 tag (the
-# exchange dev pin) rather than dev, so the engine pin drags no 1.9.0
-# content in; whoever merges second resolves the version/history hunks.
+# 1.8.0 -> 1.9.0: additive wire change (sub-accounts). New outer
+# actions CreateSubAccount at 0x28 and SubAccountTransfer at 0x29, the frozen
+# derive_sub_account, SubAccountCreated/SubAccountTransferCompleted events,
+# and sub-account ExecError codes at 83-90 (moved off the oracle-guard range
+# that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
+#
+# 1.9.0 -> 1.10.0: additive wire change. New outer action
+# ClaimWithdrawalPayout at 0x2E — the single-holder Solana payout claim a
+# custody-authorized watcher must hold before signing a payout — plus the
+# WithdrawalPayoutLease state type, Event::WithdrawalPayoutLeaseAcquired and
+# ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
+# decode unchanged -> MINOR.
 version = "1.10.0"
 edition = "2021"
 

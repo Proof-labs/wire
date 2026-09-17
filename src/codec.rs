@@ -182,7 +182,7 @@ define_actions! {
     ApproveAdminAction => 31,    // 0x1F — signed governance approval
     RejectAdminAction => 32,     // 0x20 — signed governance rejection
     EmergencyAdminAction => 33,  // 0x21 — signed emergency action
-    // W28-20 bridge custody: receipt-gated terminal withdrawal actions.
+    // Bridge custody: receipt-gated terminal withdrawal actions.
     // NEW action_types (additive) — the legacy relayer ConfirmWithdrawal
     // (0x0A) / FailWithdrawal (0x0B) remain decodable, so old decoders are
     // unaffected. See the codec decode-compat tests.
@@ -192,6 +192,8 @@ define_actions! {
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
+    CreateSubAccount => 40,      // 0x28 — create a sub-account under an owner
+    SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
     SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
     // W29-15 bridge custody: the single-holder payout claim. Exactly one
     // watcher may hold the lease on a `Pending` withdrawal, so an
@@ -224,7 +226,7 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
         | ActionType::FailWithdrawal
-        // W28-20 receipt-gated terminals replace the legacy relayer
+        // Receipt-gated terminals replace the legacy relayer
         // Confirm/FailWithdrawal and take the same credit-band phase.
         // The payout claim pairs with them: a lease must be acquirable in
         // the same band the bridge custody actions run in, before any
@@ -262,7 +264,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ProposeAdminAction
         | ActionType::ApproveAdminAction
         | ActionType::RejectAdminAction
-        | ActionType::EmergencyAdminAction => BlockPhase::Ordinary,
+        | ActionType::EmergencyAdminAction
+        | ActionType::CreateSubAccount
+        | ActionType::SubAccountTransfer => BlockPhase::Ordinary,
     }
 }
 
@@ -371,8 +375,8 @@ impl std::ops::Deref for WireBlob {
 pub const ENVELOPE_VERSION: u8 = 2;
 
 /// Wire envelope versions this build accepts on decode. Single source of
-/// truth — mirrored by `supportedEnvelopeVersions` in
-/// `exchange-node/check_tx.go` and the SDK check in `sdk/src/codec.ts`.
+/// truth — mirrored by `supportedEnvelopeVersions` in the Go CheckTx parser
+/// and the SDK codec check.
 /// Add a new version here when introducing one; drop an old one when it
 /// is no longer permitted. Decoders MUST consult this slice instead of
 /// hardcoding numeric comparisons.
@@ -388,13 +392,12 @@ pub const MAX_LIQUIDATE_ACCOUNTS_TX_BYTES: usize = 11_119;
 /// Wire envelope: `[version=2, action_type, seq, payload_bytes, pubkey, signature]`.
 ///
 /// Byte fields use [`WireBlob`] which enforces msgpack `bin` encoding at the
-/// type level (not just an annotation). The Go CheckTx parser
-/// (exchange-node/check_tx.go) and the SDK both expect this shape.
+/// type level (not just an annotation). The Go CheckTx parser and the SDK
+/// both expect this shape.
 ///
 /// The `version` byte stays `2` and the signing-prefix string stays
-/// `"ProofExchange-v2"` because every existing signature in dev/devnet
-/// was produced under that prefix. The legacy unsigned (v1) envelope
-/// was removed pre-launch.
+/// `"ProofExchange-v2"` because every existing signature was produced under
+/// that prefix. The legacy unsigned (v1) envelope was removed pre-launch.
 #[derive(Serialize, Deserialize)]
 pub struct WireTxEnvelope {
     version: u8,
@@ -482,7 +485,7 @@ pub fn decode_tx_from_envelope(envelope: WireTxEnvelope) -> Result<DecodedTx, Ex
 
 /// Encode an action with a pre-computed pubkey + signature into a wire envelope.
 /// Most callers should use [`sign_and_encode_with_chain`] instead; this exists for paths
-/// (api-gateway forward, FFI relays) that already hold raw signature bytes.
+/// (gateway forward, FFI relays) that already hold raw signature bytes.
 pub fn encode_signed_tx(
     action: &Action,
     seq: u64,
@@ -533,8 +536,8 @@ pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, Ex
 
 /// Sign an action and encode it as a wire envelope, binding the
 /// signature to a specific `chain_id`. The signing bytes carry a 32-byte
-/// chain_id prefix per audit B4 — `chain_id` is established by
-/// genesis / snapshot-load, not carried on the wire.
+/// chain_id prefix; `chain_id` is established by genesis / snapshot-load,
+/// not carried on the wire.
 pub fn sign_and_encode_with_chain(
     chain_id: &[u8; 32],
     action: &Action,
@@ -778,9 +781,9 @@ mod tests {
     use crate::types::{
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier, MarkSourceMode,
-        MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent, Side,
-        TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent,
+        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -803,6 +806,8 @@ mod tests {
         const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
         const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
         const ORACLE_HEX: &str = include_str!("../vectors/oracle_update.hex");
+        const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
+        const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
 
         let cases: Vec<(Action, u64, &str, u8)> = vec![
             (
@@ -840,6 +845,27 @@ mod tests {
                 3,
                 ORACLE_HEX.trim(),
                 OracleUpdate::ACTION_TYPE,
+            ),
+            (
+                Action::CreateSubAccount(CreateSubAccount {
+                    owner: [0xAA; 20],
+                    sub_account_id: 42,
+                    name: [0xBB; 32],
+                }),
+                100,
+                CREATE_SUB_ACCOUNT_HEX.trim(),
+                CreateSubAccount::ACTION_TYPE,
+            ),
+            (
+                Action::SubAccountTransfer(SubAccountTransfer {
+                    owner: [0xCC; 20],
+                    from: [0xDD; 20],
+                    to: [0xEE; 20],
+                    amount: 1_000_000,
+                }),
+                200,
+                SUB_ACCOUNT_TRANSFER_HEX.trim(),
+                SubAccountTransfer::ACTION_TYPE,
             ),
         ];
 
@@ -1120,6 +1146,17 @@ mod tests {
                 outcome: Outcome::Yes,
                 signer: [0x33; 20],
             }),
+            Action::CreateSubAccount(crate::types::CreateSubAccount {
+                owner: [0xAA; 20],
+                sub_account_id: 42,
+                name: [0xBB; 32],
+            }),
+            Action::SubAccountTransfer(crate::types::SubAccountTransfer {
+                owner: [0xCC; 20],
+                from: [0xDD; 20],
+                to: [0xEE; 20],
+                amount: 1_000_000,
+            }),
         ]
     }
 
@@ -1130,7 +1167,7 @@ mod tests {
         }
     }
 
-    // -- W28-20 receipt-gated terminal withdrawal actions -------------------
+    // -- receipt-gated terminal withdrawal actions --------------------------
 
     /// A deterministic wire receipt fixture for the golden vectors.
     fn golden_receipt(terminal_state: u8) -> BridgeWithdrawalReceipt {
@@ -1170,7 +1207,7 @@ mod tests {
     /// determinism + round-trip check. If a serializer change moves these
     /// bytes, the SDK conformance contract broke.
     #[test]
-    fn w28_20_receipt_action_golden_vectors() {
+    fn receipt_action_golden_vectors() {
         let confirm = Action::ConfirmWithdrawalReceipt(ConfirmWithdrawalReceipt {
             receipt: golden_receipt(1),
             proof: golden_proof(),
@@ -1181,7 +1218,7 @@ mod tests {
         });
         // The authorization payload is opaque canonical bytes at this layer
         // (fixed 221-byte `WithdrawalAuthorizationV1` wire form); the codec
-        // vector pins the envelope layout, not the bridge-core semantics.
+        // vector pins the envelope layout, not the authorization semantics.
         let authorize = Action::AuthorizeWithdrawal(AuthorizeWithdrawal {
             authorization: vec![0x44; 221],
             proof: golden_proof(),
@@ -1223,7 +1260,7 @@ mod tests {
     /// receipt widening a MINOR (additive), not a MAJOR, wire change — old
     /// encoders/decoders are untouched.
     #[test]
-    fn w28_20_legacy_terminal_actions_still_decode() {
+    fn legacy_terminal_actions_still_decode() {
         assert_eq!(ConfirmWithdrawal::ACTION_TYPE, 0x0A);
         assert_eq!(FailWithdrawal::ACTION_TYPE, 0x0B);
 
@@ -1298,7 +1335,7 @@ mod tests {
         ));
     }
 
-    // -- DEC-66 deposit locator ---------------------------------------------
+    // -- deposit locator ----------------------------------------------------
 
     /// Pre-locator `ConfirmDeposit`: the 4-field layout before the trailing
     /// `locator` field. Frozen so the compat test proves old bytes still
@@ -1353,16 +1390,16 @@ mod tests {
         // strict old 4-field decoder (same property the OI-cap test pins).
         // Released v2.3.x tags DO carry that strict 4-field decoder, so this
         // is not "no released decoder exists". The append rides as MINOR
-        // because DEC-66 folds the locator into the deposit-feature release:
-        // no deployed producer emits locator-bearing bytes until every
-        // decoding node runs this version. One dependent does more than
-        // decode these actions: the gateway's structured `/exchange` path
-        // re-encodes `ConfirmDeposit` from JSON fields and verifies the
-        // client's signature over the result, so the appended element is
-        // a signing-contract change for anyone signing that structured
-        // form; api-gateway#150 cut that path over to the five-element
-        // layout with no external signer affected (exchange#473). Absent
-        // that coordination, this break would be MAJOR.
+        // because the locator lands with the deposit-feature release: no
+        // deployed producer emits locator-bearing bytes until every decoding
+        // node runs this version. One dependent does more than decode these
+        // actions: the gateway's structured `/exchange` path re-encodes
+        // `ConfirmDeposit` from JSON fields and verifies the client's
+        // signature over the result, so the appended element is a
+        // signing-contract change for anyone signing that structured form;
+        // the gateway cut that path over to the five-element layout with no
+        // external signer affected. Absent that coordination, this break
+        // would be MAJOR.
         let none_confirm = ConfirmDeposit {
             owner: [0x55; 20],
             amount: 100_000,
@@ -1504,8 +1541,8 @@ mod tests {
         }
     }
 
-    /// Frozen wire vector for the tag-7 `UpdateAuthoritySet` inner action
-    /// (#422). The externally-tagged variant name plus positional payload
+    /// Frozen wire vector for the tag-7 `UpdateAuthoritySet` inner action.
+    /// The externally-tagged variant name plus positional payload
     /// must never drift — a change here breaks the content hash and every
     /// already-signed proposal. Also proves the round-trip is a fixed point.
     #[test]
@@ -1900,7 +1937,7 @@ mod tests {
         }
     }
 
-    /// Literal TR-1 vector for the trigger-policy admin arm. Both the
+    /// Literal vector for the trigger-policy admin arm. Both the
     /// canonical inner MessagePack and the proposal commitment are frozen:
     /// downstream signers must never infer either from a JSON representation.
     #[test]
@@ -2037,7 +2074,7 @@ mod tests {
         );
     }
 
-    /// The §11 byte-budget claim, proven rather than asserted in prose:
+    /// The byte-budget claim, proven rather than asserted in prose:
     /// a worst-case capped impact action — and the canonical batch of
     /// [worst CreateMarket, worst impact] — fit `MAX_ADMIN_ACTION_BYTES`
     /// without raising it. The free-text caps are what make this true.
@@ -2535,6 +2572,17 @@ mod tests {
                 reason: "x".repeat(1024),
                 signer: [0xFF; 20],
             }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0xFF; 20],
+                sub_account_id: u32::MAX,
+                name: [0xFF; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0xFF; 20],
+                from: [0xFF; 20],
+                to: [0xFF; 20],
+                amount: u64::MAX,
+            }),
         ]
     }
 
@@ -2613,6 +2661,17 @@ mod tests {
                 withdrawal_id: 0,
                 reason: String::new(),
                 signer: [0u8; 20],
+            }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0u8; 20],
+                sub_account_id: 0,
+                name: [0u8; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0u8; 20],
+                from: [0u8; 20],
+                to: [0u8; 20],
+                amount: 0,
             }),
         ]
     }
@@ -2972,6 +3031,8 @@ mod tests {
                 BlockPhase::TriggerManagement,
             ),
             (ActionType::ResolveEvent, BlockPhase::Ordinary),
+            (ActionType::CreateSubAccount, BlockPhase::Ordinary),
+            (ActionType::SubAccountTransfer, BlockPhase::Ordinary),
         ];
 
         assert_eq!(expected.len(), ActionType::ALL.len());
@@ -3155,6 +3216,17 @@ mod tests {
             Action::RevokeAgent(RevokeAgent {
                 owner: [0xAA; 20],
                 agent_pubkey: [0xBB; 32],
+            }),
+            Action::CreateSubAccount(CreateSubAccount {
+                owner: [0xAA; 20],
+                sub_account_id: 42,
+                name: [0xBB; 32],
+            }),
+            Action::SubAccountTransfer(SubAccountTransfer {
+                owner: [0xCC; 20],
+                from: [0xDD; 20],
+                to: [0xEE; 20],
+                amount: 1_000_000,
             }),
         ];
 
@@ -3670,6 +3742,117 @@ mod tests {
             matches!(decode_tx(&encoded), Err(ExecError::DecodeError(_))),
             "pre-sz_decimals 8-field CreateMarket payload must be rejected"
         );
+    }
+
+    #[test]
+    fn test_round_trip_create_sub_account() {
+        let action = Action::CreateSubAccount(CreateSubAccount {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            name: [0xBB; 32],
+        });
+        assert_round_trip(&action, 100);
+    }
+
+    #[test]
+    fn test_round_trip_sub_account_transfer() {
+        let action = Action::SubAccountTransfer(SubAccountTransfer {
+            owner: [0xCC; 20],
+            from: [0xDD; 20],
+            to: [0xEE; 20],
+            amount: 1_000_000,
+        });
+        assert_round_trip(&action, 200);
+    }
+
+    #[test]
+    fn test_sub_account_action_types() {
+        assert_eq!(CreateSubAccount::ACTION_TYPE, 40);
+        assert_eq!(SubAccountTransfer::ACTION_TYPE, 41);
+    }
+
+    /// The two sub-account events are new indexer-facing surface: the msgpack
+    /// round-trip must preserve every field, and appending them at the end of
+    /// the `Event` enum must not have shifted any pre-existing variant's
+    /// encoding (the decoded variant identity is asserted explicitly).
+    #[test]
+    fn sub_account_events_round_trip_without_shifting_existing_variants() {
+        use crate::types::Event;
+
+        let created = Event::SubAccountCreated {
+            owner: [0xAA; 20],
+            sub_account_id: 42,
+            address: [0xBB; 20],
+            name: [0xCC; 32],
+        };
+        let transferred = Event::SubAccountTransferCompleted {
+            owner: [0xDD; 20],
+            from: [0xEE; 20],
+            to: [0xFF; 20],
+            amount: u64::MAX,
+        };
+
+        for event in [created, transferred] {
+            let encoded = rmp_serde::to_vec(&event).expect("sub-account event encodes");
+            let decoded: Event =
+                rmp_serde::from_slice(&encoded).expect("sub-account event decodes");
+            let re_encoded =
+                rmp_serde::to_vec(&decoded).expect("decoded sub-account event re-encodes");
+            assert_eq!(encoded, re_encoded, "event encoding must be a fixed point");
+            match (&event, &decoded) {
+                (
+                    Event::SubAccountCreated { sub_account_id, .. },
+                    Event::SubAccountCreated {
+                        sub_account_id: decoded_id,
+                        ..
+                    },
+                ) => assert_eq!(sub_account_id, decoded_id),
+                (
+                    Event::SubAccountTransferCompleted { amount, .. },
+                    Event::SubAccountTransferCompleted {
+                        amount: decoded_amount,
+                        ..
+                    },
+                ) => assert_eq!(amount, decoded_amount),
+                _ => panic!("sub-account event decoded into the wrong variant"),
+            }
+        }
+
+        // The pre-existing variant that immediately precedes the appended
+        // block must still decode to itself: an accidental reordering of the
+        // enum would renumber every later variant silently.
+        let funding = Event::FundingSkipped {
+            market: 7,
+            timestamp_ms: 1_000,
+            reason: crate::types::FundingSkipReason::OracleStale,
+        };
+        let encoded = rmp_serde::to_vec(&funding).expect("funding event encodes");
+        let decoded: Event = rmp_serde::from_slice(&encoded).expect("funding event decodes");
+        assert!(
+            matches!(decoded, Event::FundingSkipped { .. }),
+            "a pre-existing event variant shifted position"
+        );
+    }
+
+    #[test]
+    fn sub_account_record_preserves_creation_height() {
+        let record = SubAccount {
+            master: [0xAA; 20],
+            sub_account_id: 42,
+            address: [0xBB; 20],
+            name: [0xCC; 32],
+            created_height: u64::MAX,
+        };
+        let encoded = rmp_serde::to_vec(&record).expect("sub-account record encodes");
+        let decoded: SubAccount =
+            rmp_serde::from_slice(&encoded).expect("sub-account record decodes");
+        assert_eq!(decoded.created_height, u64::MAX);
+        assert_eq!(decoded.master, record.master);
+        assert_eq!(decoded.sub_account_id, record.sub_account_id);
+        assert_eq!(decoded.address, record.address);
+        assert_eq!(decoded.name, record.name);
+        let json = serde_json::to_value(&decoded).expect("sub-account JSON encodes");
+        assert_eq!(json["created_height"], serde_json::json!(u64::MAX));
     }
 
     /// The upgrade-plan admin arms round-trip through the canonical msgpack
