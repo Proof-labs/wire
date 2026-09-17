@@ -817,8 +817,9 @@ pub enum AdminBatchItem {
 
 /// Inner admin tags that once decoded and never will again. Historical
 /// proposal hashes commit them, so the values are never handed to a new
-/// action: no `AdminAction` arm carries them and the byte ledger keeps their
-/// rows as `retired`.
+/// action: the discriminant stays in [`AdminActionType`] marked deprecated,
+/// no `AdminAction` arm carries it, and the byte ledger keeps its row as
+/// `retired`.
 pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03];
 
 /// Stable discriminant for the closed [`AdminAction`] namespace.
@@ -831,7 +832,10 @@ pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03];
 pub enum AdminActionType {
     CreateMarket = 1,
     UpdateAdminSignerRegistry = 2,
-    // Tag 3 is retired: see `RETIRED_ADMIN_TAGS`.
+    #[deprecated(
+        note = "retired with the impact-market family; no AdminAction arm, never reassigned"
+    )]
+    CreateImpactMarket = 3,
     Batch = 4,
     SetTriggerMarketConfig = 5,
     UnpauseBridge = 6,

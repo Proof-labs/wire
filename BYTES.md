@@ -161,8 +161,11 @@ that gives it behaviour.
 
 ## Process for retiring a byte
 
-1. Remove the Rust arm (`define_actions!` entry or `AdminActionType` variant)
-   so the byte no longer decodes.
+1. Stop the byte decoding. An outer action loses its `define_actions!` entry
+   and joins `RETIRED_ACTION_BYTES`. An inner admin tag keeps its
+   `AdminActionType` discriminant marked `#[deprecated]` (the hole stays
+   named), loses its `AdminAction` arm — decoding goes by that arm's name —
+   and joins `RETIRED_ADMIN_TAGS`. The ledger tests assert both lists.
 2. Keep the row here and set its status to `retired`. Never delete the row and
    never hand the value to a new action: chains, signed transactions and
    proposal hashes that used it still exist.
