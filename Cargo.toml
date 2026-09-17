@@ -48,7 +48,14 @@ name = "proof-wire"
 # derive_sub_account, SubAccountCreated/SubAccountTransferCompleted events,
 # and sub-account ExecError codes at 83-90 (moved off the oracle-guard range
 # that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
-version = "1.9.0"
+#
+# 1.9.0 -> 1.10.0: additive wire change. New outer action
+# ClaimWithdrawalPayout at 0x2E — the single-holder Solana payout claim a
+# custody-authorized watcher must hold before signing a payout — plus the
+# WithdrawalPayoutLease state type, Event::WithdrawalPayoutLeaseAcquired and
+# ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
+# decode unchanged -> MINOR.
+version = "1.10.0"
 edition = "2021"
 
 [dependencies]
