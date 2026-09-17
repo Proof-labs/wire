@@ -362,8 +362,9 @@ pub struct EventInfo {
     pub question: String,
     /// Event settlement time in ms since Unix epoch.
     pub settlement_ms: u64,
-    /// Grace period after `settlement_ms` before a stale-oracle event may be
-    /// voided by a signer (there is no automatic void, G16).
+    /// Configured resolution window in milliseconds, stored at creation but
+    /// not enforced for standalone events. [`ResolveEvent`] accepts only
+    /// Yes/No outcomes; this field does not enable Void or automatic resolution.
     pub resolution_window_ms: u64,
     /// Current lifecycle status.
     pub status: EventStatus,
