@@ -1853,6 +1853,11 @@ mod tests {
                 | AdminActionType::SetOracleGuards
                 | AdminActionType::ScheduleUpgrade
                 | AdminActionType::CancelUpgrade => {}
+                // Retired: a discriminant with no arm, never listed as assigned.
+                #[allow(deprecated)]
+                AdminActionType::CreateImpactMarket => {
+                    panic!("a retired tag must not be listed as assigned")
+                }
             }
         }
 
