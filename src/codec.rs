@@ -162,8 +162,8 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    CreateImpactMarket => 14,    // 0x0E
-    ResolveImpactMarket => 15,          // 0x0F
+    // 0x0E CreateImpactMarket and 0x0F ResolveImpactMarket are retired with
+    // the impact-market family: unassigned, never reused, fail to decode.
     UpdateMarketFees => 16,      // 0x10
     RunLiquidationSweep => 17,   // 0x11
     RunFundingTick => 18,        // 0x12
@@ -240,8 +240,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::CreateMarket
         | ActionType::WithdrawRequest
         | ActionType::ConfirmWithdrawal
-        | ActionType::CreateImpactMarket
-        | ActionType::ResolveImpactMarket
         | ActionType::ResolveEvent
         | ActionType::UpdateMarketFees
         | ActionType::RunLiquidationSweep
@@ -745,10 +743,7 @@ pub fn canonical_tier2_action_type(bytes: &[u8]) -> Option<ActionType> {
     // on to spend the automatic resolution allowance in the same block.
     if !matches!(
         action_type,
-        ActionType::ResolveImpactMarket
-            | ActionType::ResolveEvent
-            | ActionType::RunLiquidationSweep
-            | ActionType::LiquidateAccounts
+        ActionType::ResolveEvent | ActionType::RunLiquidationSweep | ActionType::LiquidateAccounts
     ) {
         return None;
     }
@@ -1749,17 +1744,16 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 15] = [
+        const ALL_INNER_TAGS: [AdminActionType; 14] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
-            AdminActionType::CreateImpactMarket,
             AdminActionType::Batch,
             AdminActionType::SetTriggerMarketConfig,
             AdminActionType::UnpauseBridge,
             AdminActionType::UpdateAuthoritySet,
             AdminActionType::CancelAllOrdersForAccount,
             AdminActionType::CreateEvent,
-            AdminActionType::ReservedRt01B,
+            AdminActionType::AttachConditional,
             AdminActionType::ReservedRt01C,
             AdminActionType::ConfigureOraclePolicy,
             AdminActionType::SetOracleGuards,
@@ -1770,14 +1764,13 @@ mod tests {
             match tag_type {
                 AdminActionType::CreateMarket
                 | AdminActionType::UpdateAdminSignerRegistry
-                | AdminActionType::CreateImpactMarket
                 | AdminActionType::Batch
                 | AdminActionType::SetTriggerMarketConfig
                 | AdminActionType::UnpauseBridge
                 | AdminActionType::UpdateAuthoritySet
                 | AdminActionType::CancelAllOrdersForAccount
                 | AdminActionType::CreateEvent
-                | AdminActionType::ReservedRt01B
+                | AdminActionType::AttachConditional
                 | AdminActionType::ReservedRt01C
                 | AdminActionType::ConfigureOraclePolicy
                 | AdminActionType::SetOracleGuards
@@ -1797,8 +1790,8 @@ mod tests {
 
         // Every tag from 1 to the highest assigned one needs a row: assigned
         // tags must not read free, and an unassigned tag below the highest
-        // must be recorded as reserved — a silent hole would mean a burned
-        // value nobody recorded.
+        // must be recorded as reserved or retired — a silent hole would mean
+        // a burned value nobody recorded.
         let highest = ALL_INNER_TAGS
             .iter()
             .map(|tag_type| *tag_type as u8)
@@ -1816,8 +1809,8 @@ mod tests {
             );
             if !ALL_INNER_TAGS.iter().any(|tag_type| *tag_type as u8 == tag) {
                 assert!(
-                    line.contains("reserved"),
-                    "unassigned inner admin tag {tag:#04x} must be recorded as reserved"
+                    line.contains("reserved") || line.contains("retired"),
+                    "unassigned inner admin tag {tag:#04x} must be recorded as reserved or retired"
                 );
             }
         }
@@ -1828,25 +1821,17 @@ mod tests {
     /// 0x22…): the SDK copies these across its three languages.
     #[test]
     fn admin_proposal_content_hash_v2_golden_vectors() {
-        let impact = AdminAction::CreateImpactMarket(CreateImpactMarket {
-            impact_market_id: 91,
+        let attach = AdminAction::AttachConditional(crate::types::AttachConditional {
+            event_id: crate::types::EventId(91),
             underlying_market: 15,
             child_market_base: 9_100,
-            question: "does it land?".into(),
-            deadline_ms: 1_000_000,
-            resolution_window_ms: 1_000,
             im_bps: 3334,
             mm_bps: 1667,
             taker_fee_bps: 5,
             maker_fee_bps: 2,
-            funding_interval_ms: 0,
-            max_funding_rate_bps: 3000,
             signer: [0u8; 20],
-            oracle_source: None,
-            description: String::new(),
-            rules: String::new(),
         });
-        let AdminAction::CreateImpactMarket(impact_cmd) = impact.clone() else {
+        let AdminAction::AttachConditional(attach_cmd) = attach.clone() else {
             unreachable!()
         };
         let batch = AdminAction::Batch(vec![
@@ -1855,16 +1840,16 @@ mod tests {
                 signer: [0u8; 20],
                 ..Default::default()
             }),
-            AdminBatchItem::CreateImpactMarket(impact_cmd),
+            AdminBatchItem::AttachConditional(attach_cmd),
         ]);
         for (action, expected) in [
             (
-                &impact,
-                "d57a7faa3a17aac647a0256c38f125f6bd0913d70013e185aeb322efaab9629e",
+                &attach,
+                "486daa04d51a92caf912c4240352fd5baf4ac5890776a27ca5d0cddf28b31e79",
             ),
             (
                 &batch,
-                "f9a9b17a53b52ad72c1703b583a0ed4ac70295244cbf31f74518d5177dd86e36",
+                "c0a5b206f0d75c957e05d21c9c208a53c02877d2b77805fa5e551e03341a39e9",
             ),
         ] {
             let h = admin_proposal_content_hash(
@@ -1967,98 +1952,128 @@ mod tests {
         ));
     }
 
-    /// Frozen wire vectors for the admin-actions-v2 arms (tags 3 and 4).
-    /// These bytes are committed by proposal content hashes on a
+    /// Frozen wire vectors for the attach arm (tag 10) and the batch arm
+    /// (tag 4). These bytes are committed by proposal content hashes on a
     /// persistent chain; a serde or struct change that moves them is a
     /// consensus break, which is exactly what this test exists to catch.
     /// The SDK copies these vectors for its cross-language conformance.
     #[test]
-    fn admin_action_v2_wire_vectors_frozen() {
-        let impact = AdminAction::CreateImpactMarket(CreateImpactMarket {
-            impact_market_id: 91,
+    fn admin_action_attach_and_batch_wire_vectors_frozen() {
+        let attach = AdminAction::AttachConditional(crate::types::AttachConditional {
+            event_id: crate::types::EventId(91),
             underlying_market: 15,
             child_market_base: 9_100,
-            question: "does it land?".into(),
-            deadline_ms: 1_000_000,
-            resolution_window_ms: 1_000,
             im_bps: 3334,
             mm_bps: 1667,
             taker_fee_bps: 5,
             maker_fee_bps: 2,
-            funding_interval_ms: 0,
-            max_funding_rate_bps: 3000,
             signer: [0u8; 20],
-            oracle_source: None,
-            description: String::new(),
-            rules: String::new(),
         });
-        assert_eq!(impact.action_tag(), 3);
+        assert_eq!(attach.action_tag(), 10);
         assert_eq!(
-            hex_string(&canonical_admin_action_bytes(&impact).unwrap()),
-            "81b2437265617465496d706163744d61726b6574dc00105b0fcd238cad646f6573206974206c616e643fce000f4240cd03e8cd0d06cd0683050200cd0bb8dc00140000000000000000000000000000000000000000c0a0a0"
+            hex_string(&canonical_admin_action_bytes(&attach).unwrap()),
+            "81b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
         );
 
-        let AdminAction::CreateImpactMarket(impact_cmd) = impact else {
+        let AdminAction::AttachConditional(attach_cmd) = attach else {
             unreachable!()
         };
-        // Same bytes as the first cut's recursive Vec<AdminAction>: the item
-        // enum's variant names are identical, so the externally-tagged wire
-        // encoding is unchanged — that is the compatibility this pinned hex
-        // proves.
+        // The item enum's variant names match the singleton arms, so the
+        // externally-tagged batch bytes are the concatenation of the items'
+        // own canonical bytes — that is what this pinned hex proves.
         let batch = AdminAction::Batch(vec![
             AdminBatchItem::CreateMarket(CreateMarket {
                 market: 15,
                 signer: [0u8; 20],
                 ..Default::default()
             }),
-            AdminBatchItem::CreateImpactMarket(impact_cmd),
+            AdminBatchItem::AttachConditional(attach_cmd),
         ]);
         assert_eq!(batch.action_tag(), 4);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&batch).unwrap()),
-            "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b2437265617465496d706163744d61726b6574dc00105b0fcd238cad646f6573206974206c616e643fce000f4240cd03e8cd0d06cd0683050200cd0bb8dc00140000000000000000000000000000000000000000c0a0a0"
+            "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
         );
     }
 
-    /// The byte-budget claim, proven rather than asserted in prose:
-    /// a worst-case capped impact action — and the canonical batch of
-    /// [worst CreateMarket, worst impact] — fit `MAX_ADMIN_ACTION_BYTES`
-    /// without raising it. The free-text caps are what make this true.
+    /// The impact-market family is gone: its outer action bytes (0x0E,
+    /// 0x0F) and its inner admin tag (3) are retired, never reassigned, and
+    /// fail closed at decode instead of mapping onto any other action.
+    #[test]
+    fn retired_impact_market_bytes_fail_closed() {
+        for byte in [0x0Eu8, 0x0F] {
+            assert!(
+                ActionType::try_from(byte).is_err(),
+                "{byte:#04x} must be unassigned"
+            );
+            let tx = encode_signed_tx_raw(byte, &[0x90], 1, &[0x11; 32], &[0x22; 64]).unwrap();
+            assert!(
+                matches!(decode_tx(&tx), Err(ExecError::DecodeError(_))),
+                "{byte:#04x} must not decode as any action"
+            );
+            assert_eq!(canonical_action_type(&tx), None);
+        }
+
+        #[derive(Serialize)]
+        enum PhantomAdminAction {
+            CreateImpactMarket { impact_market_id: u32 },
+        }
+        let bytes = rmp_serde::to_vec(&PhantomAdminAction::CreateImpactMarket {
+            impact_market_id: 3,
+        })
+        .unwrap();
+        assert!(matches!(
+            canonicalize_admin_action(&bytes),
+            Err(ExecError::DecodeError(_))
+        ));
+    }
+
+    /// The byte-budget claim, proven rather than asserted in prose: a
+    /// worst-case capped `CreateEvent` — and the canonical batch of
+    /// [worst CreateMarket, worst AttachConditional] — fit
+    /// `MAX_ADMIN_ACTION_BYTES` without raising it. The free-text caps are
+    /// what make the first true.
     #[test]
     fn v2_worst_case_sizes_fit_the_admin_action_cap() {
         use crate::types::{
-            EventOracleSource, PriceComparison, MAX_IMPACT_DESCRIPTION_BYTES,
-            MAX_IMPACT_QUESTION_BYTES, MAX_IMPACT_RULES_BYTES,
+            AttachConditional, CreateEvent, EventId, EventOracleSource, PriceComparison,
+            MAX_EVENT_DESCRIPTION_BYTES, MAX_EVENT_QUESTION_BYTES, MAX_EVENT_RULES_BYTES,
         };
-        let worst_impact_cmd = CreateImpactMarket {
-            impact_market_id: u32::MAX,
-            underlying_market: u32::MAX,
-            child_market_base: u32::MAX - 3,
-            question: "q".repeat(MAX_IMPACT_QUESTION_BYTES),
-            deadline_ms: u64::MAX,
+        let worst_event = AdminAction::CreateEvent(CreateEvent {
+            event_id: EventId(u32::MAX),
+            child_market_base: u32::MAX - 1,
+            pool_id: u8::MAX,
+            question: "q".repeat(MAX_EVENT_QUESTION_BYTES),
+            settlement_ms: u64::MAX,
             resolution_window_ms: u64::MAX,
-            im_bps: u32::MAX,
-            mm_bps: u32::MAX,
             taker_fee_bps: u32::MAX,
             maker_fee_bps: u32::MAX,
-            funding_interval_ms: u64::MAX,
-            max_funding_rate_bps: u32::MAX,
             signer: [0u8; 20],
             oracle_source: Some(EventOracleSource::MarketOracle {
                 market: u32::MAX,
                 strike_price: u64::MAX,
                 comparison: PriceComparison::GreaterThanOrEqual,
             }),
-            description: "d".repeat(MAX_IMPACT_DESCRIPTION_BYTES),
-            rules: "r".repeat(MAX_IMPACT_RULES_BYTES),
-        };
-        let worst_impact = AdminAction::CreateImpactMarket(worst_impact_cmd.clone());
-        let solo = canonical_admin_action_bytes(&worst_impact).unwrap();
+            description: "d".repeat(MAX_EVENT_DESCRIPTION_BYTES),
+            rules: "r".repeat(MAX_EVENT_RULES_BYTES),
+        });
+        let solo = canonical_admin_action_bytes(&worst_event).unwrap();
         assert!(
             solo.len() <= MAX_ADMIN_ACTION_BYTES,
-            "worst capped impact action is {} bytes",
+            "worst capped event action is {} bytes",
             solo.len()
         );
+
+        let worst_attach_cmd = AttachConditional {
+            event_id: EventId(u32::MAX),
+            underlying_market: u32::MAX,
+            child_market_base: u32::MAX - 1,
+            im_bps: u32::MAX,
+            mm_bps: u32::MAX,
+            taker_fee_bps: u32::MAX,
+            maker_fee_bps: u32::MAX,
+            signer: [0u8; 20],
+        };
 
         let worst_create = AdminAction::CreateMarket(CreateMarket {
             market: u32::MAX,
@@ -2079,7 +2094,7 @@ mod tests {
         };
         let batch = AdminAction::Batch(vec![
             AdminBatchItem::CreateMarket(worst_create_cmd),
-            AdminBatchItem::CreateImpactMarket(worst_impact_cmd),
+            AdminBatchItem::AttachConditional(worst_attach_cmd),
         ]);
         let bytes = canonical_admin_action_bytes(&batch).unwrap();
         assert!(
@@ -2745,8 +2760,8 @@ mod tests {
 
     #[test]
     fn canonical_tier2_classifier_rejects_alternate_envelope_representation() {
-        let action = Action::ResolveImpactMarket(ResolveImpactMarket {
-            impact_market_id: 42,
+        let action = Action::ResolveEvent(crate::types::ResolveEvent {
+            event_id: crate::types::EventId(42),
             outcome: Outcome::Yes,
             signer: [0x11; 20],
         });
@@ -2755,7 +2770,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             canonical_tier2_action_type(&canonical),
-            Some(ActionType::ResolveImpactMarket)
+            Some(ActionType::ResolveEvent)
         );
 
         // rmp-serde accepts array16(6) for the same struct, and the signature
@@ -2833,14 +2848,6 @@ mod tests {
     fn tier2_action_set_is_pinned() {
         let tier2: Vec<(Action, ActionType)> = vec![
             (
-                Action::ResolveImpactMarket(ResolveImpactMarket {
-                    impact_market_id: 42,
-                    outcome: Outcome::Yes,
-                    signer: [0x11; 20],
-                }),
-                ActionType::ResolveImpactMarket,
-            ),
-            (
                 Action::ResolveEvent(crate::types::ResolveEvent {
                     event_id: crate::types::EventId(7),
                     outcome: Outcome::No,
@@ -2873,8 +2880,7 @@ mod tests {
                 .expect("every emitted action type is known");
             if matches!(
                 action_type,
-                ActionType::ResolveImpactMarket
-                    | ActionType::ResolveEvent
+                ActionType::ResolveEvent
                     | ActionType::RunLiquidationSweep
                     | ActionType::LiquidateAccounts
             ) {
@@ -2922,8 +2928,6 @@ mod tests {
             (ActionType::FailWithdrawal, BlockPhase::PriceCreditPrefix),
             (ActionType::ApproveAgent, BlockPhase::AgentAuthority),
             (ActionType::RevokeAgent, BlockPhase::AgentAuthority),
-            (ActionType::CreateImpactMarket, BlockPhase::Ordinary),
-            (ActionType::ResolveImpactMarket, BlockPhase::Ordinary),
             (ActionType::UpdateMarketFees, BlockPhase::Ordinary),
             (ActionType::RunLiquidationSweep, BlockPhase::Ordinary),
             (ActionType::RunFundingTick, BlockPhase::Ordinary),

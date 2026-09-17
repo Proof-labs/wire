@@ -5,9 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-    Branch, EventOracleSource, ImpactMarketId, ImpactMarketStatus, MarketId, PositionEpoch, Side,
-};
+use crate::types::{Branch, EventId, MarketId, PositionEpoch, Side};
 
 /// Position with response-only enrichment fields computed inline by
 /// `query_account`. The first six fields match the on-state `Position`
@@ -127,16 +125,16 @@ pub struct AccountInfo {
     pub margin_ratio_bps: u64,
     /// Resolution scenario with the lowest paired maintenance ratio — the
     /// "binding" liquidation-health outcome.
-    /// One entry per active impact market the account touches, in ascending
-    /// impact-market-id order. For perp-only accounts (no impact exposure)
-    /// this is empty.
+    /// One entry per active event the account touches through a
+    /// conditional, in ascending event-id order. For perp-only accounts
+    /// (no conditional exposure) this is empty.
     ///
     /// The pre-scenario-margin framing said "binding branch: YES vs NO" but
-    /// that doesn't compose for 2+ impact markets. `binding_scenario` is the
-    /// correct generalization: a tuple of (impact_market_id, branch) per
-    /// event the account is exposed to. A trailing msgpack field (index 6);
-    /// older SDK versions reading indices 0-5 continue to work.
-    pub binding_scenario: Vec<(ImpactMarketId, Branch)>,
+    /// that doesn't compose for 2+ events. `binding_scenario` is the
+    /// correct generalization: a tuple of (event_id, branch) per event the
+    /// account is exposed to. A trailing msgpack field (index 6); older SDK
+    /// versions reading indices 0-5 continue to work.
+    pub binding_scenario: Vec<(EventId, Branch)>,
     /// Cumulative trading fees paid (positive) or rebates received
     /// (negative) by this account across its lifetime in micro-USDC.
     /// Updated atomically with the FeePool credit at fill time, so
@@ -160,30 +158,4 @@ pub struct AccountInfo {
     /// Trailing field (index 9); older clients may ignore it.
     #[serde(default)]
     pub cashout_equity: i64,
-}
-
-/// Frontend-facing impact-market info response.
-///
-/// Stored [`ImpactMarketInfo`] deliberately stops at `oracle_source`; this view
-/// appends `description` and `rules` for `/v1/impact_market*` readers without
-/// putting presentation copy in consensus state. Keep field order compatible
-/// with the previous 15-field `ImpactMarketInfo` response.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ImpactMarketDisplayInfo {
-    pub impact_market_id: ImpactMarketId,
-    pub underlying_market: MarketId,
-    pub cpy_market: MarketId,
-    pub cpn_market: MarketId,
-    pub eby_market: MarketId,
-    pub ebn_market: MarketId,
-    pub question: String,
-    pub deadline_ms: u64,
-    pub resolution_window_ms: u64,
-    pub status: ImpactMarketStatus,
-    pub created_ms: u64,
-    pub resolved_ms: u64,
-    #[serde(default)]
-    pub oracle_source: Option<EventOracleSource>,
-    pub description: String,
-    pub rules: String,
 }
