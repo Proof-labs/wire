@@ -49,7 +49,14 @@ name = "proof-wire"
 # and sub-account ExecError codes at 83-90 (moved off the oracle-guard range
 # that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
 #
-# 1.9.0 -> 2.0.0: BREAKING wire change. The impact-market family is removed:
+# 1.9.0 -> 1.10.0: additive wire change. New outer action
+# ClaimWithdrawalPayout at 0x2E — the single-holder Solana payout claim a
+# custody-authorized watcher must hold before signing a payout — plus the
+# WithdrawalPayoutLease state type, Event::WithdrawalPayoutLeaseAcquired and
+# ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
+# decode unchanged -> MINOR.
+#
+# 1.10.0 -> 2.0.0: BREAKING wire change. The impact-market family is removed:
 # outer actions CreateImpactMarket
 # (0x0E) and ResolveImpactMarket (0x0F), inner admin tag 3, ImpactMarketId /
 # ImpactMarketInfo / ImpactMarketStatus, the family events and ExecError codes

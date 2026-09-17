@@ -69,7 +69,7 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
 | 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
-| 0x2E | _free_                              | —        |
+| 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types
