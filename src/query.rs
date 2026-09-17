@@ -109,6 +109,14 @@ pub struct PositionBrief {
     pub position_epoch: Option<PositionEpoch>,
 }
 
+/// One event's outcome in the binding scenario: a two-element msgpack
+/// array, byte-identical to the `(EventId, Branch)` pair it replaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BindingScenario {
+    pub event_id: EventId,
+    pub branch: Branch,
+}
+
 /// Account info response — includes margin breakdown for liquidation bar.
 #[derive(Serialize, Deserialize)]
 pub struct AccountInfo {
@@ -124,17 +132,12 @@ pub struct AccountInfo {
     /// 1.0 = at liquidation threshold. >1.0 = healthy. Encoded as bps (10000 = 1.0x).
     pub margin_ratio_bps: u64,
     /// Resolution scenario with the lowest paired maintenance ratio — the
-    /// "binding" liquidation-health outcome.
-    /// One entry per active event the account touches through a
-    /// conditional, in ascending event-id order. For perp-only accounts
-    /// (no conditional exposure) this is empty.
-    ///
-    /// The pre-scenario-margin framing said "binding branch: YES vs NO" but
-    /// that doesn't compose for 2+ events. `binding_scenario` is the
-    /// correct generalization: a tuple of (event_id, branch) per event the
-    /// account is exposed to. A trailing msgpack field (index 6); older SDK
-    /// versions reading indices 0-5 continue to work.
-    pub binding_scenario: Vec<(EventId, Branch)>,
+    /// "binding" liquidation-health outcome. One entry per active event the
+    /// account touches through a conditional, in ascending event-id order;
+    /// empty for an account with no conditional exposure. A trailing msgpack
+    /// field (index 6); older SDK versions reading indices 0-5 continue to
+    /// work.
+    pub binding_scenario: Vec<BindingScenario>,
     /// Cumulative trading fees paid (positive) or rebates received
     /// (negative) by this account across its lifetime in micro-USDC.
     /// Updated atomically with the FeePool credit at fill time, so
@@ -158,4 +161,22 @@ pub struct AccountInfo {
     /// Trailing field (index 9); older clients may ignore it.
     #[serde(default)]
     pub cashout_equity: i64,
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_scenario_entry_is_the_pair_it_replaces() {
+        let entry = BindingScenario {
+            event_id: EventId(42),
+            branch: Branch::Yes,
+        };
+        assert_eq!(
+            rmp_serde::to_vec(&entry).expect("entry serializes"),
+            rmp_serde::to_vec(&(EventId(42), Branch::Yes)).expect("pair serializes")
+        );
+    }
 }
