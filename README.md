@@ -30,6 +30,8 @@ bump lives in the header of [`Cargo.toml`](Cargo.toml). Consumers pin tags
 - 1.4.0 → 1.5.0: `AdminAction::CreateEvent` (inner tag `0x09`) and the typed `EventKey`
 - 1.5.0 → 1.6.0: `ResolveEvent` (outer action `0x27`) for standalone events; the `0x0F` impact-market resolution is renamed `ResolveImpactMarket` (payload unchanged)
 - 1.7.0 → 1.8.0: `ScheduleUpgrade` (inner tag `0x0E`) and `CancelUpgrade` (`0x0F`): the on-chain upgrade-plan path replacing `UPGRADE_PLAN` env coordination
+- 1.8.0 → 1.9.0: sub-accounts: `CreateSubAccount` (outer `0x28`), `SubAccountTransfer` (`0x29`), the frozen address derivation, error codes 83–90
+- 1.9.0 → 2.0.0: **breaking**: the impact-market family is removed (`CreateImpactMarket` `0x0E`, `ResolveImpactMarket` `0x0F`, inner tag `0x03`, `ImpactMarketInfo`, error codes 24/25/31, all retired, never reused); `ConditionalPerp` is re-rooted onto `EventId`, `EventInfo` carries its attached conditionals, `AttachConditional` claims inner tag `0x0A`, event error codes 92–96
 
 ## The byte ledger
 

@@ -55,7 +55,18 @@ name = "proof-wire"
 # WithdrawalPayoutLease state type, Event::WithdrawalPayoutLeaseAcquired and
 # ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
 # decode unchanged -> MINOR.
-version = "1.10.0"
+#
+# 1.10.0 -> 2.0.0: BREAKING wire change. The impact-market family is removed:
+# outer actions CreateImpactMarket
+# (0x0E) and ResolveImpactMarket (0x0F), inner admin tag 3, ImpactMarketId /
+# ImpactMarketInfo / ImpactMarketStatus, the family events and ExecError codes
+# 24, 25 and 31 are retired, never reused. MarketKind::ConditionalPerp is
+# re-rooted onto EventId, EventInfo gains its attached_conditionals list,
+# AttachConditional claims inner admin tag 0x0A and
+# the batch item set, event ExecError codes 92-96 are added, and CreateEvent
+# and AttachConditional carry a per-book max_open_interest. Family bytes no
+# longer decode -> MAJOR.
+version = "2.0.0"
 edition = "2021"
 
 [dependencies]

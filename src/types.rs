@@ -31,14 +31,9 @@ pub type OrderId = u64;
 pub type MarketId = u32;
 /// Auto-incrementing fill identifier, unique across all trades.
 pub type FillId = u64;
-/// Impact market family identifier (1 family owns 4 child markets — CPY/CPN/EBY/EBN).
-pub type ImpactMarketId = u32;
-
-/// Identifier of a standalone event (re-rooted), structurally distinct
-/// from [`ImpactMarketId`] per the domain-newtype convention. `#[serde(transparent)]`
-/// so it encodes as a bare `u32`, keeping the wire unchanged. The
-/// underlying value space is currently shared with families (a legacy family's
-/// event reuses its id value); distinct allocation is a follow-up.
+/// Identifier of an event: the root that owns two prediction-binary books
+/// and every conditional attached to it.
+/// `#[serde(transparent)]`, so it encodes as a bare `u32`.
 #[derive(
     Clone,
     Copy,
@@ -88,7 +83,7 @@ pub const PREDICTION_BINARY_LOT_SIZE: u64 = 1;
 pub const PREDICTION_BINARY_TICK_SIZE: u64 = 1;
 
 // ---------------------------------------------------------------------------
-// Impact market enums
+// Event enums
 // ---------------------------------------------------------------------------
 
 /// Which branch of a binary event a conditional/prediction book represents.
@@ -100,7 +95,7 @@ pub enum Branch {
     No = 2,
 }
 
-/// Outcome of an impact-market event resolution.
+/// Outcome of an event resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, derive_more::Display)]
 pub enum Outcome {
     #[display("yes")]
@@ -112,18 +107,19 @@ pub enum Outcome {
     Void = 3,
 }
 
-/// How the YES/NO outcome of an impact-market event is determined
-/// at deadline. Stored on [`ImpactMarketInfo`] (and carried on
-/// [`CreateImpactMarket`]). `RelayerAttested` is the legacy default —
+/// How the YES/NO outcome of an event is determined at its settlement
+/// time. Stored on [`EventInfo`] (and carried on [`CreateEvent`]).
+/// `RelayerAttested` is the legacy default —
 /// the resolver supplies the outcome and the engine trusts it. The two
 /// auto-resolve modes derive YES/NO from an on-chain oracle reading,
 /// turning the relayer-supplied `outcome` field into a verifiable assertion
 /// (the engine recomputes and rejects on mismatch).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum EventOracleSource {
-    /// Resolution determined by the underlying perp's oracle reading at
-    /// `ResolveImpactMarket` time, compared against `strike_price`. The classic
-    /// "is BTC above $X at expiry?" pattern.
+    /// Resolution determined by an underlying perp's oracle reading at
+    /// resolution time, compared against `strike_price`. The classic
+    /// "is BTC above $X at expiry?" pattern. An event has no single
+    /// underlying, so `CreateEvent` rejects this source.
     #[display("underlying_price_vs_strike:{strike_price}:{comparison}")]
     UnderlyingPriceVsStrike {
         strike_price: u64,
@@ -198,15 +194,14 @@ pub enum MarketKind {
     /// Regular perpetual future (BTC-PERP, ETH-PERP, SOL-PERP, etc.).
     #[default]
     Perp,
-    /// Conditional perpetual — trades like a perp until the parent event
-    /// resolves, then settles (if branch wins) or voids (if branch loses).
-    ConditionalPerp {
-        impact_market_id: ImpactMarketId,
-        branch: Branch,
-    },
+    /// Conditional perpetual — one branch book of a conditional attached to
+    /// an event. Trades like a perp until the event resolves, then settles
+    /// (if branch wins) or voids (if branch loses). Its underlying is the
+    /// [`AttachedConditional`] on the event that names this market.
+    ConditionalPerp { event_id: EventId, branch: Branch },
     /// Prediction-binary token — trades on [0, BINARY_PRICE_MAX] µUSDC.
     /// Settles to $1 if the branch wins at resolution, $0 otherwise.
-    /// Re-rooted: parented by an [`EventInfo`] via `event_id`, not a family.
+    /// Parented by an [`EventInfo`] via `event_id`.
     PredictionBinary { event_id: EventId, branch: Branch },
 }
 
@@ -248,7 +243,7 @@ pub enum MarkSourceMode {
 /// excluded from the median when the top-of-book spread exceeds this.
 pub const DEFAULT_MAX_MARK_SPREAD_BPS: u32 = 100;
 
-/// Built-in clamp for impact-market branch shocks used by scenario margin.
+/// Built-in clamp for conditional branch shocks used by scenario margin.
 ///
 /// Branch shocks are inferred from child CPY/CPN top-of-book mids. Those
 /// books can be thin, so consensus margin must not let one dust quote mark
@@ -304,26 +299,13 @@ pub const MARK_MIN_BOOK_NOTIONAL_UUSDC: u128 = 50_000_000_000;
 pub const DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR: u64 = 10;
 
 impl MarketKind {
-    /// Returns the parent id this market belongs to, if any. For a
-    /// conditional perp that is its impact-market family; for a prediction
-    /// binary that is its [`EventInfo`] (re-rooted). Currently the two id
-    /// spaces share values, so a legacy family's binary still resolves to it.
-    pub fn impact_market_id(&self) -> Option<ImpactMarketId> {
-        match self {
-            MarketKind::Perp => None,
-            MarketKind::ConditionalPerp {
-                impact_market_id, ..
-            } => Some(*impact_market_id),
-            MarketKind::PredictionBinary { event_id, .. } => Some(event_id.0),
-        }
-    }
-
-    /// The event this market is parented by, if it is a prediction binary
-    /// (re-rooted). `None` for perps and conditional perps.
+    /// The event this market belongs to: a conditional perp through its
+    /// attachment, a prediction binary directly. `None` for a perp.
     pub fn event_id(&self) -> Option<EventId> {
         match self {
-            MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
-            _ => None,
+            MarketKind::Perp => None,
+            MarketKind::ConditionalPerp { event_id, .. }
+            | MarketKind::PredictionBinary { event_id, .. } => Some(*event_id),
         }
     }
 
@@ -345,23 +327,30 @@ impl MarketKind {
     }
 }
 
-/// Lifecycle status of an impact-market family.
+/// Lifecycle status of an event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ImpactMarketStatus {
-    /// Open for trading on all 5 books.
+pub enum EventStatus {
+    /// Open for trading on the event's two binary books and on every
+    /// attached conditional's books.
     Trading,
-    /// Past deadline, awaiting resolver signatures. New orders on child books rejected.
+    /// Past its settlement time, awaiting resolution. New orders on the
+    /// event's books are rejected.
     PreResolution,
-    /// Fully resolved. Winning conditional perp settled; losing voided.
-    /// Binaries settled to $1 (winner) or $0 (loser).
+    /// Resolved. Binaries settled to $1 (winner) or $0 (loser); each
+    /// attached conditional's winning branch settled and losing branch
+    /// voided.
     Resolved(Outcome),
 }
 
-/// Stored on-chain record for a standalone event (re-rooted). Owns its two
-/// prediction-binary books (EBY, EBN) and its resolution rule. Unlike an
-/// impact-market family it has no underlying perp and no conditional legs, so
-/// its binaries never enter the scenario evaluator (they are backed by the
-/// locked reserve, out of scope for this record).
+/// Stored on-chain record for an event. Owns its two prediction-binary
+/// books (EBY, EBN), its resolution rule and the list of conditionals
+/// attached to it. A standalone event has no attachments; its binaries never
+/// enter the scenario evaluator (they are backed by the locked reserve, out
+/// of scope for this record).
+///
+/// Keep this consensus record limited to fields the engine needs for
+/// matching, margin and lifecycle transitions. Display copy (description,
+/// rules) travels on the creation action and event, not here.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventInfo {
     pub event_id: EventId,
@@ -376,8 +365,8 @@ pub struct EventInfo {
     /// Grace period after `settlement_ms` before a stale-oracle event may be
     /// voided by a signer (there is no automatic void, G16).
     pub resolution_window_ms: u64,
-    /// Current lifecycle status (shares the family status enum).
-    pub status: ImpactMarketStatus,
+    /// Current lifecycle status.
+    pub status: EventStatus,
     /// Block timestamp when the event was created (ms since epoch).
     pub created_ms: u64,
     /// Block timestamp when the event resolved (ms since epoch), 0 if unresolved.
@@ -386,47 +375,26 @@ pub struct EventInfo {
     /// `RelayerAttested` — a signer supplies the outcome.
     #[serde(default)]
     pub oracle_source: Option<EventOracleSource>,
+    /// Conditionals attached to this event, in attachment order. The list is
+    /// the count: the engine's per-event cap is a length check on it. Empty
+    /// for a standalone event. Trailing field; an older record decodes as
+    /// empty.
+    #[serde(default)]
+    pub attached_conditionals: Vec<AttachedConditional>,
 }
 
-/// Stored on-chain record for an impact-market family. Owns pointers to the
-/// 4 child markets (CPY, CPN, EBY, EBN) plus the underlying perp.
-///
-/// Keep this consensus record limited to fields the engine needs for matching,
-/// margin, and lifecycle transitions. Frontend body/rules copy is appended by
-/// the query layer as a display DTO so lifecycle rewrites do not mutate
-/// presentation metadata in consensus state.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ImpactMarketInfo {
-    pub impact_market_id: ImpactMarketId,
-    /// Underlying perp market (unconditional book 1). Must already exist.
+/// One conditional attached to an event: the underlying perpetual and the
+/// two conditional-perp books that trade it under the event's Yes and No
+/// branches. Every attachment on an event shares that event's two binary
+/// books.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachedConditional {
+    /// Underlying perpetual. Exists with `kind = Perp`.
     pub underlying_market: MarketId,
-    /// Conditional-perp YES child book.
+    /// Conditional-perp YES book.
     pub cpy_market: MarketId,
-    /// Conditional-perp NO child book.
+    /// Conditional-perp NO book.
     pub cpn_market: MarketId,
-    /// Prediction-binary YES child book.
-    pub eby_market: MarketId,
-    /// Prediction-binary NO child book.
-    pub ebn_market: MarketId,
-    /// Human-readable question (hashed into the market metadata).
-    pub question: String,
-    /// Event deadline in milliseconds since Unix epoch.
-    pub deadline_ms: u64,
-    /// Grace period after `deadline_ms` before the auto-void path fires.
-    pub resolution_window_ms: u64,
-    /// Current lifecycle status.
-    pub status: ImpactMarketStatus,
-    /// Block timestamp when the impact market was created (ms since epoch).
-    pub created_ms: u64,
-    /// Block timestamp when the impact market was resolved (ms since epoch), 0 if unresolved.
-    pub resolved_ms: u64,
-    /// How the YES/NO outcome is determined at deadline. Defaults
-    /// to `RelayerAttested` for back-compat with legacy records (which
-    /// decode as `None` here, treated as `RelayerAttested` by the engine).
-    /// Stored in addition to `CreateImpactMarket.oracle_source` so the
-    /// resolver doesn't need to re-scan the original action bytes.
-    #[serde(default)]
-    pub oracle_source: Option<EventOracleSource>,
 }
 
 // ---------------------------------------------------------------------------
@@ -450,20 +418,18 @@ pub const MAX_ADMIN_ACTION_BYTES: usize = 2048;
 /// Maximum items in an `AdminAction::Batch`. Small on purpose: a batch is
 /// one reviewable signing ceremony, not a bulk loader — every item is
 /// rendered in full by every approver's tooling, and the canonical pairing
-/// this exists for is `[CreateMarket, CreateImpactMarket]`.
-/// Four items are reachable only with short free text: the byte cap
-/// (`MAX_ADMIN_ACTION_BYTES`, checked first at propose) governs, and two
-/// worst-case impact actions alone exceed it — the size proof in codec.rs
-/// covers the canonical pair, not four maximal items.
+/// this exists for is `[CreateMarket, AttachConditional]`: a perpetual and
+/// its attachment to an event born in one proposal. The byte cap
+/// (`MAX_ADMIN_ACTION_BYTES`, checked first at propose) governs; the size
+/// proof in codec.rs covers the canonical pair, not four maximal items.
 pub const MAX_BATCH_ADMIN_ACTIONS: usize = 4;
-/// Byte caps on the impact-market free-text fields, enforced at propose.
-/// Together they are what keeps the worst-case single action — and the
-/// canonical `[CreateMarket, CreateImpactMarket]` batch — under
+/// Byte caps on an event's free-text fields (`CreateEvent`), enforced at
+/// propose. They are what keeps the worst-case `CreateEvent` under
 /// `MAX_ADMIN_ACTION_BYTES` without raising that cap (which would ripple
 /// into the gateway's body budget).
-pub const MAX_IMPACT_QUESTION_BYTES: usize = 256;
-pub const MAX_IMPACT_DESCRIPTION_BYTES: usize = 768;
-pub const MAX_IMPACT_RULES_BYTES: usize = 640;
+pub const MAX_EVENT_QUESTION_BYTES: usize = 256;
+pub const MAX_EVENT_DESCRIPTION_BYTES: usize = 768;
+pub const MAX_EVENT_RULES_BYTES: usize = 640;
 /// Proposal time-to-live (72 h), observed lazily. A per-release value,
 /// never per-proposal.
 pub const PROPOSAL_TTL_MS: u64 = 259_200_000;
@@ -694,19 +660,18 @@ pub enum AdminAction {
     CreateMarket(CreateMarket),
     /// Replaces the admin signer roster and approval threshold.
     UpdateAdminSignerRegistry(UpdateAdminSignerRegistry),
-    /// Creates an impact-market family (4 child books). The embedded signer
-    /// must be zero, same rule as `CreateMarket`. Admitted from the chain
-    /// lineage's admin-actions-v2 activation height
-    /// (`crate::repo::ADMIN_ACTIONS_V2_ACTIVATIONS`).
-    CreateImpactMarket(CreateImpactMarket),
     /// Creates a standalone event (2 binary books, no underlying). Same
-    /// zero-signer rule as `CreateImpactMarket`.
+    /// zero-signer rule as `CreateMarket`.
     CreateEvent(CreateEvent),
+    /// Attaches a conditional (2 conditional-perp books on one underlying)
+    /// to an existing event. Same zero-signer rule as `CreateMarket`.
+    AttachConditional(AttachConditional),
     /// Two to `MAX_BATCH_ADMIN_ACTIONS` market-creation actions executed
     /// sequentially in ONE child overlay, so the whole batch lands
     /// atomically and a later item may reference state an earlier item
-    /// created (the canonical use: a family whose underlying perp is born
-    /// in the same proposal). Admitted from the same v2 activation height.
+    /// created (the canonical use: a perpetual and its attachment to an
+    /// event born in the same proposal). Admitted from the chain lineage's
+    /// admin-actions-v2 activation height.
     ///
     /// The item type is deliberately NOT `AdminAction` (review finding on
     /// the first cut, which used `Vec<AdminAction>`): a recursive enum
@@ -847,8 +812,15 @@ pub enum AdminBatchItem {
     /// Same rules as the singleton arm: all-zero inner signer.
     CreateMarket(CreateMarket),
     /// Same rules as the singleton arm: all-zero inner signer.
-    CreateImpactMarket(CreateImpactMarket),
+    AttachConditional(AttachConditional),
 }
+
+/// Inner admin tags that once decoded and never will again. Historical
+/// proposal hashes commit them, so the values are never handed to a new
+/// action: the discriminant stays in [`AdminActionType`] marked deprecated,
+/// no `AdminAction` arm carries it, and the byte ledger keeps its row as
+/// `retired`.
+pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03];
 
 /// Stable discriminant for the closed [`AdminAction`] namespace.
 ///
@@ -860,17 +832,20 @@ pub enum AdminBatchItem {
 pub enum AdminActionType {
     CreateMarket = 1,
     UpdateAdminSignerRegistry = 2,
+    #[deprecated(
+        note = "retired with the impact-market family; no AdminAction arm, never reassigned"
+    )]
     CreateImpactMarket = 3,
     Batch = 4,
     SetTriggerMarketConfig = 5,
     UnpauseBridge = 6,
     UpdateAuthoritySet = 7,
     CancelAllOrdersForAccount = 8,
-    /// Create a standalone event. Governed like `CreateImpactMarket`.
+    /// Create a standalone event. Governed like `CreateMarket`.
     CreateEvent = 9,
-    /// Reserved. See [`AdminActionType::ReservedRt01A`].
-    ReservedRt01B = 10,
-    /// Reserved. See [`AdminActionType::ReservedRt01A`].
+    /// Attach a conditional to an event. Governed like `CreateEvent`.
+    AttachConditional = 10,
+    /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01C = 11,
     ConfigureOraclePolicy = 12,
     /// Per-market oracle guards. Admitted from
@@ -891,8 +866,8 @@ impl AdminAction {
         match self {
             Self::CreateMarket(_) => AdminActionType::CreateMarket,
             Self::UpdateAdminSignerRegistry(_) => AdminActionType::UpdateAdminSignerRegistry,
-            Self::CreateImpactMarket(_) => AdminActionType::CreateImpactMarket,
             Self::CreateEvent(_) => AdminActionType::CreateEvent,
+            Self::AttachConditional(_) => AdminActionType::AttachConditional,
             Self::Batch(_) => AdminActionType::Batch,
             Self::SetTriggerMarketConfig(_) => AdminActionType::SetTriggerMarketConfig,
             Self::UnpauseBridge => AdminActionType::UnpauseBridge,
@@ -1362,8 +1337,8 @@ pub struct MarketConfig {
     /// grouping.
     ///
     /// Grouping key: the underlying perp market id. For a perp, that's
-    /// the perp itself. For a conditional perp, it's the perp referenced
-    /// by the impact market's `underlying_market`. Two legs group iff
+    /// the perp itself. For a conditional perp, it's the perp its event
+    /// attachment names as `underlying_market`. Two legs group iff
     /// they share the same underlying AND both have `net_delta_margin=true`
     /// AND both fire in the current scenario.
     ///
@@ -2493,60 +2468,10 @@ pub struct SubAccount {
     pub created_height: u64,
 }
 
-/// Admin action to create a new impact market family. Atomically registers
-/// the 4 child markets (CPY / CPN / EBY / EBN) with sequential IDs starting
-/// at `child_market_base` and writes the [`ImpactMarketInfo`] record.
-/// Requires relayer authorization.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CreateImpactMarket {
-    pub impact_market_id: ImpactMarketId,
-    /// Underlying perp market (book 1). Must already exist with `kind = Perp`.
-    pub underlying_market: MarketId,
-    /// Starting ID for the 4 child markets. They are allocated as:
-    /// `child_market_base+0` = CPY, `+1` = CPN, `+2` = EBY, `+3` = EBN.
-    /// None of these market IDs may already exist.
-    pub child_market_base: MarketId,
-    pub question: String,
-    pub deadline_ms: u64,
-    pub resolution_window_ms: u64,
-    /// Initial margin ratio for the 2 conditional-perp child books (basis points).
-    /// Prediction-binary books don't use bps IM — their IM is computed from payoff.
-    pub im_bps: u32,
-    /// Maintenance margin ratio for conditional-perp child books.
-    pub mm_bps: u32,
-    pub taker_fee_bps: u32,
-    pub maker_fee_bps: u32,
-    /// Funding interval for the conditional-perp child books (ms). 0 = disabled.
-    pub funding_interval_ms: u64,
-    pub max_funding_rate_bps: u32,
-    #[serde(with = "crate::wire_bytes")]
-    pub signer: [u8; 20],
-    /// How this event's YES/NO outcome is determined at deadline.
-    /// Optional — `None` (or absent on the wire, via `serde(default)`) means
-    /// `RelayerAttested` (the legacy default — the resolver supplies the
-    /// outcome). Two auto-resolve modes derive YES/NO from an on-chain
-    /// oracle; in those modes `ResolveImpactMarket.outcome` becomes a verifiable
-    /// assertion (engine recomputes and rejects on mismatch). Field at the
-    /// END of the struct so old SDK clients (12-element arrays) continue
-    /// to decode cleanly via the wire's `serde(default)` rule.
-    #[serde(default)]
-    pub oracle_source: Option<EventOracleSource>,
-    /// Optional frontend-facing event body text. Kept on the admin action and
-    /// creation event for off-chain indexers, but deliberately not stored in
-    /// [`ImpactMarketInfo`] consensus state.
-    #[serde(default)]
-    pub description: String,
-    /// Optional resolution criteria text. Kept on the admin action and creation
-    /// event for off-chain indexers, but deliberately not stored in
-    /// [`ImpactMarketInfo`] consensus state.
-    #[serde(default)]
-    pub rules: String,
-}
-
 /// Create a standalone event: mints two prediction-binary books (EBY at
 /// `child_market_base+0`, EBN at `+1`) under a new [`EventInfo`], with no
-/// underlying perp and no conditional legs. Requires relayer
-/// authorization; governed like `CreateImpactMarket`.
+/// underlying perp and no conditional legs yet (see [`AttachConditional`]).
+/// Requires relayer authorization; governed like `CreateMarket`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateEvent {
     pub event_id: EventId,
@@ -2570,17 +2495,42 @@ pub struct CreateEvent {
     /// Off-chain resolution criteria text (not stored in consensus state).
     #[serde(default)]
     pub rules: String,
+    /// Open-interest cap for each of the event's two binary books, in
+    /// contracts; `0` = uncapped. Applied per book, as
+    /// [`MarketConfig::max_open_interest`] is.
+    #[serde(default)]
+    pub max_open_interest: u64,
 }
 
-/// Admin action to resolve an impact-market event. Settles the winning
-/// conditional-perp book and voids the loser; cash-settles both binary books
-/// to $1 (winner) / $0 (loser). Requires relayer authorization.
+/// Attach a conditional to an existing event: mints two conditional-perp
+/// books for `underlying_market` (CPY at `child_market_base+0`, CPN at
+/// `+1`) under the event's shared Yes/No binaries and appends an
+/// [`AttachedConditional`] to the event's list. The event must be
+/// `Trading`, the underlying must exist with `kind = Perp` and not already
+/// be attached, and both child ids must be free. No funding fields: the
+/// conditional-perp books run no funding schedule. Governance-only, like
+/// `CreateEvent`: the inner signer is all-zero and the quorum authorizes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ResolveImpactMarket {
-    pub impact_market_id: ImpactMarketId,
-    pub outcome: Outcome,
+pub struct AttachConditional {
+    pub event_id: EventId,
+    /// Underlying perpetual. Must already exist with `kind = Perp`.
+    pub underlying_market: MarketId,
+    /// Starting id for the 2 conditional child markets: `base+0` = CPY,
+    /// `+1` = CPN. Neither may already exist.
+    pub child_market_base: MarketId,
+    /// Initial margin ratio for the two conditional-perp books (basis points).
+    pub im_bps: u32,
+    /// Maintenance margin ratio for the two conditional-perp books.
+    pub mm_bps: u32,
+    pub taker_fee_bps: u32,
+    pub maker_fee_bps: u32,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
+    /// Open-interest cap for each of the two conditional-perp books, in the
+    /// underlying's size scale; `0` = uncapped. Applied per book, as
+    /// [`MarketConfig::max_open_interest`] is.
+    #[serde(default)]
+    pub max_open_interest: u64,
 }
 
 /// Resolve a standalone event. Settles its two prediction-binary books to
@@ -3132,21 +3082,6 @@ pub enum Event {
         maker_fee_bps: u32,
         signer: Option<[u8; 20]>,
     },
-    /// Impact-market family was registered. Emitted once; the 5 underlying
-    /// `MarketCreated` events follow (1 reused existing perp + 4 new children).
-    ImpactMarketCreated {
-        impact_market_id: ImpactMarketId,
-        underlying_market: MarketId,
-        cpy_market: MarketId,
-        cpn_market: MarketId,
-        eby_market: MarketId,
-        ebn_market: MarketId,
-        question: String,
-        deadline_ms: u64,
-        resolution_window_ms: u64,
-        description: String,
-        rules: String,
-    },
     /// A standalone event was created: two prediction-binary books under a
     /// new [`EventInfo`], no underlying perp.
     EventCreated {
@@ -3159,22 +3094,14 @@ pub enum Event {
         description: String,
         rules: String,
     },
-    /// Impact-market family crossed its deadline and is frozen while
-    /// awaiting resolver signatures. New orders on the child books are
-    /// rejected; existing resting child orders are cancelled by the sweep.
-    ImpactMarketPreResolution {
-        impact_market_id: ImpactMarketId,
-        timestamp_ms: u64,
-    },
-    /// Event was resolved with a definitive outcome. Emitted once per family.
-    ImpactMarketResolved {
-        impact_market_id: ImpactMarketId,
-        outcome: Outcome,
-        /// Oracle price of the underlying at resolution time (micro-USDC).
-        /// Used as the settlement mark for the winning conditional perp.
-        settlement_price: u64,
-        timestamp_ms: u64,
-        signer: Option<[u8; 20]>,
+    /// A conditional was attached to an event: two conditional-perp books
+    /// on `underlying_market` under the event's shared binaries. Emitted
+    /// once per attachment; the two `MarketCreated` events follow.
+    ConditionalAttached {
+        event_id: EventId,
+        underlying_market: MarketId,
+        cpy_market: MarketId,
+        cpn_market: MarketId,
     },
     /// A standalone event resolved to Yes or No. No settlement price (no
     /// underlying) and no Void.
@@ -3187,7 +3114,7 @@ pub enum Event {
     /// A conditional-perp position was cash-settled to an owner's balance
     /// because its branch won the resolution.
     ConditionalSettled {
-        impact_market_id: ImpactMarketId,
+        event_id: EventId,
         market: MarketId,
         owner: [u8; 20],
         side: Side,
@@ -3200,7 +3127,7 @@ pub enum Event {
     /// position holder's reserved IM is released (effectively: position deleted,
     /// no balance change, as IM is equity-based not locked collateral).
     ConditionalVoided {
-        impact_market_id: ImpactMarketId,
+        event_id: EventId,
         market: MarketId,
         owner: [u8; 20],
         side: Side,
@@ -3211,7 +3138,7 @@ pub enum Event {
     /// `(1.0 - payoff_per_share) * size` debited. Payoff is $1 for the winner
     /// and $0 for the loser.
     PredictionSettled {
-        impact_market_id: ImpactMarketId,
+        event_id: EventId,
         market: MarketId,
         owner: [u8; 20],
         side: Side,
@@ -3839,9 +3766,9 @@ pub enum ExecError {
     /// signer registry exists: for those actions the legacy path is
     /// closed and the proposal path is the only way — even for an
     /// authorized relayer. Raised by `CreateMarket` whenever a registry
-    /// exists, and by `CreateImpactMarket` only once its lineage's
-    /// admin-actions-v2 height has also passed. Other relayer-gated
-    /// actions do not consult the registry and never raise this.
+    /// exists; `CreateEvent` and `AttachConditional` have no direct path at
+    /// all. Other relayer-gated actions do not consult the registry and
+    /// never raise this.
     AdminActionRequiresProposal,
     /// A proposed or applied signer roster violates the registry
     /// invariants (threshold bounds, sorted duplicate-free members,
@@ -3904,14 +3831,29 @@ pub enum ExecError {
     },
     MarketAlreadyExists(MarketId),
     InvalidMarketConfig(String),
-    ImpactMarketAlreadyExists(ImpactMarketId),
-    ImpactMarketNotFound(ImpactMarketId),
-    /// Attempted to place an order on a conditional/binary book whose parent
-    /// impact market is already resolved or voided.
+    /// `CreateEvent` for an event id already in the registry.
+    EventAlreadyExists(EventId),
+    /// No event exists under this id: nothing can attach to it, resolve it
+    /// or read it.
+    EventNotFound(EventId),
+    /// `AttachConditional` for an underlying that is already attached to
+    /// this event.
+    UnderlyingAlreadyAttached {
+        event_id: EventId,
+        underlying_market: MarketId,
+    },
+    /// `AttachConditional` would exceed the event's attachment cap.
+    TooManyAttachedConditionals {
+        event_id: EventId,
+        current: u32,
+        max: u32,
+    },
+    /// Attempted to place an order on a conditional/binary book whose event
+    /// is no longer trading (past its settlement time or resolved).
     MarketClosedForTrading(MarketId),
     /// Binary-book order outside the [0, BINARY_PRICE_MAX] range.
     BinaryPriceOutOfRange,
-    /// ResolveImpactMarket called with an invalid outcome for the current state.
+    /// ResolveEvent called with an invalid outcome for the current state.
     InvalidResolution(String),
     /// A fill would push the taker's absolute net position past
     /// `MarketConfig.max_position_size`. Engine-level cap enforced at
@@ -3938,11 +3880,11 @@ pub enum ExecError {
         stored: u64,
         submitted: u64,
     },
-    /// Account would touch more impact markets than the scenario margin
-    /// engine can enumerate (`MAX_IMPACT_MARKETS_PER_ACCOUNT`). Returned
-    /// instead of `InsufficientMargin` so clients can distinguish
-    /// "basket exceeds enumeration cap" from "collateral shortfall."
-    TooManyActiveImpactMarkets {
+    /// Account would touch more events than the scenario margin engine can
+    /// enumerate (the engine's per-account event cap). Returned instead of
+    /// `InsufficientMargin` so clients can distinguish "basket exceeds the
+    /// enumeration cap" from "collateral shortfall."
+    TooManyActiveEvents {
         current: u32,
         max: u32,
     },
@@ -4120,9 +4062,7 @@ pub enum ExecError {
     /// A live Solana payout lease on this withdrawal is held by a different
     /// watcher, so this `ClaimWithdrawalPayout` is rejected. Fail-closed:
     /// the rejected claimer must not sign a payout.
-    /// An expired lease does not reach this error — it is replaced. Codes
-    /// 83-90 are reserved by the sub-account errors already merged to this
-    /// repository's dev; 91 skips them deliberately.
+    /// An expired lease does not reach this error — it is replaced.
     WithdrawalPayoutLeaseActive,
 }
 
@@ -4159,8 +4099,8 @@ impl ExecError {
             | ExecError::NonceBelowOldest { .. } => 21,
             ExecError::MarketAlreadyExists(_) => 22,
             ExecError::InvalidMarketConfig(_) => 23,
-            ExecError::ImpactMarketAlreadyExists(_) => 24,
-            ExecError::ImpactMarketNotFound(_) => 25,
+            // 24 and 25 were ImpactMarketAlreadyExists / ImpactMarketNotFound,
+            // retired with the impact-market family; never reassigned.
             ExecError::MarketClosedForTrading(_) => 26,
             ExecError::BinaryPriceOutOfRange => 27,
             ExecError::InvalidResolution(_) => 28,
@@ -4170,7 +4110,7 @@ impl ExecError {
             // use the next contiguous code for the OI-cap rejection.
             ExecError::OpenInterestLimitExceeded { .. } => 51,
             ExecError::OracleTimestampNotMonotonic { .. } => 30,
-            ExecError::TooManyActiveImpactMarkets { .. } => 31,
+            // 31 was TooManyActiveImpactMarkets, retired; never reassigned.
             ExecError::SettlementPriceMismatch { .. } => 32,
             ExecError::OracleNotApplicable { .. } => 33,
             ExecError::PostOnlyWouldCross => 34,
@@ -4225,6 +4165,11 @@ impl ExecError {
             ExecError::SubAccountTransferZeroAmount => 89,
             ExecError::SubAccountsInactive => 90,
             ExecError::WithdrawalPayoutLeaseActive => 91,
+            ExecError::EventAlreadyExists(_) => 92,
+            ExecError::EventNotFound(_) => 93,
+            ExecError::UnderlyingAlreadyAttached { .. } => 94,
+            ExecError::TooManyAttachedConditionals { .. } => 95,
+            ExecError::TooManyActiveEvents { .. } => 96,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4457,21 +4402,28 @@ impl ExecError {
                 "MarketConfig fields fail validation (e.g. fee bps out of range, lot/tick zero, IM/MM ratio \
                  inverted)."
             }
-            ExecError::ImpactMarketAlreadyExists(_) => {
-                "Attempted CreateImpactMarket for an impact market ID already in the registry."
+            ExecError::EventAlreadyExists(_) => {
+                "Attempted CreateEvent for an event ID already in the registry."
             }
-            ExecError::ImpactMarketNotFound(_) => {
-                "Impact market ID does not exist; cannot resolve, cash-out, or query."
+            ExecError::EventNotFound(_) => {
+                "Event ID does not exist; cannot attach to, resolve, or query it."
+            }
+            ExecError::UnderlyingAlreadyAttached { .. } => {
+                "AttachConditional names an underlying that is already attached to this event; one \
+                 conditional per underlying per event."
+            }
+            ExecError::TooManyAttachedConditionals { .. } => {
+                "AttachConditional would exceed the event's attachment cap; use another event."
             }
             ExecError::MarketClosedForTrading(_) => {
-                "Order placement attempted on a conditional/binary book whose parent impact market is \
-                 already resolved or voided."
+                "Order placement attempted on a conditional/binary book whose event is no longer trading \
+                 (past its settlement time or resolved)."
             }
             ExecError::BinaryPriceOutOfRange => {
                 "Binary-book order price is outside the [0, BINARY_PRICE_MAX] range."
             }
             ExecError::InvalidResolution(_) => {
-                "ResolveImpactMarket called with an outcome incompatible with the current state (already resolved, \
+                "ResolveEvent called with an outcome incompatible with the current state (already resolved, \
                  outcome not in the configured set, etc.)."
             }
             ExecError::PositionLimitExceeded { .. } => {
@@ -4487,9 +4439,9 @@ impl ExecError {
                 "OracleUpdate publish_time_ms is not strictly greater than the last accepted update for \
                  this market — replay protection per audit B3 (2026-04-23)."
             }
-            ExecError::TooManyActiveImpactMarkets { .. } => {
-                "Account would touch more impact markets than the scenario margin engine can enumerate \
-                 (MAX_IMPACT_MARKETS_PER_ACCOUNT). Close a leg before opening another."
+            ExecError::TooManyActiveEvents { .. } => {
+                "Account would touch more events than the scenario margin engine can enumerate. Close a \
+                 leg before opening another."
             }
             ExecError::SettlementPriceMismatch { .. } => {
                 "Net-delta margin grouping found legs with disagreeing settle prices (data corruption \
@@ -4675,10 +4627,23 @@ impl fmt::Display for ExecError {
             }
             ExecError::MarketAlreadyExists(id) => write!(f, "market already exists: {id}"),
             ExecError::InvalidMarketConfig(msg) => write!(f, "invalid market config: {msg}"),
-            ExecError::ImpactMarketAlreadyExists(id) => {
-                write!(f, "impact market already exists: {id}")
-            }
-            ExecError::ImpactMarketNotFound(id) => write!(f, "impact market not found: {id}"),
+            ExecError::EventAlreadyExists(id) => write!(f, "event already exists: {id}"),
+            ExecError::EventNotFound(id) => write!(f, "event not found: {id}"),
+            ExecError::UnderlyingAlreadyAttached {
+                event_id,
+                underlying_market,
+            } => write!(
+                f,
+                "underlying {underlying_market} is already attached to event {event_id}"
+            ),
+            ExecError::TooManyAttachedConditionals {
+                event_id,
+                current,
+                max,
+            } => write!(
+                f,
+                "event {event_id} carries {current} conditionals; the cap is {max}"
+            ),
             ExecError::MarketClosedForTrading(id) => {
                 write!(f, "market closed for trading: {id}")
             }
@@ -4713,9 +4678,9 @@ impl fmt::Display for ExecError {
                 "oracle publish_time_ms not strictly monotonic on market {market}: \
                 stored {stored}, submitted {submitted} (submitted must be > stored)"
             ),
-            ExecError::TooManyActiveImpactMarkets { current, max } => write!(
+            ExecError::TooManyActiveEvents { current, max } => write!(
                 f,
-                "too many active impact markets in basket: current {current}, cap {max}"
+                "too many active events in basket: current {current}, cap {max}"
             ),
             ExecError::SettlementPriceMismatch {
                 market,
@@ -4881,18 +4846,18 @@ impl fmt::Display for ExecError {
 pub mod prelude {
     pub use crate::types::{
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
-        AuthorizeWithdrawal, Branch, BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder,
-        CancelOrder, CancelReason, CancelReplaceOrder, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateImpactMarket, CreateMarket,
-        CreateSubAccount, Deposit, DepositLocator, Event, EventOracleSource, ExecError,
-        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
-        ImpactMarketId, ImpactMarketInfo, ImpactMarketStatus, LiquidateAccounts, MarkSourceMode,
-        MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
-        OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason, OracleUpdate,
-        OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position, ResolveEvent,
-        ResolveImpactMarket, RevokeAgent, RunFundingTick, RunLiquidationSweep,
-        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
-        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        AttachConditional, AttachedConditional, AuthorizeWithdrawal, Branch,
+        BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelOrder, CancelReason,
+        CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit,
+        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
+        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, FailDeposit,
+        FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason, LiquidateAccounts,
+        MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder,
+        OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason,
+        OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position,
+        ResolveEvent, RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
+        SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer, TimeInForce, TxContext,
+        UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
         WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
         DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,

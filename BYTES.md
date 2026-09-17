@@ -12,7 +12,9 @@ missing from its table, so the ledger cannot silently drift from the code.
 A byte, once shipped on a persistent chain, is permanent: the outer byte routes
 a transaction to its handler and the inner tag is committed by
 `admin_proposal_content_hash`, so a duplicate or a renumber corrupts consensus.
-Bytes `0x00` and `0xFF` are reserved as sentinels (unused / max).
+Bytes `0x00` and `0xFF` are reserved as sentinels (unused / max). A byte
+whose action has been removed is **retired**: its row stays, marked
+`retired`, and the value is never reassigned.
 
 ## Action types
 
@@ -35,8 +37,8 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x0B | `ACTION_FAIL_WITHDRAWAL`          | shipped  |
 | 0x0C | `ACTION_APPROVE_AGENT`            | shipped  |
 | 0x0D | `ACTION_REVOKE_AGENT`             | shipped  |
-| 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | shipped  |
-| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | shipped  |
+| 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | retired  |
+| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | retired  |
 | 0x10 | `ACTION_UPDATE_MARKET_FEES`       | shipped  |
 | 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | shipped  |
 | 0x12 | `ACTION_RUN_FUNDING_TICK`         | shipped  |
@@ -61,8 +63,8 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | shipped  |
-| 0x28 | `ReservedRt01`                      | reserved |
-| 0x29 | `ReservedRt01`                      | reserved |
+| 0x28 | `CreateSubAccount`                  | dormant behind sub-account activation gate |
+| 0x29 | `SubAccountTransfer`                | dormant behind sub-account activation gate |
 | 0x2A | `ReservedRt01`                      | reserved |
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
@@ -80,14 +82,14 @@ are not outer transaction action bytes.
 |------|-----------------------------------|----------|
 | 0x01 | `CreateMarket`                    | planned  |
 | 0x02 | `UpdateAdminSignerRegistry`       | planned  |
-| 0x03 | `CreateImpactMarket`              | planned  |
+| 0x03 | `CreateImpactMarket`              | retired  |
 | 0x04 | `Batch`                           | planned  |
 | 0x05 | `SetTriggerMarketConfig`          | dormant behind trigger-index gate |
 | 0x06 | `UnpauseBridge`                   | height-gated per lineage (`UNPAUSE_BRIDGE_ACTIVATIONS`) |
 | 0x07 | `UpdateAuthoritySet`              | dormant behind authority-governance gate |
 | 0x08 | `CancelAllOrdersForAccount`       | height-gated per lineage (`CANCEL_ALL_FOR_ACCOUNT_ACTIVATIONS`) |
 | 0x09 | `CreateEvent`                     | governed; creates a standalone event |
-| 0x0A | `ReservedRt01B`                   | reserved; discriminant only, no behaviour |
+| 0x0A | `AttachConditional`               | governed; attaches a conditional to an event |
 | 0x0B | `ReservedRt01C`                   | reserved; discriminant only, no behaviour |
 | 0x0C | `ConfigureOraclePolicy`           | dormant behind oracle-policy gate |
 | 0x0D | `SetOracleGuards`                 | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
@@ -98,11 +100,17 @@ The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
 u64::MAX`. Source messages authenticate an approved relay, not a provider proof.
 
-Tags `0x03`/`0x04` are admin-actions v2: admission is height-gated by
+Tag `0x04` (`Batch`) is admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
-release-tag time), but the tags are ASSIGNED from this commit on. The content
-hash commits them, so they can never be repurposed regardless of when they
-activate.
+release-tag time), but the tag is ASSIGNED from this commit on. The content
+hash commits it, so it can never be repurposed regardless of when it
+activates. Tag `0x03` was `CreateImpactMarket`, retired with the impact-market
+family in 2.0.0; historical proposal hashes commit it, so it is never
+reassigned.
+
+Tag `0x0A` (`AttachConditional`) claims the RT-01 reservation: governed like
+`CreateEvent` (tag `0x09`), it attaches one underlying perpetual to an
+existing event as two conditional-perp books.
 
 Tag `0x05` has its own `UPGRADE_HEIGHT_TRIGGER_INDEX` admission gate, also
 parked at `u64::MAX`; the dormant allocation reserves and tests the wire
@@ -140,8 +148,8 @@ that gives it behaviour.
 
 | Namespace | Reserved range | Mechanism | Status |
 |---|---|---|---|
-| Outer action bytes | `0x27`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
-| Inner admin tags | `0x09`–`0x0B` | `AdminActionType` discriminant-only variants | parked |
+| Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
+| Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
 
 ## Process for adding a new byte
 
@@ -150,3 +158,15 @@ that gives it behaviour.
    `AdminActionType` enum in `types.rs` (inner admin tag).
 3. Update this file in the **same commit**: the ledger test treats the table as
    part of the contract and fails if the assigned row is missing.
+
+## Process for retiring a byte
+
+1. Stop the byte decoding. An outer action loses its `define_actions!` entry
+   and joins `RETIRED_ACTION_BYTES`. An inner admin tag keeps its
+   `AdminActionType` discriminant marked `#[deprecated]` (the hole stays
+   named), loses its `AdminAction` arm — decoding goes by that arm's name —
+   and joins `RETIRED_ADMIN_TAGS`. The ledger tests assert both lists.
+2. Keep the row here and set its status to `retired`. Never delete the row and
+   never hand the value to a new action: chains, signed transactions and
+   proposal hashes that used it still exist.
+3. Bump the crate's MAJOR version: bytes that decoded before no longer do.
