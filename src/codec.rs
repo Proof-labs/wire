@@ -1927,6 +1927,7 @@ mod tests {
             taker_fee_bps: 5,
             maker_fee_bps: 2,
             signer: [0u8; 20],
+            max_open_interest: 0,
         });
         let AdminAction::AttachConditional(attach_cmd) = attach.clone() else {
             unreachable!()
@@ -1942,11 +1943,11 @@ mod tests {
         for (action, expected) in [
             (
                 &attach,
-                "486daa04d51a92caf912c4240352fd5baf4ac5890776a27ca5d0cddf28b31e79",
+                "3ffeb7f420cf9f4f50bade95919d885dfc590c7f8c92fb69eacc1704d4662be4",
             ),
             (
                 &batch,
-                "c0a5b206f0d75c957e05d21c9c208a53c02877d2b77805fa5e551e03341a39e9",
+                "c099245946aaded3b995198f5ff0592d771729ab314fcf5736036ffb6f559fcd",
             ),
         ] {
             let h = admin_proposal_content_hash(
@@ -2068,11 +2069,12 @@ mod tests {
             taker_fee_bps: 5,
             maker_fee_bps: 2,
             signer: [0u8; 20],
+            max_open_interest: 0,
         });
         assert_eq!(attach.action_tag(), 10);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&attach).expect("attach arm encodes")),
-            "81b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
+            "81b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
         );
 
         let AdminAction::AttachConditional(attach_cmd) = attach else {
@@ -2092,7 +2094,7 @@ mod tests {
         assert_eq!(batch.action_tag(), 4);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&batch).expect("batch encodes")),
-            "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
+            "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
         );
     }
 
@@ -2210,6 +2212,7 @@ mod tests {
             }),
             description: "d".repeat(MAX_EVENT_DESCRIPTION_BYTES),
             rules: "r".repeat(MAX_EVENT_RULES_BYTES),
+            max_open_interest: u64::MAX,
         });
         let solo = canonical_admin_action_bytes(&worst_event).expect("worst capped event encodes");
         assert!(
@@ -2227,6 +2230,7 @@ mod tests {
             taker_fee_bps: u32::MAX,
             maker_fee_bps: u32::MAX,
             signer: [0u8; 20],
+            max_open_interest: u64::MAX,
         };
 
         let worst_create = AdminAction::CreateMarket(CreateMarket {

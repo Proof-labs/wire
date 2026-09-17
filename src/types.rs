@@ -2495,6 +2495,11 @@ pub struct CreateEvent {
     /// Off-chain resolution criteria text (not stored in consensus state).
     #[serde(default)]
     pub rules: String,
+    /// Open-interest cap for each of the event's two binary books, in
+    /// contracts; `0` = uncapped. Applied per book, as
+    /// [`MarketConfig::max_open_interest`] is.
+    #[serde(default)]
+    pub max_open_interest: u64,
 }
 
 /// Attach a conditional to an existing event: mints two conditional-perp
@@ -2503,8 +2508,8 @@ pub struct CreateEvent {
 /// [`AttachedConditional`] to the event's list. The event must be
 /// `Trading`, the underlying must exist with `kind = Perp` and not already
 /// be attached, and both child ids must be free. No funding fields: the
-/// conditional-perp books run no funding schedule. Requires relayer
-/// authorization; governed like `CreateEvent`.
+/// conditional-perp books run no funding schedule. Governance-only, like
+/// `CreateEvent`: the inner signer is all-zero and the quorum authorizes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AttachConditional {
     pub event_id: EventId,
@@ -2521,6 +2526,11 @@ pub struct AttachConditional {
     pub maker_fee_bps: u32,
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
+    /// Open-interest cap for each of the two conditional-perp books, in the
+    /// underlying's size scale; `0` = uncapped. Applied per book, as
+    /// [`MarketConfig::max_open_interest`] is.
+    #[serde(default)]
+    pub max_open_interest: u64,
 }
 
 /// Resolve a standalone event. Settles its two prediction-binary books to
