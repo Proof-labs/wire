@@ -49,13 +49,13 @@ name = "proof-wire"
 # and sub-account ExecError codes at 83-90 (moved off the oracle-guard range
 # that claimed 82). Pre-existing bytes still decode unchanged -> MINOR.
 #
-# 1.9.0 -> 2.0.0: BREAKING wire change (Standalone Events Phase 2, decision
-# G26). The impact-market family is removed: outer actions CreateImpactMarket
+# 1.9.0 -> 2.0.0: BREAKING wire change. The impact-market family is removed:
+# outer actions CreateImpactMarket
 # (0x0E) and ResolveImpactMarket (0x0F), inner admin tag 3, ImpactMarketId /
 # ImpactMarketInfo / ImpactMarketStatus, the family events and ExecError codes
 # 24, 25 and 31 are retired, never reused. MarketKind::ConditionalPerp is
 # re-rooted onto EventId, EventInfo gains its attached_conditionals list,
-# AttachConditional claims inner admin tag 0x0A (the RT-01 reservation) and
+# AttachConditional claims inner admin tag 0x0A and
 # the batch item set, and event ExecError codes 92-96 are added. Family bytes
 # no longer decode -> MAJOR.
 version = "2.0.0"

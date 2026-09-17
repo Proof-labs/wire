@@ -162,8 +162,7 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    // 0x0E CreateImpactMarket and 0x0F ResolveImpactMarket are retired with
-    // the impact-market family: unassigned, never reused, fail to decode.
+    // 0x0E and 0x0F are retired: see `RETIRED_ACTION_BYTES`.
     UpdateMarketFees => 16,      // 0x10
     RunLiquidationSweep => 17,   // 0x11
     RunFundingTick => 18,        // 0x12
@@ -196,6 +195,12 @@ define_actions! {
     SubAccountTransfer => 41,    // 0x29 — transfer between master/child addresses
     SubmitOracleObservation => 45, // 0x2D — independently authenticated source observation
 }
+
+/// Outer action bytes that once decoded and never will again. Signed
+/// transactions and chains that carried them still exist, so the values are
+/// never handed to a new action: `ActionType::try_from` rejects them and the
+/// byte ledger keeps their rows as `retired`.
+pub const RETIRED_ACTION_BYTES: &[u8] = &[0x0E, 0x0F];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -1671,6 +1676,24 @@ mod tests {
                 "BYTES.md marks assigned action {byte:#04x} free"
             );
         }
+        // A retired byte is unassigned in code and recorded as such in the
+        // ledger; either half alone would let the value be reissued.
+        for byte in RETIRED_ACTION_BYTES.iter().copied() {
+            assert!(
+                ActionType::try_from(byte).is_err()
+                    && !ActionType::ALL.iter().any(|t| *t as u8 == byte),
+                "retired outer action {byte:#04x} must stay unassigned"
+            );
+            let marker = format!("| 0x{byte:02X} |");
+            let line = ledger
+                .lines()
+                .find(|line| line.starts_with(&marker))
+                .unwrap_or_else(|| panic!("BYTES.md has no row for retired action {byte:#04x}"));
+            assert!(
+                line.contains("retired"),
+                "BYTES.md must record outer action {byte:#04x} as retired"
+            );
+        }
     }
 
     #[test]
@@ -1813,6 +1836,21 @@ mod tests {
                     "unassigned inner admin tag {tag:#04x} must be recorded as reserved or retired"
                 );
             }
+        }
+        for tag in crate::types::RETIRED_ADMIN_TAGS.iter().copied() {
+            assert!(
+                !ALL_INNER_TAGS.iter().any(|tag_type| *tag_type as u8 == tag),
+                "retired inner admin tag {tag:#04x} must stay unassigned"
+            );
+            let marker = format!("| 0x{tag:02X} |");
+            let line = section
+                .lines()
+                .find(|line| line.starts_with(&marker))
+                .unwrap_or_else(|| panic!("BYTES.md has no row for retired inner tag {tag:#04x}"));
+            assert!(
+                line.contains("retired"),
+                "BYTES.md must record inner admin tag {tag:#04x} as retired"
+            );
         }
     }
 
@@ -1957,6 +1995,9 @@ mod tests {
     /// persistent chain; a serde or struct change that moves them is a
     /// consensus break, which is exactly what this test exists to catch.
     /// The SDK copies these vectors for its cross-language conformance.
+    /// Regenerate only after a deliberate encoding change: print
+    /// `hex_string(&canonical_admin_action_bytes(..))` for each fixture and
+    /// re-pin, then re-pin the SDK conformance vectors that mirror it.
     #[test]
     fn admin_action_attach_and_batch_wire_vectors_frozen() {
         let attach = AdminAction::AttachConditional(crate::types::AttachConditional {
@@ -1971,7 +2012,7 @@ mod tests {
         });
         assert_eq!(attach.action_tag(), 10);
         assert_eq!(
-            hex_string(&canonical_admin_action_bytes(&attach).unwrap()),
+            hex_string(&canonical_admin_action_bytes(&attach).expect("attach arm encodes")),
             "81b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
         );
 
@@ -1991,9 +2032,62 @@ mod tests {
         ]);
         assert_eq!(batch.action_tag(), 4);
         assert_eq!(
-            hex_string(&canonical_admin_action_bytes(&batch).unwrap()),
+            hex_string(&canonical_admin_action_bytes(&batch).expect("batch encodes")),
             "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b1417474616368436f6e646974696f6e616c985b0fcd238ccd0d06cd06830502dc00140000000000000000000000000000000000000000"
         );
+    }
+
+    /// The stored records the family removal re-rooted: an event with one
+    /// attachment, the conditional-perp market kind and a resolved status.
+    /// A reordered or inserted field changes these bytes; downstream decoders
+    /// pin the same vectors. Regenerate by printing `hex_string` of each
+    /// fixture after a deliberate encoding change.
+    #[test]
+    fn event_record_bytes_frozen() {
+        use crate::types::{
+            AttachedConditional, Branch, EventId, EventInfo, EventStatus, MarketKind, Outcome,
+        };
+        let record = EventInfo {
+            event_id: EventId(7),
+            eby_market: 700,
+            ebn_market: 701,
+            question: "q".to_owned(),
+            settlement_ms: 1_000,
+            resolution_window_ms: 10,
+            status: EventStatus::Trading,
+            created_ms: 5,
+            resolved_ms: 0,
+            oracle_source: None,
+            attached_conditionals: vec![AttachedConditional {
+                underlying_market: 1,
+                cpy_market: 702,
+                cpn_market: 703,
+            }],
+        };
+        let kind = MarketKind::ConditionalPerp {
+            event_id: EventId(7),
+            branch: Branch::No,
+        };
+        let status = EventStatus::Resolved(Outcome::Void);
+        for (name, bytes, expected) in [
+            (
+                "event record",
+                rmp_serde::to_vec(&record).expect("event record serializes"),
+                "9b07cd02bccd02bda171cd03e80aa754726164696e670500c0919301cd02becd02bf",
+            ),
+            (
+                "conditional-perp kind",
+                rmp_serde::to_vec(&kind).expect("market kind serializes"),
+                "81af436f6e646974696f6e616c506572709207a24e6f",
+            ),
+            (
+                "resolved status",
+                rmp_serde::to_vec(&status).expect("event status serializes"),
+                "81a85265736f6c766564a4566f6964",
+            ),
+        ] {
+            assert_eq!(hex_string(&bytes), expected, "{name} bytes changed");
+        }
     }
 
     /// The impact-market family is gone: its outer action bytes (0x0E,
@@ -2001,12 +2095,13 @@ mod tests {
     /// fail closed at decode instead of mapping onto any other action.
     #[test]
     fn retired_impact_market_bytes_fail_closed() {
-        for byte in [0x0Eu8, 0x0F] {
+        for byte in RETIRED_ACTION_BYTES.iter().copied() {
             assert!(
                 ActionType::try_from(byte).is_err(),
                 "{byte:#04x} must be unassigned"
             );
-            let tx = encode_signed_tx_raw(byte, &[0x90], 1, &[0x11; 32], &[0x22; 64]).unwrap();
+            let tx = encode_signed_tx_raw(byte, &[0x90], 1, &[0x11; 32], &[0x22; 64])
+                .expect("a retired byte still frames a signed transaction");
             assert!(
                 matches!(decode_tx(&tx), Err(ExecError::DecodeError(_))),
                 "{byte:#04x} must not decode as any action"
@@ -2021,7 +2116,7 @@ mod tests {
         let bytes = rmp_serde::to_vec(&PhantomAdminAction::CreateImpactMarket {
             impact_market_id: 3,
         })
-        .unwrap();
+        .expect("the phantom retired arm serializes");
         assert!(matches!(
             canonicalize_admin_action(&bytes),
             Err(ExecError::DecodeError(_))
@@ -2057,7 +2152,7 @@ mod tests {
             description: "d".repeat(MAX_EVENT_DESCRIPTION_BYTES),
             rules: "r".repeat(MAX_EVENT_RULES_BYTES),
         });
-        let solo = canonical_admin_action_bytes(&worst_event).unwrap();
+        let solo = canonical_admin_action_bytes(&worst_event).expect("worst capped event encodes");
         assert!(
             solo.len() <= MAX_ADMIN_ACTION_BYTES,
             "worst capped event action is {} bytes",
@@ -2096,7 +2191,7 @@ mod tests {
             AdminBatchItem::CreateMarket(worst_create_cmd),
             AdminBatchItem::AttachConditional(worst_attach_cmd),
         ]);
-        let bytes = canonical_admin_action_bytes(&batch).unwrap();
+        let bytes = canonical_admin_action_bytes(&batch).expect("worst-case batch encodes");
         assert!(
             bytes.len() <= MAX_ADMIN_ACTION_BYTES,
             "canonical worst-case batch is {} bytes",

@@ -32,7 +32,7 @@ pub type MarketId = u32;
 /// Auto-incrementing fill identifier, unique across all trades.
 pub type FillId = u64;
 /// Identifier of an event: the root that owns two prediction-binary books
-/// and every conditional attached to it (a domain newtype, per convention).
+/// and every conditional attached to it.
 /// `#[serde(transparent)]`, so it encodes as a bare `u32`.
 #[derive(
     Clone,
@@ -83,7 +83,7 @@ pub const PREDICTION_BINARY_LOT_SIZE: u64 = 1;
 pub const PREDICTION_BINARY_TICK_SIZE: u64 = 1;
 
 // ---------------------------------------------------------------------------
-// Impact market enums
+// Event enums
 // ---------------------------------------------------------------------------
 
 /// Which branch of a binary event a conditional/prediction book represents.
@@ -815,6 +815,12 @@ pub enum AdminBatchItem {
     AttachConditional(AttachConditional),
 }
 
+/// Inner admin tags that once decoded and never will again. Historical
+/// proposal hashes commit them, so the values are never handed to a new
+/// action: no `AdminAction` arm carries them and the byte ledger keeps their
+/// rows as `retired`.
+pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03];
+
 /// Stable discriminant for the closed [`AdminAction`] namespace.
 ///
 /// This is distinct from the outer transaction [`crate::ActionType`]
@@ -825,8 +831,7 @@ pub enum AdminBatchItem {
 pub enum AdminActionType {
     CreateMarket = 1,
     UpdateAdminSignerRegistry = 2,
-    // Tag 3 was `CreateImpactMarket`, retired with the impact-market family.
-    // Historical proposal hashes commit it: never reassigned.
+    // Tag 3 is retired: see `RETIRED_ADMIN_TAGS`.
     Batch = 4,
     SetTriggerMarketConfig = 5,
     UnpauseBridge = 6,
@@ -834,8 +839,7 @@ pub enum AdminActionType {
     CancelAllOrdersForAccount = 8,
     /// Create a standalone event. Governed like `CreateMarket`.
     CreateEvent = 9,
-    /// Attach a conditional to an event. Governed like `CreateEvent`;
-    /// claims the RT-01 reservation at this tag.
+    /// Attach a conditional to an event. Governed like `CreateEvent`.
     AttachConditional = 10,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01C = 11,
@@ -1329,8 +1333,8 @@ pub struct MarketConfig {
     /// grouping.
     ///
     /// Grouping key: the underlying perp market id. For a perp, that's
-    /// the perp itself. For a conditional perp, it's the perp referenced
-    /// by the impact market's `underlying_market`. Two legs group iff
+    /// the perp itself. For a conditional perp, it's the perp its event
+    /// attachment names as `underlying_market`. Two legs group iff
     /// they share the same underlying AND both have `net_delta_margin=true`
     /// AND both fire in the current scenario.
     ///
@@ -4090,7 +4094,7 @@ impl ExecError {
             ExecError::SubAccountIdZero => 88,
             ExecError::SubAccountTransferZeroAmount => 89,
             ExecError::SubAccountsInactive => 90,
-            // 91: the withdrawal-payout lease (ClaimWithdrawalPayout).
+            // 91: reserved.
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
