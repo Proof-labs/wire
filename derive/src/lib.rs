@@ -62,6 +62,17 @@ pub fn derive_abci_event(input: TokenStream) -> TokenStream {
                                 None => w.write_attr(#key, ""),
                             }
                         }
+                    } else if is_option(ty) {
+                        // Any other optional field: `Some` renders the inner
+                        // value via Display, `None` writes the key with an
+                        // empty value, mirroring the optional-address
+                        // treatment so `attr_count` stays correct either way.
+                        quote! {
+                            match #fname {
+                                Some(value) => w.write_attr_display(#key, value),
+                                None => w.write_attr(#key, ""),
+                            }
+                        }
                     } else if is_byte_array(ty) || is_vec_u8(ty) {
                         // Both fixed-size and variable-length byte sequences
                         // hex-encode for ABCI attribute output.
@@ -147,6 +158,13 @@ fn is_byte_array(ty: &Type) -> bool {
 fn is_option_byte_array(ty: &Type) -> bool {
     let s = quote!(#ty).to_string().replace(' ', "");
     s.starts_with("Option<[u8;")
+}
+
+/// `Option<T>` over any non-byte-array inner type. Checked after
+/// [`is_option_byte_array`] so optional addresses keep their hex encoding.
+fn is_option(ty: &Type) -> bool {
+    let s = quote!(#ty).to_string().replace(' ', "");
+    s.starts_with("Option<")
 }
 
 fn is_u64(ty: &Type) -> bool {

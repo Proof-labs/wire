@@ -801,6 +801,189 @@ mod tests {
         assert_eq!(format!("{:?}", action), format!("{:?}", dt.action),);
     }
 
+    /// Frozen trigger-expansion vectors (proof-wire 2.1.0). The vector files
+    /// are the single source of truth: any change to the new trailing fields,
+    /// the limb encoding, or the signing preimage that moves one byte fails
+    /// here.
+    #[test]
+    fn trigger_expansion_wire_vectors() {
+        const PLACE_WITH_TRIGGERS_HEX: &str =
+            include_str!("../vectors/place_order_with_triggers.hex");
+        const PLACE_NO_TRIGGERS_HEX: &str = include_str!("../vectors/place_order_no_triggers.hex");
+        const MARKET_WITH_TRIGGERS_HEX: &str =
+            include_str!("../vectors/market_order_with_triggers.hex");
+        const CANCEL_REPLACE_WITH_TRIGGERS_HEX: &str =
+            include_str!("../vectors/cancel_replace_with_triggers.hex");
+        const SET_POSITION_TRIGGERS_2_1_HEX: &str =
+            include_str!("../vectors/set_position_triggers_2_1.hex");
+
+        let stop_loss = TriggerLimb {
+            trigger_price: 95_000,
+            max_slippage_bps: TriggerSlippageBps(75),
+            client_trigger_id: Some(ClientTriggerId(11)),
+        };
+        let take_profit = TriggerLimb {
+            trigger_price: 110_000,
+            max_slippage_bps: TriggerSlippageBps(50),
+            client_trigger_id: Some(ClientTriggerId(12)),
+        };
+
+        // Round-trip vector: decode → typed value → re-encode must be the
+        // identical byte string, for every with-triggers vector.
+        let round_trip_cases: Vec<(&str, u8, Action)> = vec![
+            (
+                PLACE_WITH_TRIGGERS_HEX.trim(),
+                PlaceOrder::ACTION_TYPE,
+                Action::PlaceOrder(PlaceOrder {
+                    market: 1,
+                    owner: [0x01; 20],
+                    side: Side::Buy,
+                    price: 100,
+                    quantity: 10,
+                    client_order_id: None,
+                    post_only: false,
+                    reduce_only: false,
+                    time_in_force: TimeInForce::Gtc,
+                    stop_loss: Some(stop_loss.clone()),
+                    take_profit: Some(take_profit.clone()),
+                }),
+            ),
+            (
+                MARKET_WITH_TRIGGERS_HEX.trim(),
+                MarketOrder::ACTION_TYPE,
+                Action::MarketOrder(MarketOrder {
+                    market: 1,
+                    owner: [0x01; 20],
+                    side: Side::Sell,
+                    quantity: 10,
+                    client_order_id: None,
+                    stop_loss: Some(stop_loss.clone()),
+                    take_profit: None,
+                }),
+            ),
+            (
+                CANCEL_REPLACE_WITH_TRIGGERS_HEX.trim(),
+                CancelReplaceOrder::ACTION_TYPE,
+                Action::CancelReplaceOrder(CancelReplaceOrder {
+                    owner: [0x02; 20],
+                    cancel_order_id: Some(42),
+                    cancel_client_order_id: None,
+                    market: 1,
+                    side: Side::Sell,
+                    price: 100,
+                    quantity: 10,
+                    client_order_id: None,
+                    post_only: false,
+                    reduce_only: false,
+                    time_in_force: TimeInForce::Gtc,
+                    stop_loss: None,
+                    take_profit: Some(take_profit.clone()),
+                }),
+            ),
+            (
+                SET_POSITION_TRIGGERS_2_1_HEX.trim(),
+                SetPositionTriggers::ACTION_TYPE,
+                Action::SetPositionTriggers(SetPositionTriggers {
+                    market: 7,
+                    owner: [0xA5; 20],
+                    expected_position_epoch: PositionEpoch(3),
+                    stop_loss: Some(stop_loss.clone()),
+                    take_profit: Some(take_profit.clone()),
+                    client_group_id: Some(ClientTriggerGroupId(9)),
+                }),
+            ),
+        ];
+
+        for (expected_hex, expected_type, action) in round_trip_cases {
+            let bytes = hex::decode(expected_hex).expect("vector is valid hex");
+            assert_eq!(
+                peek_action_type(&bytes),
+                Some(expected_type),
+                "vector action byte drifted"
+            );
+            let decoded = decode_tx(&bytes).expect("vector must decode");
+            assert_eq!(
+                format!("{:?}", decoded.action),
+                format!("{:?}", action),
+                "vector no longer decodes to its typed value"
+            );
+            let re_encoded = encode_tx(&decoded.action, decoded.seq).expect("re-encode works");
+            assert_eq!(
+                hex::encode(&re_encoded),
+                expected_hex,
+                "re-encoded bytes must equal the frozen vector"
+            );
+        }
+
+        // Old-bytes decode-compat pin: place_order_no_triggers.hex is the
+        // exact pre-2.1.0 byte string (fixarray(9) payload, no trailing
+        // nils). It must still decode, with both new limbs defaulting to
+        // None, and the 2.1.0 encoding of the same order must differ only by
+        // the two appended nils.
+        let old_bytes = hex::decode(PLACE_NO_TRIGGERS_HEX.trim()).expect("vector is valid hex");
+        let decoded = decode_tx(&old_bytes).expect("pre-2.1.0 bytes must still decode");
+        let expected = PlaceOrder {
+            market: 1,
+            owner: [0x01; 20],
+            side: Side::Buy,
+            price: 100,
+            quantity: 10,
+            client_order_id: None,
+            post_only: false,
+            reduce_only: false,
+            time_in_force: TimeInForce::Gtc,
+            stop_loss: None,
+            take_profit: None,
+        };
+        match &decoded.action {
+            Action::PlaceOrder(cmd) => {
+                assert_eq!(
+                    format!("{cmd:?}"),
+                    format!("{expected:?}"),
+                    "old bytes decode with defaulted new fields"
+                );
+            }
+            other => panic!("expected PlaceOrder, got {other:?}"),
+        }
+        let new_bytes = encode_tx(&decoded.action, decoded.seq).expect("re-encode works");
+        assert_ne!(
+            new_bytes, old_bytes,
+            "2.1.0 encoding must differ from the pre-2.1.0 byte string"
+        );
+        let old_payload = decode_envelope(&old_bytes)
+            .expect("pre-2.1.0 envelope parses")
+            .payload
+            .0;
+        let mut new_payload = decode_envelope(&new_bytes)
+            .expect("new envelope parses")
+            .payload
+            .0;
+        assert_eq!(
+            old_payload[0], 0x99,
+            "pre-2.1.0 payload is a fixarray(9) of 9 fields"
+        );
+        assert_eq!(
+            new_payload[new_payload.len() - 2..],
+            [0xC0, 0xC0],
+            "2.1.0 payload appends exactly two nils for the absent limbs"
+        );
+        new_payload.truncate(new_payload.len() - 2);
+        assert_eq!(
+            new_payload[0], 0x9B,
+            "2.1.0 payload is a fixarray(11) of 11 fields"
+        );
+        new_payload[0] = 0x99;
+        assert_eq!(
+            new_payload, old_payload,
+            "2.1.0 payload must be the old payload plus two appended nils, field order unchanged"
+        );
+
+        // The pre-existing 2.0.0 golden vector keeps decoding unchanged.
+        const LEGACY_PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
+        let legacy = hex::decode(LEGACY_PLACE_HEX.trim()).expect("place_order.hex is valid hex");
+        decode_tx(&legacy).expect("pre-existing place_order.hex still decodes");
+    }
+
     #[test]
     fn test_golden_vectors() {
         const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
@@ -809,7 +992,7 @@ mod tests {
         const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
         const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
 
-        let cases: Vec<(Action, u64, &str, u8)> = vec![
+        let cases: Vec<(Action, u64, &str, u8, bool)> = vec![
             (
                 Action::PlaceOrder(PlaceOrder {
                     market: 1,
@@ -821,10 +1004,18 @@ mod tests {
                     post_only: false,
                     reduce_only: false,
                     time_in_force: TimeInForce::Gtc,
+                    stop_loss: None,
+                    take_profit: None,
                 }),
                 1,
                 PLACE_HEX.trim(),
                 PlaceOrder::ACTION_TYPE,
+                // proof-wire 2.1.0 appends the optional stop_loss/take_profit
+                // nils to the canonical encoding, so the frozen 2.0.0 byte
+                // string is a decode pin, not a re-encode pin (see
+                // `trigger_expansion_wire_vectors` for the exact byte
+                // relationship between the two).
+                false,
             ),
             (
                 Action::CancelOrder(CancelOrder {
@@ -834,6 +1025,7 @@ mod tests {
                 2,
                 CANCEL_HEX.trim(),
                 CancelOrder::ACTION_TYPE,
+                true,
             ),
             (
                 Action::OracleUpdate(OracleUpdate {
@@ -845,6 +1037,7 @@ mod tests {
                 3,
                 ORACLE_HEX.trim(),
                 OracleUpdate::ACTION_TYPE,
+                true,
             ),
             (
                 Action::CreateSubAccount(CreateSubAccount {
@@ -855,6 +1048,7 @@ mod tests {
                 100,
                 CREATE_SUB_ACCOUNT_HEX.trim(),
                 CreateSubAccount::ACTION_TYPE,
+                true,
             ),
             (
                 Action::SubAccountTransfer(SubAccountTransfer {
@@ -866,18 +1060,30 @@ mod tests {
                 200,
                 SUB_ACCOUNT_TRANSFER_HEX.trim(),
                 SubAccountTransfer::ACTION_TYPE,
+                true,
             ),
         ];
 
-        for (action, seq, expected_hex, action_type) in cases {
+        for (action, seq, expected_hex, action_type, encode_stable) in cases {
             let encoded_a = encode_tx(&action, seq).unwrap();
             let encoded_b = encode_tx(&action, seq).unwrap();
             assert_eq!(encoded_a, encoded_b, "encoding must be deterministic");
-            assert_eq!(
-                hex::encode(&encoded_a),
-                expected_hex,
-                "golden vector mismatch"
-            );
+            if encode_stable {
+                assert_eq!(
+                    hex::encode(&encoded_a),
+                    expected_hex,
+                    "golden vector mismatch"
+                );
+            } else {
+                // The frozen vector predates the additive fields: it must
+                // still decode to the same typed value (defaults applied).
+                let frozen = decode_tx(&hex::decode(expected_hex).unwrap()).unwrap();
+                assert_eq!(
+                    format!("{:?}", frozen.action),
+                    format!("{:?}", action),
+                    "frozen vector must keep decoding to its typed value"
+                );
+            }
 
             let dt = decode_tx(&encoded_a).unwrap();
             assert_eq!(dt.seq, seq);
@@ -936,6 +1142,8 @@ mod tests {
                         post_only: false,
                         reduce_only: false,
                         time_in_force: TimeInForce::Gtc,
+                        stop_loss: None,
+                        take_profit: None,
                     })
                     .unwrap(),
                 ),
@@ -1038,6 +1246,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::CancelOrder(CancelOrder {
                 order_id: 42,
@@ -1055,6 +1265,8 @@ mod tests {
                 post_only: true,
                 reduce_only: false,
                 time_in_force: TimeInForce::Ioc,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::AmendOrder(AmendOrder {
                 owner: [0xBD; 20],
@@ -1074,6 +1286,8 @@ mod tests {
                 side: Side::Sell,
                 quantity: 250,
                 client_order_id: None,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::Deposit(Deposit {
                 owner: [0x11; 20],
@@ -2627,6 +2841,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::CancelOrder(CancelOrder {
                 order_id: u64::MAX,
@@ -2644,6 +2860,8 @@ mod tests {
                 side: Side::Buy,
                 quantity: u64::MAX,
                 client_order_id: Some(u64::MAX),
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::Deposit(Deposit {
                 owner: [0xFF; 20],
@@ -2717,6 +2935,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::CancelOrder(CancelOrder {
                 order_id: 0,
@@ -2734,6 +2954,8 @@ mod tests {
                 side: Side::Buy,
                 quantity: 0,
                 client_order_id: None,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::Deposit(Deposit {
                 owner: [0u8; 20],
@@ -2829,6 +3051,8 @@ mod tests {
                     post_only: false,
                     reduce_only: false,
                     time_in_force: TimeInForce::Gtc,
+                    stop_loss: None,
+                    take_profit: None,
                 }),
                 Action::CancelOrder(CancelOrder { order_id: i, owner }),
                 Action::OracleUpdate(OracleUpdate {
@@ -2843,6 +3067,8 @@ mod tests {
                     side: if i % 2 == 0 { Side::Sell } else { Side::Buy },
                     quantity: i + 10,
                     client_order_id: if i % 5 == 0 { Some(i * 7) } else { None },
+                    stop_loss: None,
+                    take_profit: None,
                 }),
                 Action::Deposit(Deposit {
                     owner,
@@ -3196,6 +3422,8 @@ mod tests {
             post_only: false,
             reduce_only: false,
             time_in_force: TimeInForce::Gtc,
+            stop_loss: None,
+            take_profit: None,
         });
         let encoded = encode_tx(&action, 99).unwrap();
 
@@ -3253,6 +3481,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::CancelOrder(CancelOrder {
                 order_id: 1,
@@ -3270,6 +3500,8 @@ mod tests {
                 side: Side::Sell,
                 quantity: 1,
                 client_order_id: None,
+                stop_loss: None,
+                take_profit: None,
             }),
             Action::Deposit(Deposit {
                 owner: [0; 20],
@@ -3428,6 +3660,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             })
             .unwrap(),
             pubkey: vec![0u8; 16], // wrong: should be 32
@@ -3463,6 +3697,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             })
             .unwrap(),
             pubkey: vec![0u8; 32],
@@ -3521,6 +3757,8 @@ mod tests {
                 post_only: false,
                 reduce_only: false,
                 time_in_force: TimeInForce::Gtc,
+                stop_loss: None,
+                take_profit: None,
             });
 
             let encoded = sign_and_encode_with_chain(
@@ -3575,6 +3813,8 @@ mod tests {
                         post_only: false,
                         reduce_only: false,
                         time_in_force: TimeInForce::Gtc,
+                        stop_loss: None,
+                        take_profit: None,
                     }),
                     1 => Action::CancelOrder(CancelOrder {
                         order_id: seq,
@@ -3592,6 +3832,8 @@ mod tests {
                         side: Side::Sell,
                         quantity: seq + 1,
                         client_order_id: None,
+                        stop_loss: None,
+                        take_profit: None,
                     }),
                     4 => Action::Deposit(Deposit {
                         owner,
