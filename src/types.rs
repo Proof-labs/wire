@@ -3454,6 +3454,18 @@ pub enum Event {
         /// Client-assigned order id. `0` means absent.
         client_order_id: u64,
     },
+    /// Post-mutation L2 level snapshot emitted on every resting-order book
+    /// change (place, cancel, fill, amend, expiry, liquidation cancel). Read
+    /// from the write-through `LevelAggregate` so the cost is O(1), not
+    /// O(orders-at-level). A vacant level (all orders removed) emits
+    /// `total_quantity = 0, order_count = 0`.
+    OrderbookLevelUpdated {
+        market: MarketId,
+        side: Side,
+        price: u64,
+        total_quantity: u64,
+        order_count: u32,
+    },
     /// User picked a per-market IM override. `user_im_bps == 0`
     /// means the override was cleared (engine reverts to market
     /// default).
