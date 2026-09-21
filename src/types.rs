@@ -102,7 +102,8 @@ pub enum Outcome {
     Yes = 1,
     #[display("no")]
     No = 2,
-    /// Auto-voided (neither branch won — e.g., resolver timeout under the auto-void policy).
+    /// Neither branch won. `ResolveEvent` refuses it: no event resolves to
+    /// Void, with or without attached conditionals.
     #[display("void")]
     Void = 3,
 }
@@ -338,7 +339,7 @@ pub enum EventStatus {
     PreResolution,
     /// Resolved. Binaries settled to $1 (winner) or $0 (loser); each
     /// attached conditional's winning branch settled and losing branch
-    /// voided.
+    /// voided. The outcome is never Void.
     Resolved(Outcome),
 }
 
@@ -362,9 +363,8 @@ pub struct EventInfo {
     pub question: String,
     /// Event settlement time in ms since Unix epoch.
     pub settlement_ms: u64,
-    /// Configured resolution window in milliseconds, stored at creation but
-    /// not enforced for standalone events. [`ResolveEvent`] accepts only
-    /// Yes/No outcomes; this field does not enable Void or automatic resolution.
+    /// Grace period after `settlement_ms` before a stale-oracle event may be
+    /// voided by a signer (there is no automatic void, G16).
     pub resolution_window_ms: u64,
     /// Current lifecycle status.
     pub status: EventStatus,
@@ -511,6 +511,9 @@ pub struct AdminSignerRegistry {
     pub members: Vec<SignerAddress>,
 }
 
+/// Why a `Pending` proposal expired. Stored in the status payload and
+/// committed by the governance digest, so engines cannot disagree on
+/// the reason.
 /// Why a scheduled funding interval was skipped without catch-up
 /// (`Event::FundingSkipped`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
@@ -537,9 +540,6 @@ pub enum OracleRejectReason {
     DeviationBandUnset,
 }
 
-/// Why a `Pending` proposal expired. Stored in the status payload and
-/// committed by the governance digest, so engines cannot disagree on
-/// the reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum ExpiryReason {
     /// `expiry_ms` passed (the 72 h TTL, observed lazily).
@@ -718,9 +718,7 @@ pub enum AdminAction {
     ConfigureOraclePolicy(ConfigureOraclePolicy),
     /// Sets the per-market oracle guards (`mark_price_max_oracle_age_ms`
     /// and `max_oracle_deviation_bps`) on one standalone perpetual through
-    /// the admin quorum. Admitted only from
-    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`; below it the
-    /// arm reads as an unknown variant exactly like an older binary.
+    /// the admin quorum.
     SetOracleGuards(SetOracleGuards),
 }
 
@@ -849,8 +847,7 @@ pub enum AdminActionType {
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01C = 11,
     ConfigureOraclePolicy = 12,
-    /// Per-market oracle guards. Admitted from
-    /// `crate::repo::UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG`.
+    /// Per-market oracle guards.
     SetOracleGuards = 13,
     /// Schedules (or reschedules) the pending protocol upgrade plan.
     /// Governed like `UpdateAuthoritySet`: signer-registry path, one
@@ -1541,13 +1538,9 @@ pub struct MarketConfig {
 /// ("one value, one encoding"). A new key that only exists after the gated
 /// arm has run leaves every pre-gate byte untouched.
 ///
-/// Read only once the oracle-guard gate is active
-/// (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`): from then on an out-of-band
-/// `OracleUpdate` is REJECTED (event `OracleUpdateRejected`) rather than
-/// clipped, and an absent record (band zero) fails closed: every update after
-/// the first is rejected until a real band is set. Below the gate this record
-/// is inert and the schema-v9 clamp on `DEFAULT_MAX_ORACLE_DEVIATION_BPS`
-/// keeps applying, so replay is unchanged.
+/// An out-of-band `OracleUpdate` is REJECTED (event `OracleUpdateRejected`)
+/// rather than clipped, and an absent record (band zero) fails closed: every
+/// update after the first is rejected until a real band is set.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketOracleGuards {
     /// Maximum per-update move from the stored last-good price, in basis
@@ -1628,6 +1621,23 @@ pub struct TriggerLimb {
     pub trigger_price: u64,
     pub max_slippage_bps: TriggerSlippageBps,
     pub client_trigger_id: Option<ClientTriggerId>,
+}
+
+impl fmt::Display for TriggerLimb {
+    /// ABCI attribute rendering of one limb. The attribute value is
+    /// informational; the MessagePack event payload is the contract.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "trigger_price={},max_slippage_bps={},client_trigger_id={}",
+            self.trigger_price,
+            self.max_slippage_bps.0,
+            match self.client_trigger_id {
+                Some(id) => id.0.to_string(),
+                None => "none".to_string(),
+            }
+        )
+    }
 }
 
 /// Atomically replace the complete stop-loss/take-profit bracket for an
@@ -1756,6 +1766,14 @@ pub struct MarketOrder {
     /// Active resting orders are unique per owner/client_order_id; reusing
     /// an ID while an earlier order is still live is rejected.
     pub client_order_id: Option<u64>,
+    /// Optional whole-position SL/TP bracket attached at placement time.
+    /// Installed on the position resulting from this order's first fill;
+    /// discarded if the order terminates without filling. `serde(default)`
+    /// so pre-2.1.0 records decode with both limbs absent.
+    #[serde(default)]
+    pub stop_loss: Option<TriggerLimb>,
+    #[serde(default)]
+    pub take_profit: Option<TriggerLimb>,
 }
 
 /// One leg inside a native all-or-revert basket. The engine executes every leg
@@ -1815,6 +1833,14 @@ pub struct PlaceOrder {
     /// pre-TIF wire records. `Ioc` drops unfilled quantity after crossing.
     #[serde(default)]
     pub time_in_force: TimeInForce,
+    /// Optional whole-position SL/TP bracket attached at placement time.
+    /// Installed on the position resulting from this order's first fill;
+    /// discarded if the order terminates without filling. `serde(default)`
+    /// so pre-2.1.0 records decode with both limbs absent.
+    #[serde(default)]
+    pub stop_loss: Option<TriggerLimb>,
+    #[serde(default)]
+    pub take_profit: Option<TriggerLimb>,
 }
 
 /// Cancel a resting order. Only the owner (or an authorized agent) may cancel.
@@ -1867,6 +1893,13 @@ pub struct CancelReplaceOrder {
     pub reduce_only: bool,
     #[serde(default)]
     pub time_in_force: TimeInForce,
+    /// Optional whole-position SL/TP bracket attached with the replacement
+    /// order; carrying no limbs drops the replaced order's pending payload.
+    /// `serde(default)` so pre-2.1.0 records decode with both limbs absent.
+    #[serde(default)]
+    pub stop_loss: Option<TriggerLimb>,
+    #[serde(default)]
+    pub take_profit: Option<TriggerLimb>,
 }
 
 /// Amend a resting order without changing its exchange order id.
@@ -2511,6 +2544,10 @@ pub struct CreateEvent {
 /// be attached, and both child ids must be free. No funding fields: the
 /// conditional-perp books run no funding schedule. Governance-only, like
 /// `CreateEvent`: the inner signer is all-zero and the quorum authorizes.
+///
+/// The two books join the underlying's insurance pool, as the underlying's
+/// own book does; there is no pool field. A resolution shortfall on either
+/// book is charged to that pool.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AttachConditional {
     pub event_id: EventId,
@@ -2534,9 +2571,13 @@ pub struct AttachConditional {
     pub max_open_interest: u64,
 }
 
-/// Resolve a standalone event. Settles its two prediction-binary books to
-/// Yes/No only (there is no Void), reads no underlying price, and is
-/// authorized by the market-parameters key.
+/// Resolve an event. Cancels every resting order on its books, settles its
+/// two prediction-binary books to Yes or No, and settles every attached
+/// conditional pair in the same transaction: the winning book pays cash at its
+/// underlying's oracle price, published at or after the event's settlement
+/// time; the losing book is voided. There is no Void. If any attached
+/// underlying has no such price, the whole resolution is refused and nothing
+/// is written. Authorized by the market-parameters key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResolveEvent {
     pub event_id: EventId,
@@ -2872,6 +2913,30 @@ impl fmt::Display for CancelReason {
     }
 }
 
+/// Why an attached pre-fill bracket never became a live bracket.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PendingTriggerDiscardReason {
+    OrderCancelled = 1,
+    OrderExpired = 2,
+    OrderReplaced = 3,
+    UnfilledTerminal = 4,
+    InstallRejected = 5,
+    PositionClosed = 6,
+}
+
+impl fmt::Display for PendingTriggerDiscardReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PendingTriggerDiscardReason::OrderCancelled => f.write_str("order_cancelled"),
+            PendingTriggerDiscardReason::OrderExpired => f.write_str("order_expired"),
+            PendingTriggerDiscardReason::OrderReplaced => f.write_str("order_replaced"),
+            PendingTriggerDiscardReason::UnfilledTerminal => f.write_str("unfilled_terminal"),
+            PendingTriggerDiscardReason::InstallRejected => f.write_str("install_rejected"),
+            PendingTriggerDiscardReason::PositionClosed => f.write_str("position_closed"),
+        }
+    }
+}
+
 /// Engine output events, emitted during transaction execution and end-of-block processing.
 /// Encoded as CometBFT ABCI events for indexing and WebSocket streaming.
 #[derive(Clone, Debug, Serialize, Deserialize, AbciEvent)]
@@ -3104,8 +3169,9 @@ pub enum Event {
         cpy_market: MarketId,
         cpn_market: MarketId,
     },
-    /// A standalone event resolved to Yes or No. No settlement price (no
-    /// underlying) and no Void.
+    /// An event resolved to Yes or No, never Void. The event itself has no
+    /// settlement price; each attached conditional's is carried by its
+    /// [`Event::ConditionalSettled`] events.
     EventResolved {
         event_id: EventId,
         outcome: Outcome,
@@ -3113,7 +3179,10 @@ pub enum Event {
         signer: Option<[u8; 20]>,
     },
     /// A conditional-perp position was cash-settled to an owner's balance
-    /// because its branch won the resolution.
+    /// because its branch won the resolution. `settlement_price` is the
+    /// underlying's oracle price, published at or after the event's
+    /// settlement time; `realized_pnl` is the profit or loss between
+    /// `entry_price` and `settlement_price`.
     ConditionalSettled {
         event_id: EventId,
         market: MarketId,
@@ -3126,7 +3195,8 @@ pub enum Event {
     },
     /// A conditional-perp position was voided because its branch lost. The
     /// position holder's reserved IM is released (effectively: position deleted,
-    /// no balance change, as IM is equity-based not locked collateral).
+    /// no balance change, as IM is equity-based not locked collateral). An
+    /// event never resolves to Void, so a lost branch is the only reason.
     ConditionalVoided {
         event_id: EventId,
         market: MarketId,
@@ -3550,6 +3620,10 @@ pub enum Event {
         accepted_height: u64,
         active_from_height: u64,
         replaced_group_id: u64,
+        /// Order id whose fill promoted a pre-fill payload; 0 = direct
+        /// SetPositionTriggers.
+        #[serde(default)]
+        source_order_id: u64,
     },
     /// A user explicitly removed a stored position-protection bracket.
     PositionTriggersCancelled {
@@ -3564,6 +3638,11 @@ pub enum Event {
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
+        /// 0 = legacy/unspecified, 1 = position flat, 2 = side flip,
+        /// 3 = event resolution sweep. `serde(default)` keeps old bytes
+        /// decoding.
+        #[serde(default)]
+        invalidation_reason: u8,
     },
     /// A crossed limb passed authoritative snapshot/account validation and
     /// began its one bounded reduce-only IOC-limit attempt.
@@ -3643,6 +3722,25 @@ pub enum Event {
         to: [u8; 20],
         amount: u64,
     },
+    /// Bracket attached to a not-yet-filled order (pre-fill trigger).
+    PendingTriggersAttached {
+        owner: [u8; 20],
+        market: MarketId,
+        order_id: u64,
+        /// Client-assigned order id. `0` means absent.
+        client_order_id: u64,
+        stop_loss: Option<TriggerLimb>,
+        take_profit: Option<TriggerLimb>,
+    },
+    /// Bracket payload removed without ever installing (order terminal, no
+    /// fill, or install refused at fill time). Promotion emits
+    /// `PositionTriggersSet`, not this.
+    PendingTriggersDiscarded {
+        owner: [u8; 20],
+        market: MarketId,
+        order_id: u64,
+        reason: PendingTriggerDiscardReason,
+    },
 }
 
 impl Event {
@@ -3660,6 +3758,8 @@ impl Event {
                 | Self::PositionTriggersSet { .. }
                 | Self::PositionTriggersCancelled { .. }
                 | Self::PositionTriggersInvalidated { .. }
+                | Self::PendingTriggersAttached { .. }
+                | Self::PendingTriggersDiscarded { .. }
                 | Self::PositionTriggerActivated { .. }
                 | Self::PositionTriggerExecuted { .. }
                 | Self::PositionTriggerDeferred { .. }
@@ -3889,6 +3989,13 @@ pub enum ExecError {
         current: u32,
         max: u32,
     },
+    /// A mark price could not be produced for an existing market: an
+    /// impact-family book (conditional perp / binary prediction) with no
+    /// recent-trade EWMA and no oracle fallback value. Distinct from
+    /// `UnknownMarket`, which means the market itself is not registered.
+    MarkUnavailable {
+        market: MarketId,
+    },
     /// Net-delta margin grouping found legs of the same group with
     /// disagreeing settle prices — upstream data corruption (different
     /// markets in the same `underlying_market_id` group should resolve
@@ -3980,8 +4087,7 @@ pub enum ExecError {
         /// Configured staleness cap from `MarketConfig`.
         max_staleness_ms: u64,
     },
-    /// A mark-dependent read on `market` was refused because the oracle-guard
-    /// gate (`repo::UPGRADE_HEIGHT_ORACLE_GUARDS`) is active and the market's
+    /// A mark-dependent read on `market` was refused because the market's
     /// `mark_price_max_oracle_age_ms` is still the unset zero. Zero no longer
     /// means "disabled": the default fails closed until the admin quorum sets
     /// a real value through `AdminAction::SetOracleGuards`.
@@ -4065,6 +4171,11 @@ pub enum ExecError {
     /// the rejected claimer must not sign a payout.
     /// An expired lease does not reach this error — it is replaced.
     WithdrawalPayoutLeaseActive,
+    /// The order cannot carry the attached SL/TP limbs: trigger fields were
+    /// sent on a reduce-only order, on a market kind the trigger contract
+    /// does not admit, while the trigger feature is inactive at this height,
+    /// or on a market without an effective enabled trigger policy.
+    TriggerOrderIncompatible,
 }
 
 impl ExecError {
@@ -4171,6 +4282,8 @@ impl ExecError {
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
             ExecError::TooManyAttachedConditionals { .. } => 95,
             ExecError::TooManyActiveEvents { .. } => 96,
+            ExecError::MarkUnavailable { .. } => 97,
+            ExecError::TriggerOrderIncompatible => 98,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4444,6 +4557,11 @@ impl ExecError {
                 "Account would touch more events than the scenario margin engine can enumerate. Close a \
                  leg before opening another."
             }
+            ExecError::MarkUnavailable { .. } => {
+                "No mark price is available for the market: an impact-family book has no \
+                 recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
+                 mark exists."
+            }
             ExecError::SettlementPriceMismatch { .. } => {
                 "Net-delta margin grouping found legs with disagreeing settle prices (data corruption \
                  across same `underlying_market_id`)."
@@ -4473,6 +4591,9 @@ impl ExecError {
             }
             ExecError::WithdrawalPayoutLeaseActive => {
                 "A live Solana payout lease on this withdrawal is held by another watcher; the claim is rejected so the rejected watcher cannot also sign a payout."
+            }
+            ExecError::TriggerOrderIncompatible => {
+                "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
             }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
@@ -4523,6 +4644,7 @@ impl ExecError {
             ExecError::InvalidResolution(_)
                 | ExecError::StaleOracle { .. }
                 | ExecError::OracleGuardUnset { .. }
+                | ExecError::MarkUnavailable { .. }
                 | ExecError::UnknownMarket(_)
         )
     }
@@ -4683,6 +4805,11 @@ impl fmt::Display for ExecError {
                 f,
                 "too many active events in basket: current {current}, cap {max}"
             ),
+            ExecError::MarkUnavailable { market } => write!(
+                f,
+                "no mark price available on market {market}: impact-family book has no recent-trade \
+                EWMA and no oracle fallback value"
+            ),
             ExecError::SettlementPriceMismatch {
                 market,
                 expected,
@@ -4835,6 +4962,9 @@ impl fmt::Display for ExecError {
             ExecError::SubAccountsInactive => {
                 write!(f, "sub-account actions are not enabled on this chain")
             }
+            ExecError::TriggerOrderIncompatible => {
+                write!(f, "order cannot carry attached SL/TP limbs")
+            }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
@@ -4855,14 +4985,388 @@ pub mod prelude {
         FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason, LiquidateAccounts,
         MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder,
         OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason,
-        OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome, PlaceOrder, Position,
-        ResolveEvent, RevokeAgent, RunFundingTick, RunLiquidationSweep, SetAccountFeeOverride,
-        SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer, TimeInForce, TxContext,
-        UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
+        OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome, PendingTriggerDiscardReason,
+        PlaceOrder, Position, ResolveEvent, RevokeAgent, RunFundingTick, RunLiquidationSweep,
+        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
+        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
         WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
         DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
         MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
         PREDICTION_BINARY_TICK_SIZE,
     };
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    fn sample_limb(price: u64, bps: u32, id: u64) -> TriggerLimb {
+        TriggerLimb {
+            trigger_price: price,
+            max_slippage_bps: TriggerSlippageBps(bps),
+            client_trigger_id: Some(ClientTriggerId(id)),
+        }
+    }
+
+    fn round_trip(event: &Event) -> Event {
+        let bytes = rmp_serde::to_vec(event).expect("event encodes");
+        rmp_serde::from_slice(&bytes).expect("event decodes")
+    }
+
+    /// Appended-variant stability: the two new variants sit at the tail of
+    /// `Event`, and a mixed old/new stream round-trips element-equal — a
+    /// renumber or insertion anywhere before the tail would surface here as
+    /// a mismatched variant or field layout.
+    #[test]
+    fn pending_trigger_events_round_trip_in_mixed_streams() {
+        let attached = Event::PendingTriggersAttached {
+            owner: [0xA5; 20],
+            market: 7,
+            order_id: 5,
+            client_order_id: 77,
+            stop_loss: Some(sample_limb(95_000, 75, 11)),
+            take_profit: Some(sample_limb(110_000, 50, 12)),
+        };
+        let discarded = Event::PendingTriggersDiscarded {
+            owner: [0xA5; 20],
+            market: 7,
+            order_id: 5,
+            reason: PendingTriggerDiscardReason::InstallRejected,
+        };
+        let order_placed = Event::OrderPlaced {
+            order_id: 5,
+            market: 7,
+            owner: [0xA5; 20],
+            side: Side::Buy,
+            price: 100,
+            quantity: 10,
+            client_order_id: 77,
+            time_in_force: TimeInForce::Gtc,
+            post_only: false,
+            reduce_only: false,
+        };
+        let sub_transfer = Event::SubAccountTransferCompleted {
+            owner: [0x01; 20],
+            from: [0x01; 20],
+            to: [0x02; 20],
+            amount: 500,
+        };
+
+        let stream = vec![order_placed, sub_transfer, attached, discarded];
+        let bytes = rmp_serde::to_vec(&stream).expect("event stream encodes");
+        let decoded: Vec<Event> = rmp_serde::from_slice(&bytes).expect("event stream decodes");
+        assert_eq!(
+            format!("{decoded:?}"),
+            format!("{stream:?}"),
+            "old and appended variants must round-trip unchanged"
+        );
+        assert!(
+            matches!(
+                decoded[..2],
+                [
+                    Event::OrderPlaced { .. },
+                    Event::SubAccountTransferCompleted { .. }
+                ]
+            ),
+            "pre-existing variants must keep their identities after the append"
+        );
+        assert!(
+            decoded[..2]
+                .iter()
+                .all(|event| !event.requires_trigger_coordinates()),
+            "pre-existing variants keep their coordinate classification"
+        );
+        assert!(
+            decoded[2..]
+                .iter()
+                .all(|event| event.requires_trigger_coordinates()),
+            "the appended trigger lifecycle events require chain coordinates"
+        );
+    }
+
+    /// `PendingTriggersAttached` with absent limbs round-trips: `None`
+    /// encodes as nil and decodes back as `None` (never a default limb).
+    #[test]
+    fn pending_triggers_attached_nil_limbs_round_trip() {
+        let event = Event::PendingTriggersAttached {
+            owner: [0x11; 20],
+            market: 1,
+            order_id: 9,
+            client_order_id: 0,
+            stop_loss: None,
+            take_profit: None,
+        };
+        match round_trip(&event) {
+            Event::PendingTriggersAttached {
+                stop_loss,
+                take_profit,
+                client_order_id,
+                ..
+            } => {
+                assert!(stop_loss.is_none(), "absent stop_loss must stay absent");
+                assert!(take_profit.is_none(), "absent take_profit must stay absent");
+                assert_eq!(client_order_id, 0, "0 must mean no client order id");
+            }
+            other => panic!("expected PendingTriggersAttached, got {other:?}"),
+        }
+    }
+
+    /// Builds the pre-2.1.0 encoding of a struct variant by shrinking the
+    /// fields array from `new_field_count` to `old_field_count` and dropping
+    /// the trailing zero-valued field byte. The variant name travels as a
+    /// fixstr key at a fixed offset (`0x81, 0xA0|len, name…, fields…`).
+    fn old_shape_bytes(variant_name: &str, old_field_count: usize, encoded_new: &[u8]) -> Vec<u8> {
+        assert_eq!(
+            encoded_new[0], 0x81,
+            "event variants encode as a single-entry map"
+        );
+        let name_len = variant_name.len();
+        assert_eq!(
+            encoded_new[1],
+            0xA0 | name_len as u8,
+            "variant name is a fixstr key"
+        );
+        let fields_header = name_len.saturating_add(2);
+        let mut old = encoded_new.to_vec();
+        old[fields_header] = 0x90 | old_field_count as u8;
+        old.pop();
+        old
+    }
+
+    /// `PositionTriggersInvalidated.invalidation_reason` defaults to 0 when
+    /// decoding pre-2.1.0 bytes that carry no reason field.
+    #[test]
+    fn invalidation_reason_defaults_to_zero_on_old_bytes() {
+        let event = Event::PositionTriggersInvalidated {
+            owner: [0xA5; 20],
+            market: 7,
+            position_epoch: 3,
+            group_id: 9,
+            invalidation_reason: 0,
+        };
+        let new_bytes = rmp_serde::to_vec(&event).expect("event encodes");
+        let old_bytes = old_shape_bytes("PositionTriggersInvalidated", 4, &new_bytes);
+        assert_ne!(old_bytes, new_bytes, "old bytes must differ from new bytes");
+
+        match rmp_serde::from_slice::<Event>(&old_bytes).expect("old bytes decode") {
+            Event::PositionTriggersInvalidated {
+                owner,
+                market,
+                position_epoch,
+                group_id,
+                invalidation_reason,
+            } => {
+                assert_eq!(owner, [0xA5; 20]);
+                assert_eq!(market, 7);
+                assert_eq!(position_epoch, 3);
+                assert_eq!(group_id, 9);
+                assert_eq!(
+                    invalidation_reason, 0,
+                    "missing reason must decode as the legacy default 0"
+                );
+            }
+            other => panic!("expected PositionTriggersInvalidated, got {other:?}"),
+        }
+    }
+
+    /// `PositionTriggersSet.source_order_id` defaults to 0 on pre-2.1.0
+    /// bytes; a promoted payload round-trips with the promoting order id
+    /// intact and a byte-stable re-encode.
+    #[test]
+    fn source_order_id_defaults_and_round_trips() {
+        let make = |source_order_id| Event::PositionTriggersSet {
+            owner: [0xA5; 20],
+            market: 7,
+            position_epoch: 3,
+            group_id: 9,
+            client_group_id: 9,
+            stop_limb_id: 1,
+            stop_client_trigger_id: 11,
+            take_profit_limb_id: 2,
+            take_profit_client_trigger_id: 12,
+            accepted_height: 100,
+            active_from_height: 101,
+            replaced_group_id: 0,
+            source_order_id,
+        };
+
+        let legacy_bytes = old_shape_bytes(
+            "PositionTriggersSet",
+            12,
+            &rmp_serde::to_vec(&make(0)).expect("encodes"),
+        );
+        match rmp_serde::from_slice::<Event>(&legacy_bytes).expect("old bytes decode") {
+            Event::PositionTriggersSet {
+                source_order_id, ..
+            } => assert_eq!(
+                source_order_id, 0,
+                "missing source_order_id must decode as the direct-set default 0"
+            ),
+            other => panic!("expected PositionTriggersSet, got {other:?}"),
+        }
+
+        let promoted = make(42);
+        let bytes = rmp_serde::to_vec(&promoted).expect("encodes");
+        let decoded: Event = rmp_serde::from_slice(&bytes).expect("decodes");
+        match decoded {
+            Event::PositionTriggersSet {
+                source_order_id, ..
+            } => {
+                assert_eq!(
+                    source_order_id, 42,
+                    "promoting order id must survive the wire"
+                );
+            }
+            other => panic!("expected PositionTriggersSet, got {other:?}"),
+        }
+        let re_encoded = rmp_serde::to_vec(&decoded).expect("re-encodes");
+        assert_eq!(bytes, re_encoded, "event encoding must be a fixed point");
+    }
+
+    /// `invalidation_reason` carries the sweep/capture values (1 flat,
+    /// 2 side flip, 3 event resolved) through the wire unchanged.
+    #[test]
+    fn invalidation_reason_values_round_trip() {
+        for reason in [1u8, 2, 3] {
+            let event = Event::PositionTriggersInvalidated {
+                owner: [0x07; 20],
+                market: 2,
+                position_epoch: 1,
+                group_id: 4,
+                invalidation_reason: reason,
+            };
+            match round_trip(&event) {
+                Event::PositionTriggersInvalidated {
+                    invalidation_reason: decoded,
+                    ..
+                } => assert_eq!(decoded, reason, "reason {reason} must round-trip"),
+                other => panic!("expected PositionTriggersInvalidated, got {other:?}"),
+            }
+        }
+    }
+
+    /// Every discard reason survives the wire, and the Display strings —
+    /// the indexer's `reason` literals — stay stable.
+    #[test]
+    fn discard_reasons_round_trip_and_display_stays_stable() {
+        let cases = [
+            (
+                PendingTriggerDiscardReason::OrderCancelled,
+                "order_cancelled",
+            ),
+            (PendingTriggerDiscardReason::OrderExpired, "order_expired"),
+            (PendingTriggerDiscardReason::OrderReplaced, "order_replaced"),
+            (
+                PendingTriggerDiscardReason::UnfilledTerminal,
+                "unfilled_terminal",
+            ),
+            (
+                PendingTriggerDiscardReason::InstallRejected,
+                "install_rejected",
+            ),
+            (
+                PendingTriggerDiscardReason::PositionClosed,
+                "position_closed",
+            ),
+        ];
+        for (reason, display) in cases {
+            let event = Event::PendingTriggersDiscarded {
+                owner: [0x03; 20],
+                market: 5,
+                order_id: 8,
+                reason,
+            };
+            match round_trip(&event) {
+                Event::PendingTriggersDiscarded {
+                    reason: decoded, ..
+                } => assert_eq!(decoded, reason, "{display} must round-trip"),
+                other => panic!("expected PendingTriggersDiscarded, got {other:?}"),
+            }
+            assert_eq!(reason.to_string(), display);
+        }
+    }
+
+    /// The ABCI attribute rendering of the appended variants stays
+    /// well-formed: present limbs render their value, absent limbs render an
+    /// empty attribute, and the discard reason renders its literal.
+    #[test]
+    fn pending_trigger_events_render_abci_attributes() {
+        let attached_some = Event::PendingTriggersAttached {
+            owner: [0xA5; 20],
+            market: 7,
+            order_id: 5,
+            client_order_id: 77,
+            stop_loss: Some(sample_limb(95_000, 75, 11)),
+            take_profit: None,
+        };
+        let mut writer = crate::abci_event::AbciEventWriter::new();
+        attached_some.encode_abci(&mut writer);
+        let bytes = writer.into_vec();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(text.contains("stop_loss"), "limb key must render: {text}");
+        assert!(
+            text.contains("trigger_price=95000"),
+            "present limb must render its value: {text}"
+        );
+        assert!(
+            text.contains("take_profit"),
+            "absent limb must still write its key: {text}"
+        );
+
+        let attached_none = Event::PendingTriggersAttached {
+            owner: [0xA5; 20],
+            market: 7,
+            order_id: 5,
+            client_order_id: 0,
+            stop_loss: None,
+            take_profit: None,
+        };
+        let mut writer = crate::abci_event::AbciEventWriter::new();
+        attached_none.encode_abci(&mut writer);
+        let none_bytes = writer.into_vec();
+        let with_limbs = String::from_utf8_lossy(&none_bytes).into_owned();
+        let mut writer = crate::abci_event::AbciEventWriter::new();
+        attached_some.encode_abci(&mut writer);
+        let some_bytes = writer.into_vec();
+        let without = String::from_utf8_lossy(&some_bytes).into_owned();
+        assert_ne!(
+            with_limbs, without,
+            "absent and present limbs must render differently"
+        );
+
+        let discarded = Event::PendingTriggersDiscarded {
+            owner: [0xA5; 20],
+            market: 7,
+            order_id: 5,
+            reason: PendingTriggerDiscardReason::OrderCancelled,
+        };
+        let mut writer = crate::abci_event::AbciEventWriter::new();
+        discarded.encode_abci(&mut writer);
+        let bytes = writer.into_vec();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.contains("order_cancelled"),
+            "discard reason must render its literal: {text}"
+        );
+    }
+
+    /// Code 98 is the single stable client-branchable rejection for "this
+    /// order cannot carry the SL/TP you sent"; the meaning string is the
+    /// integration contract mirrored by the gateway's openapi table.
+    #[test]
+    fn trigger_order_incompatible_is_code_98_with_stable_meaning() {
+        let err = ExecError::TriggerOrderIncompatible;
+        assert_eq!(err.code(), 98, "code 98 is permanently assigned");
+        assert_eq!(
+            err.meaning(),
+            "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
+        );
+        assert_eq!(
+            err.to_string(),
+            "order cannot carry attached SL/TP limbs",
+            "display rendering is part of the operator contract"
+        );
+    }
 }

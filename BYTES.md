@@ -25,9 +25,11 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | Byte | Constant                          | Status   |
 |------|-----------------------------------|----------|
 | 0x01 | `ACTION_PLACE_ORDER`              | shipped  |
+  ↳ proof-wire 2.1.0: `PlaceOrder` payload gains trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte and field order unchanged.
 | 0x02 | `ACTION_CANCEL_ORDER`             | shipped  |
 | 0x03 | `ACTION_ORACLE_UPDATE`            | shipped  |
 | 0x04 | `ACTION_MARKET_ORDER`             | shipped  |
+  ↳ proof-wire 2.1.0: `MarketOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
 | 0x05 | `ACTION_DEPOSIT`                  | shipped  |
 | 0x06 | `ACTION_WITHDRAW`                 | shipped  |
 | 0x07 | `ACTION_CREATE_MARKET`            | shipped  |
@@ -50,6 +52,7 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x18 | `ACTION_CANCEL_CLIENT_ORDER`       | shipped  |
 | 0x19 | `ACTION_CANCEL_ALL_ORDERS`         | shipped  |
 | 0x1A | `ACTION_CANCEL_REPLACE_ORDER`      | shipped  |
+  ↳ proof-wire 2.1.0: `CancelReplaceOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
 | 0x1B | `ACTION_AMEND_ORDER`               | shipped  |
 | 0x1C | `ACTION_ATOMIC_BASKET_ORDER`       | shipped  |
 | 0x1D | `ACTION_LIQUIDATE_ACCOUNTS`        | shipped  |

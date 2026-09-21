@@ -66,7 +66,17 @@ name = "proof-wire"
 # the batch item set, event ExecError codes 92-96 are added, and CreateEvent
 # and AttachConditional carry a per-book max_open_interest. Family bytes no
 # longer decode -> MAJOR.
-version = "2.0.0"
+#
+# 2.0.0 -> 2.1.0: additive wire change (trigger expansion). PlaceOrder (0x01),
+# MarketOrder (0x04) and CancelReplaceOrder (0x1A) gain trailing optional
+# stop_loss/take_profit limbs (`#[serde(default)]`, nil when absent) so
+# pre-2.1.0 payloads still decode; Event gains PendingTriggersAttached and
+# PendingTriggersDiscarded as appended variants,
+# PositionTriggersInvalidated gains a defaulted invalidation_reason and
+# PositionTriggersSet a defaulted source_order_id, and
+# ExecError::TriggerOrderIncompatible is added at code 98. No new outer
+# action bytes. Pre-existing bytes still decode unchanged -> MINOR.
+version = "2.1.0"
 edition = "2021"
 
 [dependencies]
