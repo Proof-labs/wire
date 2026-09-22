@@ -2573,11 +2573,14 @@ pub struct AttachConditional {
 
 /// Resolve an event. Cancels every resting order on its books, settles its
 /// two prediction-binary books to Yes or No, and settles every attached
-/// conditional pair in the same transaction: the winning book pays cash at its
-/// underlying's oracle price, published at or after the event's settlement
-/// time; the losing book is voided. There is no Void. If any attached
-/// underlying has no such price, the whole resolution is refused and nothing
-/// is written. Authorized by the market-parameters key.
+/// conditional pair in the same transaction: the winning book pays the cash
+/// difference to its underlying's oracle price, published at or after the
+/// event's settlement time, and each winning position then converts into a
+/// perpetual position on the underlying at that price, or stays paid in cash
+/// when the account cannot take it (see [`ConversionFallbackReason`]); the
+/// losing book is voided. There is no Void. If any attached underlying has no
+/// such price, the whole resolution is refused and nothing is written.
+/// Authorized by the market-parameters key.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ResolveEvent {
     pub event_id: EventId,
@@ -2937,6 +2940,37 @@ impl fmt::Display for PendingTriggerDiscardReason {
     }
 }
 
+/// Why a winning conditional-perp position was paid in cash only instead of
+/// converting into a perpetual position on its underlying. Serialised as a
+/// string in ABCI events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConversionFallbackReason {
+    /// The account would not meet initial margin holding the perpetual.
+    InitialMargin = 1,
+    /// The perpetual would exceed the underlying's `max_position_size`.
+    PositionSizeCap = 2,
+    /// The perpetual would push the underlying's open interest past its
+    /// `max_open_interest`.
+    OpenInterestCap = 3,
+    /// A price the margin check needs could not be read.
+    CannotPriceOrMargin = 4,
+    /// Netting into the account's existing perpetual would realize a loss
+    /// larger than its balance.
+    InsufficientBalance = 5,
+}
+
+impl fmt::Display for ConversionFallbackReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConversionFallbackReason::InitialMargin => f.write_str("initial_margin"),
+            ConversionFallbackReason::PositionSizeCap => f.write_str("position_size_cap"),
+            ConversionFallbackReason::OpenInterestCap => f.write_str("open_interest_cap"),
+            ConversionFallbackReason::CannotPriceOrMargin => f.write_str("cannot_price_or_margin"),
+            ConversionFallbackReason::InsufficientBalance => f.write_str("insufficient_balance"),
+        }
+    }
+}
+
 /// Engine output events, emitted during transaction execution and end-of-block processing.
 /// Encoded as CometBFT ABCI events for indexing and WebSocket streaming.
 #[derive(Clone, Debug, Serialize, Deserialize, AbciEvent)]
@@ -3178,11 +3212,17 @@ pub enum Event {
         timestamp_ms: u64,
         signer: Option<[u8; 20]>,
     },
-    /// A conditional-perp position was cash-settled to an owner's balance
-    /// because its branch won the resolution. `settlement_price` is the
-    /// underlying's oracle price, published at or after the event's
-    /// settlement time; `realized_pnl` is the profit or loss between
-    /// `entry_price` and `settlement_price`.
+    /// A conditional-perp position settled because its branch won the
+    /// resolution. `settlement_price` is the underlying's oracle price,
+    /// published at or after the event's settlement time; `realized_pnl` is
+    /// the profit or loss between `entry_price` and `settlement_price`, paid
+    /// to the owner's balance.
+    ///
+    /// `converted_size` is the quantity that became a perpetual position on
+    /// the underlying at `settlement_price` (the whole `size`, or zero), and
+    /// `fallback_reason` says why a winner that did not convert was paid in
+    /// cash only. Both decode as `0` and `None` from bytes written before
+    /// conversion existed, when every winner was paid in cash only.
     ConditionalSettled {
         event_id: EventId,
         market: MarketId,
@@ -3192,6 +3232,10 @@ pub enum Event {
         entry_price: u64,
         settlement_price: u64,
         realized_pnl: i64,
+        #[serde(default)]
+        converted_size: u64,
+        #[serde(default)]
+        fallback_reason: Option<ConversionFallbackReason>,
     },
     /// A conditional-perp position was voided because its branch lost. The
     /// position holder's reserved IM is released (effectively: position deleted,

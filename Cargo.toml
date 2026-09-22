@@ -76,7 +76,13 @@ name = "proof-wire"
 # PositionTriggersSet a defaulted source_order_id, and
 # ExecError::TriggerOrderIncompatible is added at code 98. No new outer
 # action bytes. Pre-existing bytes still decode unchanged -> MINOR.
-version = "2.1.0"
+#
+# 2.1.0 -> 2.2.0: additive wire change (conversion of winning conditionals).
+# ConditionalSettled gains a defaulted converted_size and fallback_reason
+# (`#[serde(default)]`, 0 and nil when absent), and ConversionFallbackReason
+# is added. No new action bytes, events or error codes. Pre-existing bytes
+# still decode unchanged -> MINOR.
+version = "2.2.0"
 edition = "2021"
 
 [dependencies]
