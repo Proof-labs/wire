@@ -1859,6 +1859,50 @@ mod tests {
         }
     }
 
+    /// Frozen wire vectors for the tag-16 `SetHlpConfig` inner action, enabled
+    /// and disabled. The proposal content hash commits these bytes. To
+    /// regenerate after an intended layout change, print
+    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())`.
+    #[test]
+    fn set_hlp_config_wire_vectors_frozen() {
+        use crate::types::{AccountAddress, SetHlpConfig};
+        for (bootstrap_balance, min_balance_floor, enabled, expected) in [
+            (
+                12_500_000_000u64,
+                5_000_000_000u64,
+                true,
+                "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
+            ),
+            (
+                0,
+                0,
+                false,
+                "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaa0000c2",
+            ),
+        ] {
+            let action = AdminAction::SetHlpConfig(SetHlpConfig {
+                address: AccountAddress([0xAA; 20]),
+                bootstrap_balance,
+                min_balance_floor,
+                enabled,
+            });
+            let canonical =
+                canonical_admin_action_bytes(&action).expect("SetHlpConfig encodes canonically");
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen SetHlpConfig wire vector drifted"
+            );
+            let (decoded, re_encoded) =
+                canonicalize_admin_action(&canonical).expect("frozen bytes decode");
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(decoded.action_tag(), AdminActionType::SetHlpConfig as u8);
+        }
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -2035,7 +2079,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 16] = [
+        const ALL_INNER_TAGS: [AdminActionType; 17] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2050,6 +2094,7 @@ mod tests {
             AdminActionType::SetOracleGuards,
             AdminActionType::ScheduleUpgrade,
             AdminActionType::CancelUpgrade,
+            AdminActionType::SetHlpConfig,
             AdminActionType::ReservedRt01D,
             AdminActionType::ReservedRt01E,
         ];
@@ -2069,6 +2114,7 @@ mod tests {
                 | AdminActionType::SetOracleGuards
                 | AdminActionType::ScheduleUpgrade
                 | AdminActionType::CancelUpgrade
+                | AdminActionType::SetHlpConfig
                 | AdminActionType::ReservedRt01D
                 | AdminActionType::ReservedRt01E => {}
                 // Retired: a discriminant with no arm, never listed as assigned.

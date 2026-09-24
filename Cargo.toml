@@ -82,7 +82,12 @@ name = "proof-wire"
 # (`#[serde(default)]`, 0 and nil when absent), and ConversionFallbackReason
 # is added. No new action bytes, events or error codes. Pre-existing bytes
 # still decode unchanged -> MINOR.
-version = "2.2.0"
+#
+# 2.2.0 -> 2.3.0: additive wire change. New AdminAction::SetHlpConfig (inner
+# tag 0x10) carrying the SetHlpConfig payload, and Event::HlpConfigUpdated.
+# No new outer action bytes. Pre-existing bytes still decode unchanged
+# -> MINOR.
+version = "2.3.0"
 edition = "2021"
 
 [dependencies]

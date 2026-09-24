@@ -720,6 +720,36 @@ pub enum AdminAction {
     /// and `max_oracle_deviation_bps`) on one standalone perpetual through
     /// the admin quorum.
     SetOracleGuards(SetOracleGuards),
+    /// Writes (or replaces) the global HLP backstop configuration: the
+    /// vault address, bootstrap equity, floor, and the enabled flag.
+    SetHlpConfig(SetHlpConfig),
+}
+
+/// Payload of [`AdminAction::SetHlpConfig`]: the complete backstop
+/// configuration. Executing it replaces the stored [`HlpConfig`] record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetHlpConfig {
+    /// Trading account that absorbs deficits at Tier 0. Must be non-zero.
+    pub address: AccountAddress,
+    /// Backstop equity at registration, in microUSDC. Non-zero when
+    /// `enabled`.
+    pub bootstrap_balance: u64,
+    /// Balance the backstop keeps, in microUSDC; Tier 0 draws only above it.
+    /// At most `bootstrap_balance`.
+    pub min_balance_floor: u64,
+    /// Whether Tier 0 draws from the backstop.
+    pub enabled: bool,
+}
+
+impl From<SetHlpConfig> for HlpConfig {
+    fn from(cmd: SetHlpConfig) -> Self {
+        Self {
+            address: cmd.address.0,
+            bootstrap_balance: cmd.bootstrap_balance,
+            min_balance_floor: cmd.min_balance_floor,
+            enabled: cmd.enabled,
+        }
+    }
 }
 
 /// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
@@ -856,7 +886,8 @@ pub enum AdminActionType {
     /// Cancels the pending protocol upgrade plan. Must commit before the
     /// plan's target height to have effect.
     CancelUpgrade = 15,
-    // 16 is held for `SetHlpConfig`, whose variant lands with its behaviour.
+    /// Writes or replaces the global HLP backstop configuration.
+    SetHlpConfig = 16,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01D = 17,
     /// Reserved by RT-01: discriminant only, no behaviour.
@@ -880,6 +911,7 @@ impl AdminAction {
             Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
+            Self::SetHlpConfig(_) => AdminActionType::SetHlpConfig,
         }
     }
 
@@ -1584,9 +1616,8 @@ pub struct HlpConfig {
     /// derived from the HLP's signing key).
     #[serde(with = "crate::wire_bytes")]
     pub address: [u8; 20],
-    /// Bootstrap equity (microUSDC). Captured at HLP-onboarding time
-    /// and never updated; the floor is computed from this baseline so
-    /// drawdowns don't move the floor up.
+    /// Bootstrap equity (microUSDC) as of the last `SetHlpConfig`. Only
+    /// that action writes it, so drawdowns and trading never move it.
     pub bootstrap_balance: u64,
     /// Minimum balance HLP must retain. Below this, Tier 0 stops
     /// absorbing. Default: 60% of bootstrap (`0.6 × bootstrap_balance`).
@@ -3801,6 +3832,16 @@ pub enum Event {
         market: MarketId,
         order_id: u64,
         reason: PendingTriggerDiscardReason,
+    },
+    /// The admin quorum wrote (or replaced) the global HLP backstop
+    /// configuration. Carries the full post-write state.
+    HlpConfigUpdated {
+        #[serde(with = "crate::wire_bytes")]
+        address: [u8; 20],
+        bootstrap_balance: u64,
+        min_balance_floor: u64,
+        enabled: bool,
+        proposal_id: u64,
     },
 }
 
