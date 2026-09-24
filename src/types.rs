@@ -856,6 +856,11 @@ pub enum AdminActionType {
     /// Cancels the pending protocol upgrade plan. Must commit before the
     /// plan's target height to have effect.
     CancelUpgrade = 15,
+    // 16 is held for `SetHlpConfig`, whose variant lands with its behaviour.
+    /// Reserved by RT-01: discriminant only, no behaviour.
+    ReservedRt01D = 17,
+    /// Reserved by RT-01: discriminant only, no behaviour.
+    ReservedRt01E = 18,
 }
 
 impl AdminAction {

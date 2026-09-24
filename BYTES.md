@@ -98,6 +98,9 @@ are not outer transaction action bytes.
 | 0x0D | `SetOracleGuards`                 | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
 | 0x0E | `ScheduleUpgrade`                 | governed; schedules the pending protocol-upgrade plan |
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
+| 0x10 | `SetHlpConfig`                    | reserved; the variant lands with its behaviour |
+| 0x11 | `ReservedRt01D`                   | reserved for `SetLiquidationConfig`; discriminant only, no behaviour |
+| 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
@@ -153,6 +156,8 @@ that gives it behaviour.
 |---|---|---|---|
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
+| Inner admin tags | `0x10` | ledger row only; `SetHlpConfig` adds its variant with its behaviour | held for `SetHlpConfig` |
+| Inner admin tags | `0x11`–`0x12` | `AdminActionType` discriminant-only variants | parked: liquidation config (`0x11`), insurance-fund funding (`0x12`) |
 
 ## Process for adding a new byte
 
