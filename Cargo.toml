@@ -87,7 +87,12 @@ name = "proof-wire"
 # tag 0x10) carrying the SetHlpConfig payload, and Event::HlpConfigUpdated.
 # No new outer action bytes. Pre-existing bytes still decode unchanged
 # -> MINOR.
-version = "2.3.0"
+#
+# 2.3.0 -> 2.4.0: additive wire change. ExecError::OracleVerdictUnavailable
+# takes code 77, the first of the 77-81 block reserved for oracle-policy
+# errors, and carries the new OracleReason (the oracle-policy classifier's
+# verdict reason). No action bytes or events change -> MINOR.
+version = "2.4.0"
 edition = "2021"
 
 [dependencies]

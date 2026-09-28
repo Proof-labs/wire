@@ -3874,6 +3874,33 @@ impl Event {
     }
 }
 
+/// Primary reason the oracle-policy classifier gave a block's verdict for one
+/// market. `Fresh` is the only reason a certified (priceable) verdict carries;
+/// every other reason names why the verdict is stale or unpriceable.
+///
+/// The engine persists this inside its committed verdict records, so the
+/// variant order and names are a storage contract as well as a wire one:
+/// append only, never reorder or rename.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OracleReason {
+    InvalidPolicy,
+    UpdateLimitExceeded,
+    ClockRegression,
+    ManualHalt,
+    SessionUnknown,
+    SessionClosed,
+    BadQuality,
+    Disagreement,
+    ReferenceUnavailable,
+    MovementBound,
+    MissingSource,
+    ExpiredSource,
+    OutsideSession,
+    PairTimeMismatch,
+    RecoveryPending,
+    Fresh,
+}
+
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -4199,6 +4226,19 @@ pub enum ExecError {
     OracleGuardUnset {
         market: MarketId,
     },
+    /// Once the oracle policy is active, a mark-dependent read on `market`
+    /// was refused because the block has no certified verdict for it. The
+    /// market is stale or unpriceable for this block, not misconfigured: the
+    /// action can succeed in a later block. Malformed verdict state is
+    /// `StateCorruption`, never this variant.
+    OracleVerdictUnavailable {
+        market: MarketId,
+        /// The classifier's primary reason for a committed Stale or
+        /// Unpriceable verdict; `None` when no verdict was committed for
+        /// this block (the market's price prefix is not frozen, or the market
+        /// has no policy epoch after activation).
+        reason: Option<OracleReason>,
+    },
     /// `SetUserMarketLeverage` rejected because the user attempted to
     /// pick an IM ratio LOWER than the market's risk floor. The
     /// engine only allows users to deleverage (more margin, less
@@ -4372,6 +4412,8 @@ impl ExecError {
             ExecError::BridgeReceiptMismatch(_) => 74,
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
+            // First of the 77-81 block reserved for oracle-policy errors.
+            ExecError::OracleVerdictUnavailable { .. } => 77,
             ExecError::OracleGuardUnset { .. } => 82,
             ExecError::SubAccountNotFound => 83,
             ExecError::SubAccountAlreadyExists => 84,
@@ -4694,6 +4736,9 @@ impl ExecError {
             ExecError::OracleGuardUnset { .. } => {
                 "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
             }
+            ExecError::OracleVerdictUnavailable { .. } => {
+                "The oracle policy has no certified verdict for this market in this block (stale, unpriceable, or not yet committed); mark-dependent actions are refused until a later block certifies a price."
+            }
             ExecError::WithdrawalPayoutLeaseActive => {
                 "A live Solana payout lease on this withdrawal is held by another watcher; the claim is rejected so the rejected watcher cannot also sign a payout."
             }
@@ -4749,6 +4794,7 @@ impl ExecError {
             ExecError::InvalidResolution(_)
                 | ExecError::StaleOracle { .. }
                 | ExecError::OracleGuardUnset { .. }
+                | ExecError::OracleVerdictUnavailable { .. }
                 | ExecError::MarkUnavailable { .. }
                 | ExecError::UnknownMarket(_)
         )
@@ -4988,6 +5034,21 @@ impl fmt::Display for ExecError {
                 f,
                 "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
                 oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
+            ),
+            ExecError::OracleVerdictUnavailable {
+                market,
+                reason: Some(reason),
+            } => write!(
+                f,
+                "oracle verdict unavailable on market {market}: committed verdict is not fresh \
+                ({reason:?})"
+            ),
+            ExecError::OracleVerdictUnavailable {
+                market,
+                reason: None,
+            } => write!(
+                f,
+                "oracle verdict unavailable on market {market}: no verdict committed for this block"
             ),
             ExecError::WithdrawalPayoutLeaseActive => {
                 write!(f, "payout lease live and held by another watcher")
@@ -5454,6 +5515,32 @@ mod tests {
         assert!(
             text.contains("order_cancelled"),
             "discard reason must render its literal: {text}"
+        );
+    }
+
+    /// Code 77 opens the block reserved for oracle-policy errors. It is the
+    /// retryable "no certified verdict this block" class, distinct from both
+    /// the legacy age guard (37) and a misconfigured market (23).
+    #[test]
+    fn oracle_verdict_unavailable_is_code_77_and_names_its_reason() {
+        let classified = ExecError::OracleVerdictUnavailable {
+            market: 4,
+            reason: Some(OracleReason::SessionClosed),
+        };
+        let uncommitted = ExecError::OracleVerdictUnavailable {
+            market: 4,
+            reason: None,
+        };
+        assert_eq!(classified.code(), 77, "code 77 is permanently assigned");
+        assert_eq!(uncommitted.code(), 77, "the reason never changes the code");
+        assert!(classified.is_settlement_retryable());
+        assert_eq!(
+            classified.to_string(),
+            "oracle verdict unavailable on market 4: committed verdict is not fresh (SessionClosed)"
+        );
+        assert_eq!(
+            uncommitted.to_string(),
+            "oracle verdict unavailable on market 4: no verdict committed for this block"
         );
     }
 
