@@ -42,7 +42,7 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | retired  |
 | 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | retired  |
 | 0x10 | `ACTION_UPDATE_MARKET_FEES`       | shipped  |
-| 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | shipped  |
+| 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | retired  |
 | 0x12 | `ACTION_RUN_FUNDING_TICK`         | shipped  |
 | 0x13 | `ACTION_SET_ACCOUNT_FEE_OVERRIDE` | planned  |
 | 0x14 | `ACTION_ORACLE_UPDATE_COMPOSITE`  | planned  |

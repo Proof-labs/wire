@@ -1698,14 +1698,6 @@ pub struct CancelPositionTriggers {
     pub expected_position_epoch: PositionEpoch,
 }
 
-/// Test/admin action — force-runs `run_liquidations` immediately.
-/// See `Action::RunLiquidationSweep` for rationale.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunLiquidationSweep {
-    #[serde(with = "crate::wire_bytes")]
-    pub signer: [u8; 20],
-}
-
 /// Maximum owners admitted in one proposer-injected liquidation action.
 ///
 /// This is the canonical decode/preflight bound, not the schema-v9 execution
@@ -3302,7 +3294,7 @@ pub enum Event {
         /// Signed cash delta applied to owner balance (micro-USDC).
         cash_delta: i64,
     },
-    /// Position forcibly closed by the end-of-block liquidation sweep.
+    /// Position forcibly closed by a `LiquidateAccounts` batch.
     AccountLiquidated {
         owner: [u8; 20],
         market: MarketId,
@@ -3503,7 +3495,7 @@ pub enum Event {
         shortfall: u64,
     },
     /// Emitted when a fill causes an account to drop below maintenance margin.
-    /// The fill is NOT blocked — the end-of-block liquidation sweep will handle it.
+    /// The fill is NOT blocked; `LiquidateAccounts` liquidates it if it stays under.
     /// This event provides immediate observability for off-chain monitoring.
     MarginWarning {
         owner: [u8; 20],
@@ -4161,10 +4153,8 @@ pub enum ExecError {
     /// existed at all. Reduce-only orders are required to actually reduce
     /// or close a position.
     ReduceOnlyWouldIncrease,
-    /// A test/admin action (`RunLiquidationSweep`, `RunFundingTick`,
-    /// `ForceLiquidate`) was rejected because the engine isn't configured
-    /// to accept them in this deployment, or the position the action
-    /// referenced doesn't exist.
+    /// A test/admin action (`RunFundingTick`) was rejected because the engine
+    /// isn't configured to accept it in this deployment.
     TestActionRejected(String),
     /// `SetAccountFeeOverride` rejected because a fee value is outside
     /// the legal `[0, 10_000]` basis-point range.
@@ -4726,7 +4716,7 @@ impl ExecError {
                  increase exposure) or no position existed."
             }
             ExecError::TestActionRejected(_) => {
-                "Test/admin action (RunLiquidationSweep, RunFundingTick, ForceLiquidate) rejected because \
+                "Test/admin action (RunFundingTick) rejected because \
                  the engine isn't configured to accept them, or the position the action referenced does \
                  not exist."
             }
@@ -5152,9 +5142,9 @@ pub mod prelude {
         MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder,
         OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason,
         OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome, PendingTriggerDiscardReason,
-        PlaceOrder, Position, ResolveEvent, RevokeAgent, RunFundingTick, RunLiquidationSweep,
-        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
-        TimeInForce, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
+        PlaceOrder, Position, ResolveEvent, RevokeAgent, RunFundingTick, SetAccountFeeOverride,
+        SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer, TimeInForce, TxContext,
+        UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
         WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
         DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
         DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,

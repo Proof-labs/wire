@@ -162,9 +162,8 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    // 0x0E and 0x0F are retired: see `RETIRED_ACTION_BYTES`.
+    // 0x0E, 0x0F and 0x11 are retired: see `RETIRED_ACTION_BYTES`.
     UpdateMarketFees => 16,      // 0x10
-    RunLiquidationSweep => 17,   // 0x11
     RunFundingTick => 18,        // 0x12
     SetAccountFeeOverride => 19, // 0x13
     OracleUpdateComposite => 20, // 0x14
@@ -204,7 +203,7 @@ define_actions! {
 /// transactions and chains that carried them still exist, so the values are
 /// never handed to a new action: `ActionType::try_from` rejects them and the
 /// byte ledger keeps their rows as `retired`.
-pub const RETIRED_ACTION_BYTES: &[u8] = &[0x0E, 0x0F];
+pub const RETIRED_ACTION_BYTES: &[u8] = &[0x0E, 0x0F, 0x11];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -255,7 +254,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ConfirmWithdrawal
         | ActionType::ResolveEvent
         | ActionType::UpdateMarketFees
-        | ActionType::RunLiquidationSweep
         | ActionType::RunFundingTick
         | ActionType::SetAccountFeeOverride
         | ActionType::FailDeposit
@@ -756,7 +754,7 @@ pub fn canonical_tier2_action_type(bytes: &[u8]) -> Option<ActionType> {
     // on to spend the automatic resolution allowance in the same block.
     if !matches!(
         action_type,
-        ActionType::ResolveEvent | ActionType::RunLiquidationSweep | ActionType::LiquidateAccounts
+        ActionType::ResolveEvent | ActionType::LiquidateAccounts
     ) {
         return None;
     }
@@ -3216,15 +3214,6 @@ mod tests {
         assert!(decode_tx(&array16).is_ok());
         assert_eq!(canonical_tier2_action_type(&array16), None);
 
-        let sweep = Action::RunLiquidationSweep(RunLiquidationSweep { signer: [0x22; 20] });
-        let canonical_sweep =
-            sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &sweep, 2, &test_key())
-                .unwrap();
-        assert_eq!(
-            canonical_tier2_action_type(&canonical_sweep),
-            Some(ActionType::RunLiquidationSweep)
-        );
-
         let nonzero_liquidation = encode_signed_tx(
             &Action::LiquidateAccounts(LiquidateAccounts { owners: vec![] }),
             1,
@@ -3280,20 +3269,14 @@ mod tests {
     /// The node's proposer must list the same actions.
     #[test]
     fn tier2_action_set_is_pinned() {
-        let tier2: Vec<(Action, ActionType)> = vec![
-            (
-                Action::ResolveEvent(crate::types::ResolveEvent {
-                    event_id: crate::types::EventId(7),
-                    outcome: Outcome::No,
-                    signer: [0x33; 20],
-                }),
-                ActionType::ResolveEvent,
-            ),
-            (
-                Action::RunLiquidationSweep(RunLiquidationSweep { signer: [0x22; 20] }),
-                ActionType::RunLiquidationSweep,
-            ),
-        ];
+        let tier2: Vec<(Action, ActionType)> = vec![(
+            Action::ResolveEvent(crate::types::ResolveEvent {
+                event_id: crate::types::EventId(7),
+                outcome: Outcome::No,
+                signer: [0x33; 20],
+            }),
+            ActionType::ResolveEvent,
+        )];
         for (action, expected) in tier2 {
             let encoded = encode_tx(&action, 1).unwrap();
             assert_eq!(
@@ -3314,9 +3297,7 @@ mod tests {
                 .expect("every emitted action type is known");
             if matches!(
                 action_type,
-                ActionType::ResolveEvent
-                    | ActionType::RunLiquidationSweep
-                    | ActionType::LiquidateAccounts
+                ActionType::ResolveEvent | ActionType::LiquidateAccounts
             ) {
                 continue;
             }
@@ -3363,7 +3344,6 @@ mod tests {
             (ActionType::ApproveAgent, BlockPhase::AgentAuthority),
             (ActionType::RevokeAgent, BlockPhase::AgentAuthority),
             (ActionType::UpdateMarketFees, BlockPhase::Ordinary),
-            (ActionType::RunLiquidationSweep, BlockPhase::Ordinary),
             (ActionType::RunFundingTick, BlockPhase::Ordinary),
             (ActionType::SetAccountFeeOverride, BlockPhase::Ordinary),
             (

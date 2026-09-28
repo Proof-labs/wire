@@ -92,7 +92,11 @@ name = "proof-wire"
 # takes code 77, the first of the 77-81 block reserved for oracle-policy
 # errors, and carries the new OracleReason (the oracle-policy classifier's
 # verdict reason). No action bytes or events change -> MINOR.
-version = "2.4.0"
+#
+# 2.4.0 -> 3.0.0: action 0x11 (RunLiquidationSweep) retired; liquidation is
+# the daemon's LiquidateAccounts only. Bytes that decoded before no longer
+# do -> MAJOR.
+version = "3.0.0"
 edition = "2021"
 
 [dependencies]
