@@ -2577,7 +2577,10 @@ pub struct CreateEvent {
 /// `+1`) under the event's shared Yes/No binaries and appends an
 /// [`AttachedConditional`] to the event's list. The event must be
 /// `Trading`, the underlying must exist with `kind = Perp` and not already
-/// be attached, and both child ids must be free. No funding fields: the
+/// be attached, both child ids must be free, and `mm_bps` must be at least
+/// the underlying's, so a winner that passes maintenance margin holding the
+/// conditional passes it holding the perpetual it converts into. No funding
+/// fields: the
 /// conditional-perp books run no funding schedule. Governance-only, like
 /// `CreateEvent`: the inner signer is all-zero and the quorum authorizes.
 ///
