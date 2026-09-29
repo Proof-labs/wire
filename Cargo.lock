@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "proof-wire"
-version = "3.0.0"
+version = "4.0.0"
 dependencies = [
  "derive_more",
  "ed25519-dalek",
