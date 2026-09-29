@@ -720,15 +720,17 @@ pub enum AdminAction {
     /// and `max_oracle_deviation_bps`) on one standalone perpetual through
     /// the admin quorum.
     SetOracleGuards(SetOracleGuards),
-    /// Writes (or replaces) the global HLP backstop configuration: the
-    /// vault address, bootstrap equity, floor, and the enabled flag.
-    SetHlpConfig(SetHlpConfig),
+    /// Writes (or replaces) the global PLP backstop configuration: the
+    /// PLP account address, bootstrap equity, floor, and the enabled flag.
+    /// Bytes carrying the former name `SetHlpConfig` still decode.
+    #[serde(alias = "SetHlpConfig")]
+    SetPlpConfig(SetPlpConfig),
 }
 
-/// Payload of [`AdminAction::SetHlpConfig`]: the complete backstop
-/// configuration. Executing it replaces the stored [`HlpConfig`] record.
+/// Payload of [`AdminAction::SetPlpConfig`]: the complete backstop
+/// configuration. Executing it replaces the stored [`PlpConfig`] record.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SetHlpConfig {
+pub struct SetPlpConfig {
     /// Trading account that absorbs deficits at Tier 0. Must be non-zero.
     pub address: AccountAddress,
     /// Backstop equity at registration, in microUSDC. Non-zero when
@@ -741,8 +743,8 @@ pub struct SetHlpConfig {
     pub enabled: bool,
 }
 
-impl From<SetHlpConfig> for HlpConfig {
-    fn from(cmd: SetHlpConfig) -> Self {
+impl From<SetPlpConfig> for PlpConfig {
+    fn from(cmd: SetPlpConfig) -> Self {
         Self {
             address: cmd.address.0,
             bootstrap_balance: cmd.bootstrap_balance,
@@ -886,8 +888,8 @@ pub enum AdminActionType {
     /// Cancels the pending protocol upgrade plan. Must commit before the
     /// plan's target height to have effect.
     CancelUpgrade = 15,
-    /// Writes or replaces the global HLP backstop configuration.
-    SetHlpConfig = 16,
+    /// Writes or replaces the global PLP backstop configuration.
+    SetPlpConfig = 16,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01D = 17,
     /// Reserved by RT-01: discriminant only, no behaviour.
@@ -911,7 +913,7 @@ impl AdminAction {
             Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
-            Self::SetHlpConfig(_) => AdminActionType::SetHlpConfig,
+            Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
         }
     }
 
@@ -1390,7 +1392,7 @@ pub struct MarketConfig {
     /// Insurance-fund pool grouping. Markets with the same `pool_id`
     /// share an insurance fund — a JELLY-style blowout in one pool can
     /// drain its own IF to zero without touching the IF that backs
-    /// other pools. The full waterfall is HLP → per-pool IF → socialized
+    /// other pools. The full waterfall is PLP → per-pool IF → socialized
     /// loss → ADL.
     ///
     /// Defaults to 0 so existing on-chain MarketConfigs (written before
@@ -1601,30 +1603,30 @@ pub struct FeeTier {
     pub taker_fee_tenth_bps: i16,
 }
 
-/// Configuration for the Hyperliquidity Provider (HLP) — the
+/// Configuration for the Proof liquidity provider (PLP) — the
 /// protocol-owned MM that absorbs bankruptcy losses at Tier 0 of the
 /// bad-debt waterfall.
 ///
-/// Stored under `keys::HLP_CONFIG` (single global record). The HLP's
+/// Stored under `keys::PLP_CONFIG` (single global record). The PLP's
 /// trading account lives at `address`; the engine treats it like any
 /// other account for matching purposes but consults `min_balance_floor`
-/// when settling deficits — once HLP equity drops below the floor it
+/// when settling deficits — once PLP equity drops below the floor it
 /// stops absorbing and further deficits route to the per-pool IF.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct HlpConfig {
-    /// 20-byte address of the HLP vault account (matches the address
-    /// derived from the HLP's signing key).
+pub struct PlpConfig {
+    /// 20-byte address of the PLP account (matches the address
+    /// derived from the PLP's signing key).
     #[serde(with = "crate::wire_bytes")]
     pub address: [u8; 20],
-    /// Bootstrap equity (microUSDC) as of the last `SetHlpConfig`. Only
+    /// Bootstrap equity (microUSDC) as of the last `SetPlpConfig`. Only
     /// that action writes it, so drawdowns and trading never move it.
     pub bootstrap_balance: u64,
-    /// Minimum balance HLP must retain. Below this, Tier 0 stops
+    /// Minimum balance PLP must retain. Below this, Tier 0 stops
     /// absorbing. Default: 60% of bootstrap (`0.6 × bootstrap_balance`).
     /// Stored absolute so the value at config-write time is durable
     /// across bootstrap_balance migrations.
     pub min_balance_floor: u64,
-    /// True iff Tier 0 is enabled. When false (initial state — no HLP
+    /// True iff Tier 0 is enabled. When false (initial state — no PLP
     /// configured) the waterfall starts at Tier 1 (per-pool IF).
     pub enabled: bool,
 }
@@ -3324,19 +3326,21 @@ pub enum Event {
         /// Change amount in micro-USDC (positive = inflow, negative = outflow).
         delta: i64,
     },
-    /// Tier 0 of the bad-debt waterfall. HLP absorbed `amount` of
-    /// liquidation deficit, leaving HLP balance at `hlp_balance_after`.
-    /// Emitted only when HLP is enabled AND its balance was above the
-    /// floor at draw time. Once HLP hits the floor, further deficits
+    /// Tier 0 of the bad-debt waterfall. PLP absorbed `amount` of
+    /// liquidation deficit, leaving PLP balance at `plp_balance_after`.
+    /// Emitted only when PLP is enabled AND its balance was above the
+    /// floor at draw time. Once PLP hits the floor, further deficits
     /// route to Tier 1 (per-pool IF) and this event stops firing.
-    HlpAbsorbed {
-        /// Pool the liquidation came from (informational — HLP is
+    #[serde(alias = "HlpAbsorbed")]
+    PlpAbsorbed {
+        /// Pool the liquidation came from (informational — PLP is
         /// pool-agnostic at Tier 0).
         pool_id: u8,
-        /// Microusdc absorbed by HLP this draw.
+        /// Microusdc absorbed by PLP this draw.
         amount: u64,
-        /// HLP balance after the draw.
-        hlp_balance_after: i64,
+        /// PLP balance after the draw.
+        #[serde(alias = "hlp_balance_after")]
+        plp_balance_after: i64,
     },
     /// Tier 2 of the bad-debt waterfall. The pool's IF was insufficient
     /// to fully absorb a liquidation deficit, so the residual was
@@ -3832,9 +3836,10 @@ pub enum Event {
         order_id: u64,
         reason: PendingTriggerDiscardReason,
     },
-    /// The admin quorum wrote (or replaced) the global HLP backstop
+    /// The admin quorum wrote (or replaced) the global PLP backstop
     /// configuration. Carries the full post-write state.
-    HlpConfigUpdated {
+    #[serde(alias = "HlpConfigUpdated")]
+    PlpConfigUpdated {
         #[serde(with = "crate::wire_bytes")]
         address: [u8; 20],
         bootstrap_balance: u64,

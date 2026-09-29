@@ -83,8 +83,8 @@ name = "proof-wire"
 # is added. No new action bytes, events or error codes. Pre-existing bytes
 # still decode unchanged -> MINOR.
 #
-# 2.2.0 -> 2.3.0: additive wire change. New AdminAction::SetHlpConfig (inner
-# tag 0x10) carrying the SetHlpConfig payload, and Event::HlpConfigUpdated.
+# 2.2.0 -> 2.3.0: additive wire change. New AdminAction::SetPlpConfig (inner
+# tag 0x10) carrying the SetPlpConfig payload, and Event::PlpConfigUpdated.
 # No new outer action bytes. Pre-existing bytes still decode unchanged
 # -> MINOR.
 #

@@ -1857,39 +1857,61 @@ mod tests {
         }
     }
 
-    /// Frozen wire vectors for the tag-16 `SetHlpConfig` inner action, enabled
-    /// and disabled. The proposal content hash commits these bytes. To
-    /// regenerate after an intended layout change, print
-    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())`.
+    /// Payload bytes of the tag-16 `SetPlpConfig` vectors below, after the
+    /// variant name: a 4-element array of the 20-byte address `[0xAA; 20]`,
+    /// bootstrap balance, floor and enabled flag. To regenerate after an
+    /// intended layout change, print
+    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())` and drop
+    /// the map and variant-name header.
+    const SET_PLP_CONFIG_PAYLOADS: [(u64, u64, bool, &str); 2] = [
+        (
+            12_500_000_000,
+            5_000_000_000,
+            true,
+            "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
+        ),
+        (
+            0,
+            0,
+            false,
+            "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaa0000c2",
+        ),
+    ];
+
+    /// MessagePack of an externally tagged variant: a one-entry map header
+    /// (`0x81`) and the variant name as a fixstr (`0xa0 | len`).
+    fn variant_header(name: &str) -> String {
+        let len = u8::try_from(name.len()).expect("variant name fits a fixstr");
+        assert!(len < 32, "variant name fits a fixstr");
+        format!("81{:02x}{}", 0xa0 | len, hex_string(name.as_bytes()))
+    }
+
+    fn set_plp_config(
+        bootstrap_balance: u64,
+        min_balance_floor: u64,
+        enabled: bool,
+    ) -> AdminAction {
+        use crate::types::{AccountAddress, SetPlpConfig};
+        AdminAction::SetPlpConfig(SetPlpConfig {
+            address: AccountAddress([0xAA; 20]),
+            bootstrap_balance,
+            min_balance_floor,
+            enabled,
+        })
+    }
+
+    /// Frozen wire vectors for the tag-16 `SetPlpConfig` inner action, enabled
+    /// and disabled. The proposal content hash commits these bytes.
     #[test]
-    fn set_hlp_config_wire_vectors_frozen() {
-        use crate::types::{AccountAddress, SetHlpConfig};
-        for (bootstrap_balance, min_balance_floor, enabled, expected) in [
-            (
-                12_500_000_000u64,
-                5_000_000_000u64,
-                true,
-                "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
-            ),
-            (
-                0,
-                0,
-                false,
-                "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaa0000c2",
-            ),
-        ] {
-            let action = AdminAction::SetHlpConfig(SetHlpConfig {
-                address: AccountAddress([0xAA; 20]),
-                bootstrap_balance,
-                min_balance_floor,
-                enabled,
-            });
+    fn set_plp_config_wire_vectors_frozen() {
+        for (bootstrap_balance, min_balance_floor, enabled, payload) in SET_PLP_CONFIG_PAYLOADS {
+            let action = set_plp_config(bootstrap_balance, min_balance_floor, enabled);
             let canonical =
-                canonical_admin_action_bytes(&action).expect("SetHlpConfig encodes canonically");
+                canonical_admin_action_bytes(&action).expect("SetPlpConfig encodes canonically");
             assert_eq!(
                 hex_string(&canonical),
-                expected,
-                "frozen SetHlpConfig wire vector drifted"
+                format!("{}{payload}", variant_header("SetPlpConfig")),
+                "frozen SetPlpConfig wire vector drifted"
             );
             let (decoded, re_encoded) =
                 canonicalize_admin_action(&canonical).expect("frozen bytes decode");
@@ -1897,7 +1919,41 @@ mod tests {
                 re_encoded, canonical,
                 "canonical encoding must be a fixed point"
             );
-            assert_eq!(decoded.action_tag(), AdminActionType::SetHlpConfig as u8);
+            assert_eq!(decoded.action_tag(), AdminActionType::SetPlpConfig as u8);
+        }
+    }
+
+    /// Bytes written under the former variant name `SetHlpConfig` still decode
+    /// to the same action, but canonicalize to the new name. A proposal stored
+    /// with the old bytes therefore no longer matches its own canonical
+    /// encoding; see the upgrade-boundary rule in `docs/release.md`.
+    #[test]
+    fn set_hlp_config_old_bytes_decode_but_canonicalize_to_the_new_name() {
+        // The enabled vector exactly as it was frozen under the former name.
+        assert_eq!(
+            format!("{}{}", variant_header("SetHlpConfig"), SET_PLP_CONFIG_PAYLOADS[0].3),
+            "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
+        );
+        for (bootstrap_balance, min_balance_floor, enabled, payload) in SET_PLP_CONFIG_PAYLOADS {
+            let old_hex = format!("{}{payload}", variant_header("SetHlpConfig"));
+            let old_bytes = hex::decode(&old_hex).expect("old vector is valid hex");
+            let (decoded, re_encoded) =
+                canonicalize_admin_action(&old_bytes).expect("old spelling still decodes");
+            assert_eq!(decoded.action_tag(), AdminActionType::SetPlpConfig as u8);
+            assert_eq!(
+                re_encoded,
+                canonical_admin_action_bytes(&set_plp_config(
+                    bootstrap_balance,
+                    min_balance_floor,
+                    enabled
+                ))
+                .expect("new spelling encodes"),
+                "old bytes decode to the same action"
+            );
+            assert_ne!(
+                re_encoded, old_bytes,
+                "old bytes are not canonical any more"
+            );
         }
     }
 
@@ -2092,7 +2148,7 @@ mod tests {
             AdminActionType::SetOracleGuards,
             AdminActionType::ScheduleUpgrade,
             AdminActionType::CancelUpgrade,
-            AdminActionType::SetHlpConfig,
+            AdminActionType::SetPlpConfig,
             AdminActionType::ReservedRt01D,
             AdminActionType::ReservedRt01E,
         ];
@@ -2112,7 +2168,7 @@ mod tests {
                 | AdminActionType::SetOracleGuards
                 | AdminActionType::ScheduleUpgrade
                 | AdminActionType::CancelUpgrade
-                | AdminActionType::SetHlpConfig
+                | AdminActionType::SetPlpConfig
                 | AdminActionType::ReservedRt01D
                 | AdminActionType::ReservedRt01E => {}
                 // Retired: a discriminant with no arm, never listed as assigned.

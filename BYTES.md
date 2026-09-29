@@ -98,7 +98,7 @@ are not outer transaction action bytes.
 | 0x0D | `SetOracleGuards`                 | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
 | 0x0E | `ScheduleUpgrade`                 | governed; schedules the pending protocol-upgrade plan |
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
-| 0x10 | `SetHlpConfig`                    | governed; writes the global HLP backstop config |
+| 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
 | 0x11 | `ReservedRt01D`                   | reserved for `SetLiquidationConfig`; discriminant only, no behaviour |
 | 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
 
