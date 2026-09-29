@@ -100,7 +100,7 @@ fn legacy_bytes_decode_as_a_cash_only_settlement() {
 fn conversion_fields_round_trip_byte_stable() {
     let cases = [
         (10, None),
-        (0, Some(ConversionFallbackReason::InitialMargin)),
+        (0, Some(ConversionFallbackReason::MaintenanceMargin)),
         (0, Some(ConversionFallbackReason::PositionSizeCap)),
         (0, Some(ConversionFallbackReason::OpenInterestCap)),
         (0, Some(ConversionFallbackReason::CannotPriceOrMargin)),
@@ -146,9 +146,12 @@ fn existing_attributes_render_unchanged_and_the_new_two_append() {
     let mut fell_back = AbciEventWriter::new();
     legacy_attributes(&mut fell_back, 10);
     fell_back.write_attr_u64("converted_size", 0);
-    fell_back.write_attr("fallback_reason", "initial_margin");
+    fell_back.write_attr("fallback_reason", "maintenance_margin");
     assert_eq!(
-        render(&settled(0, Some(ConversionFallbackReason::InitialMargin))),
+        render(&settled(
+            0,
+            Some(ConversionFallbackReason::MaintenanceMargin)
+        )),
         fell_back.into_vec()
     );
 }
@@ -156,7 +159,10 @@ fn existing_attributes_render_unchanged_and_the_new_two_append() {
 #[test]
 fn fallback_reason_literals_stay_stable() {
     for (reason, literal) in [
-        (ConversionFallbackReason::InitialMargin, "initial_margin"),
+        (
+            ConversionFallbackReason::MaintenanceMargin,
+            "maintenance_margin",
+        ),
         (
             ConversionFallbackReason::PositionSizeCap,
             "position_size_cap",
@@ -176,4 +182,29 @@ fn fallback_reason_literals_stay_stable() {
     ] {
         assert_eq!(reason.to_string(), literal);
     }
+}
+
+/// The fallback reason as the releases before the rename declared it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ReasonBeforeRename {
+    InitialMargin = 1,
+}
+
+/// The rename changes no byte: the margin fallback encodes exactly as the
+/// variant it replaced, and each side decodes the other's.
+#[test]
+fn the_margin_fallback_encodes_as_it_did_before_the_rename() {
+    let before = rmp_serde::to_vec(&Some(ReasonBeforeRename::InitialMargin)).expect("encodes");
+    let after =
+        rmp_serde::to_vec(&Some(ConversionFallbackReason::MaintenanceMargin)).expect("encodes");
+    assert_eq!(after, before, "the encoded name is unchanged");
+    assert_eq!(
+        rmp_serde::from_slice::<Option<ConversionFallbackReason>>(&before)
+            .expect("new decodes old"),
+        Some(ConversionFallbackReason::MaintenanceMargin)
+    );
+    assert_eq!(
+        rmp_serde::from_slice::<Option<ReasonBeforeRename>>(&after).expect("old decodes new"),
+        Some(ReasonBeforeRename::InitialMargin)
+    );
 }

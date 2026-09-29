@@ -2976,8 +2976,12 @@ impl fmt::Display for PendingTriggerDiscardReason {
 /// string in ABCI events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConversionFallbackReason {
-    /// The account would not meet initial margin holding the perpetual.
-    InitialMargin = 1,
+    /// The account would not meet maintenance margin holding the perpetual.
+    /// Encoded as `InitialMargin`, the name it shipped under in 2.13.0, so
+    /// decoders on either side of the rename read each other's bytes; shown
+    /// as `maintenance_margin`.
+    #[serde(rename = "InitialMargin")]
+    MaintenanceMargin = 1,
     /// The perpetual would exceed the underlying's `max_position_size`.
     PositionSizeCap = 2,
     /// The perpetual would push the underlying's open interest past its
@@ -2993,7 +2997,7 @@ pub enum ConversionFallbackReason {
 impl fmt::Display for ConversionFallbackReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConversionFallbackReason::InitialMargin => f.write_str("initial_margin"),
+            ConversionFallbackReason::MaintenanceMargin => f.write_str("maintenance_margin"),
             ConversionFallbackReason::PositionSizeCap => f.write_str("position_size_cap"),
             ConversionFallbackReason::OpenInterestCap => f.write_str("open_interest_cap"),
             ConversionFallbackReason::CannotPriceOrMargin => f.write_str("cannot_price_or_margin"),
