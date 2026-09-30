@@ -725,6 +725,11 @@ pub enum AdminAction {
     /// Bytes carrying the former name `SetHlpConfig` still decode.
     #[serde(alias = "SetHlpConfig")]
     SetPlpConfig(SetPlpConfig),
+    /// Writes (or replaces) the per-account rolling withdrawal limit
+    /// (CU-06, S39): a cap of 0 disables the limit; `window_secs` is the
+    /// rolling-window length in seconds. Enforcement charges every outflow
+    /// against the account's rolling window ledger.
+    SetWithdrawalLimit(SetWithdrawalLimit),
     /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112):
     /// the operator quorum every custody receipt terminal verifies against.
     /// Epoch must strictly exceed the stored one — a rotation, never a
@@ -752,6 +757,51 @@ pub struct SetOperatorReceiptRegistry {
     /// Must be non-empty and duplicate-free.
     pub operator_keys: Vec<[u8; 32]>,
 }
+
+/// Payload of [`AdminAction::SetWithdrawalLimit`]: the per-account fixed
+/// withdrawal window. Executing it replaces the stored configuration; a cap
+/// of 0 disables the limit entirely (the pre-CU-06 behavior). The window is
+/// anchored per account at its first withdrawal after the previous one
+/// expires, so a cap cannot be doubled by timing across a calendar edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetWithdrawalLimit {
+    /// Maximum aggregate withdrawals (amount + fee) one account may debit
+    /// per window, in microUSDC. 0 disables the limit.
+    pub per_account_cap_micro_usdc: u64,
+    /// Fixed window length in seconds. Must be >= 1; production uses
+    /// 86_400 (24 hours, CU-06).
+    pub window_secs: u32,
+}
+
+/// CU-06: one account's withdrawal-window usage, as a bounded rolling
+/// ledger. `entries` holds every outflow and refund whose timestamp is
+/// still inside the window, ascending by `at_ms`; the window's spend is
+/// their signed sum. Pruning on every touch keeps the record proportional
+/// to activity inside ONE window, and the entry count is additionally
+/// capped at [`MAX_WITHDRAWAL_WINDOW_ENTRIES`] so a dust-withdrawal pattern
+/// cannot grow state without bound (the below-minimum gate makes reaching
+/// the cap need a governance-set cap far above any sane value).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalUsageRecord {
+    pub entries: Vec<WithdrawalOutflow>,
+}
+
+/// One window entry: an outflow (the `amount + fee` a request debited) or,
+/// with `credit` set, the refund of one terminal-refused withdrawal stamped
+/// at the outflow's own timestamp so the two age out together and a refund
+/// can never outlive (or exceed) the usage it returns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalOutflow {
+    pub at_ms: u64,
+    pub amount_micro_usdc: u64,
+    pub credit: bool,
+}
+
+/// Armor against unbounded window-ledger growth: the most entries one
+/// account's window record may hold. Live entries each carry at least the
+/// below-minimum withdrawal floor, so reaching this needs a governance cap
+/// above `4096 * min_withdrawal` inside a single window.
+pub const MAX_WITHDRAWAL_WINDOW_ENTRIES: usize = 4096;
 
 /// Payload of [`AdminAction::SetPlpConfig`]: the complete backstop
 /// configuration. Executing it replaces the stored [`PlpConfig`] record.
@@ -916,6 +966,10 @@ pub enum AdminActionType {
     CancelUpgrade = 15,
     /// Writes or replaces the global PLP backstop configuration.
     SetPlpConfig = 16,
+    /// Writes (or replaces) the per-account rolling withdrawal limit
+    /// (CU-06, S39). `cap = 0` disables the limit; `window_secs` is the
+    /// rolling-window length in seconds (production: 86_400).
+    SetWithdrawalLimit = 19,
     /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112).
     SetOperatorReceiptRegistry = 20,
     /// Reserved by RT-01: discriminant only, no behaviour.
@@ -942,6 +996,7 @@ impl AdminAction {
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
             Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
+            Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
         }
     }
@@ -2913,6 +2968,14 @@ pub struct WithdrawalReceiptSidecar {
     /// request time. Debited together with `amount` up front; retained as
     /// protocol equity on settle, refunded together with `amount` on cancel.
     pub fee: u64,
+    /// Wall clock (unix ms) of the request block, frozen alongside the fee.
+    /// Anchors the CU-06 window refund: a terminal refusal credits the
+    /// outflow's window usage at exactly this timestamp, so the credit ages
+    /// out with the usage it returns. `#[serde(default)]`: sidecar rows
+    /// written before the CU-06 window decode with 0, which the refund
+    /// treats as out-of-window (a safe no-op).
+    #[serde(default)]
+    pub request_time_ms: u64,
 }
 
 /// The single-holder Solana payout claim on one withdrawal, stored under
@@ -3876,6 +3939,14 @@ pub enum Event {
         enabled: bool,
         proposal_id: u64,
     },
+    /// The admin quorum wrote (or replaced) the per-account rolling
+    /// withdrawal limit (CU-06). Carries the full post-write configuration;
+    /// a cap of 0 means the limit is disabled.
+    WithdrawalLimitSet {
+        per_account_cap_micro_usdc: u64,
+        window_secs: u32,
+        proposal_id: u64,
+    },
     /// The admin quorum wrote (or replaced) the operator receipt registry
     /// (W28-20, DEC-112). Carries the post-write quorum facts; the keys
     /// themselves are public and readable from the registry record.
@@ -4360,6 +4431,18 @@ pub enum ExecError {
     /// does not admit, while the trigger feature is inactive at this height,
     /// or on a market without an effective enabled trigger policy.
     TriggerOrderIncompatible,
+    /// CU-06: the withdrawal would push the account's rolling-window
+    /// outflow past the configured per-account cap.
+    WithdrawalLimitExceeded {
+        /// What this withdrawal would have debited (amount + fee).
+        attempted: u64,
+        /// The configured per-account cap for the window.
+        cap: u64,
+        /// Unix ms at which the OLDEST in-window outflow ages out, the
+        /// first moment any capacity returns. Recovery is gradual: each
+        /// entry frees its own amount at its own expiry.
+        oldest_expires_at_ms: u64,
+    },
 }
 
 impl ExecError {
@@ -4470,6 +4553,7 @@ impl ExecError {
             ExecError::TooManyActiveEvents { .. } => 96,
             ExecError::MarkUnavailable { .. } => 97,
             ExecError::TriggerOrderIncompatible => 98,
+            ExecError::WithdrawalLimitExceeded { .. } => 99,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4628,6 +4712,12 @@ impl ExecError {
             ExecError::WithdrawalBelowMinimum { .. } => {
                 "Net withdrawal amount is below the configured minimum (set above the flat protocol \
                  fee), so the payout would be worth less than it costs to settle."
+            }
+            ExecError::WithdrawalLimitExceeded { .. } => {
+                "The withdrawal would push the account's rolling-window outflow past the \
+                 configured per-account cap (CU-06 withdrawal limit). The attempted debit, the \
+                 cap, and the moment the oldest in-window outflow expires are on the error's \
+                 Display and log; capacity returns gradually as in-window outflows age out."
             }
             ExecError::WithdrawalTerminalGated(_) => {
                 "A retired legacy relayer withdrawal terminal (ConfirmWithdrawal / FailWithdrawal) \
@@ -5134,6 +5224,16 @@ impl fmt::Display for ExecError {
             } => write!(
                 f,
                 "atomic basket aggregate slippage {aggregate_bps} bps exceeds budget {max_slippage_bps} bps"
+            ),
+            ExecError::WithdrawalLimitExceeded {
+                attempted,
+                cap,
+                oldest_expires_at_ms,
+            } => write!(
+                f,
+                "withdrawal limit exceeded: {attempted} microUSDC would pass the rolling-window \
+                 per-account cap of {cap}; the oldest in-window outflow expires at unix ms \
+                 {oldest_expires_at_ms}"
             ),
             ExecError::BridgeReceiptRegistryInactive => {
                 write!(f, "bridge receipt registry inactive: operator custody phase not configured")

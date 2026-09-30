@@ -2133,7 +2133,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 18] = [
+        const ALL_INNER_TAGS: [AdminActionType; 19] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2151,6 +2151,7 @@ mod tests {
             AdminActionType::SetPlpConfig,
             AdminActionType::ReservedRt01D,
             AdminActionType::ReservedRt01E,
+            AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
         ];
         for tag_type in ALL_INNER_TAGS {
@@ -2172,6 +2173,7 @@ mod tests {
                 | AdminActionType::SetPlpConfig
                 | AdminActionType::ReservedRt01D
                 | AdminActionType::ReservedRt01E
+                | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
