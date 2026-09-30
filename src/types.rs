@@ -725,6 +725,32 @@ pub enum AdminAction {
     /// Bytes carrying the former name `SetHlpConfig` still decode.
     #[serde(alias = "SetHlpConfig")]
     SetPlpConfig(SetPlpConfig),
+    /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112):
+    /// the operator quorum every custody receipt terminal verifies against.
+    /// Epoch must strictly exceed the stored one — a rotation, never a
+    /// rewrite. The genesis parse seeds the first registry; this action is
+    /// the live-rotation path.
+    SetOperatorReceiptRegistry(SetOperatorReceiptRegistry),
+}
+
+/// Payload of [`AdminAction::SetOperatorReceiptRegistry`]: the operator
+/// quorum custody receipt terminals verify against. Executing it writes the
+/// registry through the same validated store path the genesis parse uses;
+/// the epoch must strictly exceed the stored one, so this is a rotation,
+/// never a rewrite of an existing epoch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetOperatorReceiptRegistry {
+    /// `bridge_core::DeploymentId` bytes every receipt must match.
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The registry epoch receipts must be pinned to. Must exceed any
+    /// stored epoch.
+    pub epoch: u64,
+    /// *m* — distinct operator members required. 1..=operator_keys.len().
+    pub threshold: u16,
+    /// The *n* operator ed25519 verification keys, in registry index order.
+    /// Must be non-empty and duplicate-free.
+    pub operator_keys: Vec<[u8; 32]>,
 }
 
 /// Payload of [`AdminAction::SetPlpConfig`]: the complete backstop
@@ -890,6 +916,8 @@ pub enum AdminActionType {
     CancelUpgrade = 15,
     /// Writes or replaces the global PLP backstop configuration.
     SetPlpConfig = 16,
+    /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112).
+    SetOperatorReceiptRegistry = 20,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01D = 17,
     /// Reserved by RT-01: discriminant only, no behaviour.
@@ -914,6 +942,7 @@ impl AdminAction {
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
             Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
+            Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
         }
     }
 
@@ -3845,6 +3874,17 @@ pub enum Event {
         bootstrap_balance: u64,
         min_balance_floor: u64,
         enabled: bool,
+        proposal_id: u64,
+    },
+    /// The admin quorum wrote (or replaced) the operator receipt registry
+    /// (W28-20, DEC-112). Carries the post-write quorum facts; the keys
+    /// themselves are public and readable from the registry record.
+    OperatorReceiptRegistrySet {
+        #[serde(with = "crate::wire_bytes")]
+        deployment_id: [u8; 32],
+        epoch: u64,
+        threshold: u16,
+        operator_count: u32,
         proposal_id: u64,
     },
 }

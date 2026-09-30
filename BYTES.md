@@ -101,6 +101,8 @@ are not outer transaction action bytes.
 | 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
 | 0x11 | `ReservedRt01D`                   | reserved for `SetLiquidationConfig`; discriminant only, no behaviour |
 | 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
+| 0x13 | `SetWithdrawalLimit`              | reserved on this lineage: assigned by the parallel withdrawal-limit PR (exchange#836) |
+| 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
