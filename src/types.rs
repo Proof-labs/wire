@@ -887,14 +887,16 @@ pub struct CancelAllOrdersForAccount {
 /// Payload of [`AdminAction::ScheduleUpgrade`]: one pending protocol-upgrade
 /// plan. `successor_sha256` pins the staged successor library file — verified
 /// at schedule time and re-verified at the swap (fail-closed on mismatch).
-/// `protocol_version` must differ from the active version: scheduling a
-/// self-upgrade is a no-op by construction.
+/// `(major, minor)` is the successor's engine release; it must exceed the
+/// active release, and the swap refuses a library reporting any other.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleUpgrade {
     /// Consensus height at which the successor becomes active.
     pub target_height: u64,
-    /// The successor's monotonic protocol version.
-    pub protocol_version: u32,
+    /// The successor's engine release major.
+    pub major: u32,
+    /// The successor's engine release minor.
+    pub minor: u32,
     /// SHA-256 of the staged successor library file.
     #[serde(with = "crate::wire_bytes")]
     pub successor_sha256: [u8; 32],

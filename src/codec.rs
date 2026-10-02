@@ -4302,7 +4302,8 @@ mod tests {
     fn upgrade_plan_admin_actions_round_trip() {
         let schedule = AdminAction::ScheduleUpgrade(ScheduleUpgrade {
             target_height: 50_780_000,
-            protocol_version: 2,
+            major: 2,
+            minor: 1,
             successor_sha256: [0xAB; 32],
         });
         let canonical = canonical_admin_action_bytes(&schedule).unwrap();
@@ -4311,7 +4312,7 @@ mod tests {
             &decoded,
             AdminAction::ScheduleUpgrade(plan)
                 if plan.target_height == 50_780_000
-                    && plan.protocol_version == 2
+                    && (plan.major, plan.minor) == (2, 1)
                     && plan.successor_sha256 == [0xAB; 32]
         ));
         assert_eq!(canonical, canonical2);

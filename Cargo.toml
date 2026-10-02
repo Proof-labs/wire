@@ -96,7 +96,11 @@ name = "proof-wire"
 # 2.4.0 -> 3.0.0: action 0x11 (RunLiquidationSweep) retired; liquidation is
 # the daemon's LiquidateAccounts only. Bytes that decoded before no longer
 # do -> MAJOR.
-version = "4.1.0"
+#
+# 4.0.0 -> 5.0.0: BREAKING wire change. ScheduleUpgrade's protocol_version is
+# replaced by the successor's engine release (major, minor). ScheduleUpgrade
+# bytes of the old shape no longer decode -> MAJOR.
+version = "5.0.0"
 edition = "2021"
 
 [dependencies]
