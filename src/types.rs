@@ -4433,6 +4433,10 @@ pub enum ExecError {
     /// does not admit, while the trigger feature is inactive at this height,
     /// or on a market without an effective enabled trigger policy.
     TriggerOrderIncompatible,
+    /// The account already holds the maximum number of resting orders.
+    AccountOrderCapReached {
+        max: u64,
+    },
     /// CU-06: the withdrawal would push the account's rolling-window
     /// outflow past the configured per-account cap.
     WithdrawalLimitExceeded {
@@ -4556,6 +4560,7 @@ impl ExecError {
             ExecError::MarkUnavailable { .. } => 97,
             ExecError::TriggerOrderIncompatible => 98,
             ExecError::WithdrawalLimitExceeded { .. } => 99,
+            ExecError::AccountOrderCapReached { .. } => 100,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -4875,6 +4880,9 @@ impl ExecError {
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
+            }
+            ExecError::AccountOrderCapReached { .. } => {
+                "Account already holds the maximum number of resting orders; cancel one before placing another."
             }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
@@ -5271,6 +5279,9 @@ impl fmt::Display for ExecError {
             }
             ExecError::TriggerOrderIncompatible => {
                 write!(f, "order cannot carry attached SL/TP limbs")
+            }
+            ExecError::AccountOrderCapReached { max } => {
+                write!(f, "account resting-order cap reached: max {max}")
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
@@ -5700,6 +5711,16 @@ mod tests {
             err.to_string(),
             "order cannot carry attached SL/TP limbs",
             "display rendering is part of the operator contract"
+        );
+    }
+
+    #[test]
+    fn account_order_cap_reached_is_code_100() {
+        let err = ExecError::AccountOrderCapReached { max: 100 };
+        assert_eq!(err.code(), 100, "code 100 is permanently assigned");
+        assert_eq!(
+            err.to_string(),
+            "account resting-order cap reached: max 100"
         );
     }
 }

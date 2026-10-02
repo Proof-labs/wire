@@ -99,7 +99,9 @@ name = "proof-wire"
 #
 # 4.0.0 -> 5.0.0: BREAKING wire change. ScheduleUpgrade's protocol_version is
 # replaced by the successor's engine release (major, minor). ScheduleUpgrade
-# bytes of the old shape no longer decode -> MAJOR.
+# bytes of the old shape no longer decode -> MAJOR. Additive in the same
+# jump: ExecError::WithdrawalLimitExceeded takes code 99 and
+# ExecError::AccountOrderCapReached takes code 100.
 version = "5.0.0"
 edition = "2021"
 
