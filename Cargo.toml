@@ -96,7 +96,7 @@ name = "proof-wire"
 # 2.4.0 -> 3.0.0: action 0x11 (RunLiquidationSweep) retired; liquidation is
 # the daemon's LiquidateAccounts only. Bytes that decoded before no longer
 # do -> MAJOR.
-version = "4.0.0"
+version = "4.1.0"
 edition = "2021"
 
 [dependencies]
