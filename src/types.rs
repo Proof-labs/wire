@@ -1467,8 +1467,9 @@ pub struct MarketConfig {
     ///
     /// Within a group: `mm = |Σ signed_size| × settle × weighted_mm_bps /
     /// 10_000`, where `weighted_mm_bps = Σ(|size_i| × mm_bps_i) / Σ|size_i|`.
-    /// Same formula for IM with im_bps. A perfectly hedged group
-    /// (net_signed = 0) charges zero MM regardless of per-leg bps.
+    /// Same formula for IM with im_bps. The group charge is floored at the
+    /// margin of its perp legs alone, so a perp hedged by conditionals
+    /// (net_signed = 0) is charged like the perp.
     ///
     /// Default: false — legacy per-leg scenario margin behavior.
     /// `#[serde(default)]` keeps existing on-chain MarketConfig records
