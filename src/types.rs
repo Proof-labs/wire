@@ -3055,6 +3055,10 @@ pub enum PendingTriggerDiscardReason {
     UnfilledTerminal = 4,
     InstallRejected = 5,
     PositionClosed = 6,
+    /// An engine upgrade moved the order's book and the bracket it carried
+    /// cannot follow: a limb's price has no mirror on the destination book.
+    /// The order itself was moved, not cancelled.
+    UpgradeDiscarded = 7,
 }
 
 impl fmt::Display for PendingTriggerDiscardReason {
@@ -3066,6 +3070,7 @@ impl fmt::Display for PendingTriggerDiscardReason {
             PendingTriggerDiscardReason::UnfilledTerminal => f.write_str("unfilled_terminal"),
             PendingTriggerDiscardReason::InstallRejected => f.write_str("install_rejected"),
             PendingTriggerDiscardReason::PositionClosed => f.write_str("position_closed"),
+            PendingTriggerDiscardReason::UpgradeDiscarded => f.write_str("upgrade_discarded"),
         }
     }
 }
