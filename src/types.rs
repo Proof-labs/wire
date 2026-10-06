@@ -331,7 +331,7 @@ impl MarketKind {
 /// Lifecycle status of an event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventStatus {
-    /// Open for trading on the event's two binary books and on every
+    /// Open for trading on the event's binary book and on every
     /// attached conditional's books.
     Trading,
     /// Past its settlement time, awaiting resolution. New orders on the
@@ -343,8 +343,8 @@ pub enum EventStatus {
     Resolved(Outcome),
 }
 
-/// Stored on-chain record for an event. Owns its two prediction-binary
-/// books (EBY, EBN), its resolution rule and the list of conditionals
+/// Stored on-chain record for an event. Owns its one prediction-binary
+/// book (EBY), its resolution rule and the list of conditionals
 /// attached to it. A standalone event has no attachments; its binaries never
 /// enter the scenario evaluator (they are backed by the locked reserve, out
 /// of scope for this record).
@@ -355,10 +355,9 @@ pub enum EventStatus {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventInfo {
     pub event_id: EventId,
-    /// Prediction-binary YES book.
+    /// The event's one prediction-binary book, priced in Yes. A No position
+    /// is a short Yes: long No at q is short Yes at 1 − q.
     pub eby_market: MarketId,
-    /// Prediction-binary NO book.
-    pub ebn_market: MarketId,
     /// Human-readable question.
     pub question: String,
     /// Event settlement time in ms since Unix epoch.
@@ -2619,16 +2618,16 @@ pub struct SubAccount {
     pub created_height: u64,
 }
 
-/// Create a standalone event: mints two prediction-binary books (EBY at
-/// `child_market_base+0`, EBN at `+1`) under a new [`EventInfo`], with no
+/// Create a standalone event: mints one prediction-binary book (EBY at
+/// `child_market_base`) under a new [`EventInfo`], with no
 /// underlying perp and no conditional legs yet (see [`AttachConditional`]).
 /// Requires relayer authorization; governed like `CreateMarket`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateEvent {
     pub event_id: EventId,
-    /// Starting id for the 2 binary child markets: `base+0` = EBY, `+1` = EBN.
+    /// Market id of the event's binary book (EBY).
     pub child_market_base: MarketId,
-    /// Risk/insurance pool the two books belong to.
+    /// Risk/insurance pool the book belongs to.
     pub pool_id: u8,
     pub question: String,
     pub settlement_ms: u64,
@@ -2646,16 +2645,15 @@ pub struct CreateEvent {
     /// Off-chain resolution criteria text (not stored in consensus state).
     #[serde(default)]
     pub rules: String,
-    /// Open-interest cap for each of the event's two binary books, in
-    /// contracts; `0` = uncapped. Applied per book, as
-    /// [`MarketConfig::max_open_interest`] is.
+    /// Open-interest cap for the event's binary book, in contracts; `0` =
+    /// uncapped, as [`MarketConfig::max_open_interest`] is.
     #[serde(default)]
     pub max_open_interest: u64,
 }
 
 /// Attach a conditional to an existing event: mints two conditional-perp
 /// books for `underlying_market` (CPY at `child_market_base+0`, CPN at
-/// `+1`) under the event's shared Yes/No binaries and appends an
+/// `+1`) under the event's shared binary book and appends an
 /// [`AttachedConditional`] to the event's list. The event must be
 /// `Trading`, the underlying must exist with `kind = Perp` and not already
 /// be attached, both child ids must be free, and `mm_bps` must be at least
@@ -3314,12 +3312,11 @@ pub enum Event {
         maker_fee_bps: u32,
         signer: Option<[u8; 20]>,
     },
-    /// A standalone event was created: two prediction-binary books under a
+    /// A standalone event was created: one prediction-binary book under a
     /// new [`EventInfo`], no underlying perp.
     EventCreated {
         event_id: EventId,
         eby_market: MarketId,
-        ebn_market: MarketId,
         question: String,
         settlement_ms: u64,
         resolution_window_ms: u64,

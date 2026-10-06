@@ -102,7 +102,7 @@ name = "proof-wire"
 # bytes of the old shape no longer decode -> MAJOR. Additive in the same
 # jump: ExecError::WithdrawalLimitExceeded takes code 99 and
 # ExecError::AccountOrderCapReached takes code 100.
-version = "5.0.0"
+version = "6.0.0"
 edition = "2021"
 
 [dependencies]

@@ -2433,7 +2433,6 @@ mod tests {
         let record = EventInfo {
             event_id: EventId(7),
             eby_market: 700,
-            ebn_market: 701,
             question: "q".to_owned(),
             settlement_ms: 1_000,
             resolution_window_ms: 10,
@@ -2456,7 +2455,7 @@ mod tests {
             (
                 "event record",
                 rmp_serde::to_vec(&record).expect("event record serializes"),
-                "9b07cd02bccd02bda171cd03e80aa754726164696e670500c0919301cd02becd02bf",
+                "9a07cd02bca171cd03e80aa754726164696e670500c0919301cd02becd02bf",
             ),
             (
                 "conditional-perp kind",
