@@ -4005,12 +4005,18 @@ pub enum OracleReason {
     SessionUnknown,
     SessionClosed,
     BadQuality,
+    /// No longer produced: since primary-with-fallback selection (DEC-219),
+    /// diverging sources refuse the primary and the fallback prices. Kept so
+    /// later variants keep their encoding.
     Disagreement,
     ReferenceUnavailable,
     MovementBound,
     MissingSource,
     ExpiredSource,
     OutsideSession,
+    /// No longer produced: since primary-with-fallback selection (DEC-219),
+    /// publication times too far apart only skip the divergence check. Kept
+    /// so later variants keep their encoding.
     PairTimeMismatch,
     RecoveryPending,
     Fresh,
