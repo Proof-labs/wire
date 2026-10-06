@@ -3973,6 +3973,21 @@ pub enum Event {
         side: Side,
         price: u64,
     },
+    /// An engine upgrade moved a position onto another book. A No position at
+    /// entry `e` is the opposite Yes position at `$1 − e` (`side`,
+    /// `entry_price`, `size`); netted against the account's Yes position, it
+    /// leaves the Yes position its own `PositionUpdated` or `PositionClosed`
+    /// reports. `cash_delta` is the cash the netting credited (positive) or
+    /// debited (negative), in micro-USDC.
+    PositionMigrated {
+        owner: [u8; 20],
+        from_market: MarketId,
+        to_market: MarketId,
+        side: Side,
+        entry_price: u64,
+        size: u64,
+        cash_delta: i64,
+    },
 }
 
 impl Event {
