@@ -102,6 +102,12 @@ name = "proof-wire"
 # bytes of the old shape no longer decode -> MAJOR. Additive in the same
 # jump: ExecError::WithdrawalLimitExceeded takes code 99 and
 # ExecError::AccountOrderCapReached takes code 100.
+#
+# 5.0.0 -> 6.0.0: BREAKING wire change. An event has one binary book:
+# EventInfo, EventCreated and CreateEvent lose the No book, so event records
+# and events of the old shape no longer decode -> MAJOR. Additive in the same
+# jump, for the upgrade that retires the No book: CancelReason::Upgrade, and
+# Event::OrderMigrated and Event::PositionMigrated as appended variants.
 version = "6.0.0"
 edition = "2021"
 
