@@ -31,7 +31,7 @@ pub type OrderId = u64;
 pub type MarketId = u32;
 /// Auto-incrementing fill identifier, unique across all trades.
 pub type FillId = u64;
-/// Identifier of an event: the root that owns two prediction-binary books
+/// Identifier of an event: the root that owns one prediction-binary book
 /// and every conditional attached to it.
 /// `#[serde(transparent)]`, so it encodes as a bare `u32`.
 #[derive(
@@ -56,7 +56,7 @@ pub const MARKET_BTC_USD_PERP: MarketId = 1;
 /// Maximum price (in micro-USDC) for a prediction-binary share. $1.00 = 1_000_000 µUSDC.
 pub const BINARY_PRICE_MAX: u64 = 1_000_000;
 
-/// Published size scale for prediction-binary books (EBY/EBN). Fixed at 2dp
+/// Published size scale for prediction-binary books (EBY). Fixed at 2dp
 /// (hundredths of a contract) rather than inheriting the underlying perp's
 /// scale — this matches the conditional-market convention on Kalshi (whole→2dp
 /// fixed-point contracts) and Polymarket (2 size-decimals). Conditional perps
@@ -66,7 +66,7 @@ pub const BINARY_PRICE_MAX: u64 = 1_000_000;
 /// `MarketConfig::sz_decimals` and `engine::size_scale`).
 pub const PREDICTION_BINARY_SZ_DECIMALS: u8 = 2;
 
-/// Size lot for prediction-binary books (EBY/EBN): one unit at the 2dp size
+/// Size lot for prediction-binary books (EBY): one unit at the 2dp size
 /// scale = 0.01 share. Derived from [`PREDICTION_BINARY_SZ_DECIMALS`], NOT
 /// inherited from the underlying perp (whose `lot_size` is tuned to its own
 /// asset scale — e.g. a BTC lot would force binary orders into whole-share
@@ -75,7 +75,7 @@ pub const PREDICTION_BINARY_SZ_DECIMALS: u8 = 2;
 /// not a display hint. Static so binaries never pick up a coarse underlying.
 pub const PREDICTION_BINARY_LOT_SIZE: u64 = 1;
 
-/// Price tick for prediction-binary books (EBY/EBN): 1 µUSDC ($0.000001).
+/// Price tick for prediction-binary books (EBY): 1 µUSDC ($0.000001).
 /// Binaries quote in µUSDC over `[0, BINARY_PRICE_MAX]`, so the tick is the
 /// µUSDC unit rather than the underlying perp's (price-scaled) tick. Like
 /// `lot_size`, `tick_size` is execution-relevant (`price % tick_size != 0` is
@@ -385,8 +385,8 @@ pub struct EventInfo {
 
 /// One conditional attached to an event: the underlying perpetual and the
 /// two conditional-perp books that trade it under the event's Yes and No
-/// branches. Every attachment on an event shares that event's two binary
-/// books.
+/// branches. Every attachment on an event shares that event's one binary
+/// book.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AttachedConditional {
     /// Underlying perpetual. Exists with `kind = Perp`.
@@ -1512,7 +1512,7 @@ pub struct MarketConfig {
     /// `publish_time_ms` is older than `block_time_ms -
     /// mark_price_max_oracle_age_ms` and returns `ExecError::StaleOracle`.
     ///
-    /// Skipped on impact-family markets (CPY/CPN/EBY/EBN) — those
+    /// Skipped on impact-family markets (CPY/CPN/EBY) — those
     /// mark off the book directly via the EWMA fallback and have no
     /// continuous oracle layer post the 2026-04-26 redesign.
     ///
@@ -2690,7 +2690,7 @@ pub struct AttachConditional {
 }
 
 /// Resolve an event. Cancels every resting order on its books, settles its
-/// two prediction-binary books to Yes or No, and settles every attached
+/// prediction-binary book to Yes or No, and settles every attached
 /// conditional pair in the same transaction: the winning book pays the cash
 /// difference to its underlying's oracle price, published at or after the
 /// event's settlement time, and each winning position then converts into a
@@ -4256,7 +4256,7 @@ pub enum ExecError {
         expected: u64,
         got: u64,
     },
-    /// Rejected `OracleUpdate` for an impact-family market (CPY/CPN/EBY/EBN).
+    /// Rejected `OracleUpdate` for an impact-family market (CPY/CPN/EBY).
     /// Per the no-oracle MTM redesign (2026-04-26), these markets mark
     /// off the book directly and have no oracle layer. The only oracle
     /// reading happens at resolution, against the underlying perp.
@@ -4854,7 +4854,7 @@ impl ExecError {
                  across same `underlying_market_id`)."
             }
             ExecError::OracleNotApplicable { .. } => {
-                "OracleUpdate targets an impact-family market (CPY/CPN/EBY/EBN), which marks off the book \
+                "OracleUpdate targets an impact-family market (CPY/CPN/EBY), which marks off the book \
                  and has no oracle layer."
             }
             ExecError::PostOnlyWouldCross => {
