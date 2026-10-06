@@ -3029,6 +3029,9 @@ pub enum CancelReason {
     Expired,
     AdminForce,
     Liquidation,
+    /// An engine upgrade removed the order's book and its converted order
+    /// would have crossed the book it moved to.
+    Upgrade,
 }
 
 impl fmt::Display for CancelReason {
@@ -3038,6 +3041,7 @@ impl fmt::Display for CancelReason {
             CancelReason::Expired => f.write_str("expired"),
             CancelReason::AdminForce => f.write_str("admin_force"),
             CancelReason::Liquidation => f.write_str("liquidation"),
+            CancelReason::Upgrade => f.write_str("upgrade"),
         }
     }
 }
@@ -3957,6 +3961,17 @@ pub enum Event {
         threshold: u16,
         operator_count: u32,
         proposal_id: u64,
+    },
+    /// An engine upgrade moved a resting order onto another book, keeping its
+    /// id, owner, quantity and queue priority. A No order at `q` rests on the
+    /// event's one book as the opposite side at `$1 − q`.
+    OrderMigrated {
+        order_id: OrderId,
+        owner: [u8; 20],
+        from_market: MarketId,
+        to_market: MarketId,
+        side: Side,
+        price: u64,
     },
 }
 
