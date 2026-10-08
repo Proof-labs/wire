@@ -3032,6 +3032,8 @@ pub enum CancelReason {
     /// An engine upgrade removed the order's book and its converted order
     /// would have crossed the book it moved to.
     Upgrade,
+    /// A resting reduce-only order no longer had a position to reduce.
+    ReduceOnly,
 }
 
 impl fmt::Display for CancelReason {
@@ -3042,6 +3044,7 @@ impl fmt::Display for CancelReason {
             CancelReason::AdminForce => f.write_str("admin_force"),
             CancelReason::Liquidation => f.write_str("liquidation"),
             CancelReason::Upgrade => f.write_str("upgrade"),
+            CancelReason::ReduceOnly => f.write_str("reduce_only"),
         }
     }
 }
