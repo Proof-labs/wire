@@ -38,6 +38,32 @@ impl core::fmt::Display for EventCoordinates {
     }
 }
 
+/// The block-level work an event group reports, written as the `phase`
+/// attribute on each of its events. The node joins every block-level group
+/// into one list, so this attribute is how a consumer tells them apart.
+/// Transaction events carry no phase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EventPhase {
+    /// What an engine upgrade's migration changed before this block.
+    Upgrade,
+    /// Work the block does on its own, such as triggers, funding and order
+    /// expiry.
+    System,
+}
+
+impl EventPhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upgrade => "upgrade",
+            Self::System => "system",
+        }
+    }
+
+    pub fn write_attr(self, writer: &mut AbciEventWriter) {
+        writer.write_attr("phase", self.as_str());
+    }
+}
+
 impl Default for AbciEventWriter {
     fn default() -> Self {
         Self::new()

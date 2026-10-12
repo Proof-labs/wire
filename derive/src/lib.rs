@@ -93,10 +93,14 @@ pub fn derive_abci_event(input: TokenStream) -> TokenStream {
 
             quote! {
                 #name::#vname { #(#field_names),* } => {
-                    let coordinate_attrs = u16::from(coordinates.is_some()) * 4;
-                    w.begin_event(#event_type, #attr_count + coordinate_attrs);
+                    let label_attrs =
+                        u16::from(coordinates.is_some()) * 4 + u16::from(phase.is_some());
+                    w.begin_event(#event_type, #attr_count + label_attrs);
                     if let Some(coordinates) = coordinates {
                         coordinates.write_attrs(w);
+                    }
+                    if let Some(phase) = phase {
+                        phase.write_attr(w);
                     }
                     #(#write_stmts)*
                 }
@@ -114,6 +118,15 @@ pub fn derive_abci_event(input: TokenStream) -> TokenStream {
                 &self,
                 w: &mut crate::abci_event::AbciEventWriter,
                 coordinates: Option<crate::abci_event::EventCoordinates>,
+            ) {
+                self.encode_abci_labelled(w, coordinates, None);
+            }
+
+            pub fn encode_abci_labelled(
+                &self,
+                w: &mut crate::abci_event::AbciEventWriter,
+                coordinates: Option<crate::abci_event::EventCoordinates>,
+                phase: Option<crate::abci_event::EventPhase>,
             ) {
                 match self {
                     #(#arms)*

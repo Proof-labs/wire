@@ -107,7 +107,9 @@ name = "proof-wire"
 # EventInfo, EventCreated and CreateEvent lose the No book, so event records
 # and events of the old shape no longer decode -> MAJOR. Additive in the same
 # jump, for the upgrade that retires the No book: CancelReason::Upgrade, and
-# Event::OrderMigrated and Event::PositionMigrated as appended variants.
+# Event::OrderMigrated and Event::PositionMigrated as appended variants, and
+# abci_event::EventPhase, the `phase` attribute that labels block-level events
+# (rendered by proof-wire-derive 1.2).
 version = "6.0.0"
 edition = "2021"
 
@@ -116,7 +118,7 @@ serde = { version = "1", features = ["derive"] }
 derive_more = { version = "1", features = ["from", "display"] }
 serde_bytes = "0.11"
 rmp-serde = "1"
-proof-wire-derive = { path = "derive", version = "1" }
+proof-wire-derive = { path = "derive", version = "1.2" }
 # No rand_core feature: the wire layer only verifies and deterministically
 # signs (SigningKey::from_bytes + sign) — nothing generates keys, so nothing
 # pulls getrandom, which would fail to build on wasm32-unknown-unknown.
