@@ -66,8 +66,8 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | shipped  |
-| 0x28 | `CreateSubAccount`                  | dormant behind sub-account activation gate |
-| 0x29 | `SubAccountTransfer`                | dormant behind sub-account activation gate |
+| 0x28 | `CreateSubAccount`                  | refused with code 90 until the governed `EnableSubAccounts` action executes |
+| 0x29 | `SubAccountTransfer`                | refused with code 90 until the governed `EnableSubAccounts` action executes |
 | 0x2A | `ReservedRt01`                      | reserved |
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
@@ -103,6 +103,7 @@ are not outer transaction action bytes.
 | 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
+| 0x15 | `EnableSubAccounts`                | governed; authorizes the sub-account actions (SA-1), one-way |
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =

@@ -780,8 +780,9 @@ mod tests {
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
         CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, PlaceOrder, RevokeAgent,
-        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, OwnerAddress, PlaceOrder,
+        RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw,
+        WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1039,7 +1040,7 @@ mod tests {
             ),
             (
                 Action::CreateSubAccount(CreateSubAccount {
-                    owner: [0xAA; 20],
+                    owner: OwnerAddress::new([0xAA; 20]),
                     sub_account_id: 42,
                     name: [0xBB; 32],
                 }),
@@ -1050,9 +1051,9 @@ mod tests {
             ),
             (
                 Action::SubAccountTransfer(SubAccountTransfer {
-                    owner: [0xCC; 20],
-                    from: [0xDD; 20],
-                    to: [0xEE; 20],
+                    owner: OwnerAddress::new([0xCC; 20]),
+                    from: OwnerAddress::new([0xDD; 20]),
+                    to: OwnerAddress::new([0xEE; 20]),
                     amount: 1_000_000,
                 }),
                 200,
@@ -1359,14 +1360,14 @@ mod tests {
                 signer: [0x33; 20],
             }),
             Action::CreateSubAccount(crate::types::CreateSubAccount {
-                owner: [0xAA; 20],
+                owner: OwnerAddress::new([0xAA; 20]),
                 sub_account_id: 42,
                 name: [0xBB; 32],
             }),
             Action::SubAccountTransfer(crate::types::SubAccountTransfer {
-                owner: [0xCC; 20],
-                from: [0xDD; 20],
-                to: [0xEE; 20],
+                owner: OwnerAddress::new([0xCC; 20]),
+                from: OwnerAddress::new([0xDD; 20]),
+                to: OwnerAddress::new([0xEE; 20]),
                 amount: 1_000_000,
             }),
         ]
@@ -2023,6 +2024,27 @@ mod tests {
         assert_eq!(AdminAction::UnpauseBridge.action_tag(), 0x06);
     }
 
+    /// The tag-21 `EnableSubAccounts` inner action. It carries no payload, so
+    /// its canonical bytes are the externally-tagged variant name alone — the
+    /// encoding is derived here from that name rather than typed in, and the
+    /// round-trip must be a fixed point because the content hash commits it.
+    #[test]
+    fn enable_sub_accounts_is_a_payload_free_wire_arm() {
+        let canonical = canonical_admin_action_bytes(&AdminAction::EnableSubAccounts).unwrap();
+        assert_eq!(
+            canonical,
+            rmp_serde::to_vec("EnableSubAccounts").unwrap(),
+            "the arm carries no payload: its canonical bytes are the variant name"
+        );
+        let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+        assert!(matches!(decoded, AdminAction::EnableSubAccounts));
+        assert_eq!(
+            re_encoded, canonical,
+            "canonical encoding must be a fixed point"
+        );
+        assert_eq!(AdminAction::EnableSubAccounts.action_tag(), 0x15);
+    }
+
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
@@ -2133,7 +2155,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 19] = [
+        const ALL_INNER_TAGS: [AdminActionType; 20] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2153,6 +2175,7 @@ mod tests {
             AdminActionType::ReservedRt01E,
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
+            AdminActionType::EnableSubAccounts,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2174,7 +2197,8 @@ mod tests {
                 | AdminActionType::ReservedRt01D
                 | AdminActionType::ReservedRt01E
                 | AdminActionType::SetWithdrawalLimit
-                | AdminActionType::SetOperatorReceiptRegistry => {}
+                | AdminActionType::SetOperatorReceiptRegistry
+                | AdminActionType::EnableSubAccounts => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket => {
@@ -3017,14 +3041,14 @@ mod tests {
                 signer: [0xFF; 20],
             }),
             Action::CreateSubAccount(CreateSubAccount {
-                owner: [0xFF; 20],
+                owner: OwnerAddress::new([0xFF; 20]),
                 sub_account_id: u32::MAX,
                 name: [0xFF; 32],
             }),
             Action::SubAccountTransfer(SubAccountTransfer {
-                owner: [0xFF; 20],
-                from: [0xFF; 20],
-                to: [0xFF; 20],
+                owner: OwnerAddress::new([0xFF; 20]),
+                from: OwnerAddress::new([0xFF; 20]),
+                to: OwnerAddress::new([0xFF; 20]),
                 amount: u64::MAX,
             }),
         ]
@@ -3111,14 +3135,14 @@ mod tests {
                 signer: [0u8; 20],
             }),
             Action::CreateSubAccount(CreateSubAccount {
-                owner: [0u8; 20],
+                owner: OwnerAddress::new([0u8; 20]),
                 sub_account_id: 0,
                 name: [0u8; 32],
             }),
             Action::SubAccountTransfer(SubAccountTransfer {
-                owner: [0u8; 20],
-                from: [0u8; 20],
-                to: [0u8; 20],
+                owner: OwnerAddress::new([0u8; 20]),
+                from: OwnerAddress::new([0u8; 20]),
+                to: OwnerAddress::new([0u8; 20]),
                 amount: 0,
             }),
         ]
@@ -3647,14 +3671,14 @@ mod tests {
                 agent_pubkey: [0xBB; 32],
             }),
             Action::CreateSubAccount(CreateSubAccount {
-                owner: [0xAA; 20],
+                owner: OwnerAddress::new([0xAA; 20]),
                 sub_account_id: 42,
                 name: [0xBB; 32],
             }),
             Action::SubAccountTransfer(SubAccountTransfer {
-                owner: [0xCC; 20],
-                from: [0xDD; 20],
-                to: [0xEE; 20],
+                owner: OwnerAddress::new([0xCC; 20]),
+                from: OwnerAddress::new([0xDD; 20]),
+                to: OwnerAddress::new([0xEE; 20]),
                 amount: 1_000_000,
             }),
         ];
@@ -4186,7 +4210,7 @@ mod tests {
     #[test]
     fn test_round_trip_create_sub_account() {
         let action = Action::CreateSubAccount(CreateSubAccount {
-            owner: [0xAA; 20],
+            owner: OwnerAddress::new([0xAA; 20]),
             sub_account_id: 42,
             name: [0xBB; 32],
         });
@@ -4196,9 +4220,9 @@ mod tests {
     #[test]
     fn test_round_trip_sub_account_transfer() {
         let action = Action::SubAccountTransfer(SubAccountTransfer {
-            owner: [0xCC; 20],
-            from: [0xDD; 20],
-            to: [0xEE; 20],
+            owner: OwnerAddress::new([0xCC; 20]),
+            from: OwnerAddress::new([0xDD; 20]),
+            to: OwnerAddress::new([0xEE; 20]),
             amount: 1_000_000,
         });
         assert_round_trip(&action, 200);
@@ -4219,15 +4243,15 @@ mod tests {
         use crate::types::Event;
 
         let created = Event::SubAccountCreated {
-            owner: [0xAA; 20],
+            owner: OwnerAddress::new([0xAA; 20]),
             sub_account_id: 42,
-            address: [0xBB; 20],
+            address: OwnerAddress::new([0xBB; 20]),
             name: [0xCC; 32],
         };
         let transferred = Event::SubAccountTransferCompleted {
-            owner: [0xDD; 20],
-            from: [0xEE; 20],
-            to: [0xFF; 20],
+            owner: OwnerAddress::new([0xDD; 20]),
+            from: OwnerAddress::new([0xEE; 20]),
+            to: OwnerAddress::new([0xFF; 20]),
             amount: u64::MAX,
         };
 
@@ -4276,9 +4300,9 @@ mod tests {
     #[test]
     fn sub_account_record_preserves_creation_height() {
         let record = SubAccount {
-            master: [0xAA; 20],
+            master: OwnerAddress::new([0xAA; 20]),
             sub_account_id: 42,
-            address: [0xBB; 20],
+            address: OwnerAddress::new([0xBB; 20]),
             name: [0xCC; 32],
             created_height: u64::MAX,
         };

@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha3::{Digest, Keccak256};
 
-use crate::types::ExecError;
+use crate::types::{ExecError, OwnerAddress};
 
 /// Domain separator for v3 signing messages. Bumped from v2 when the
 /// envelope gained a 32-byte `chain_id` binding: v2 had no chain ID,
@@ -41,15 +41,15 @@ pub const SUB_ACCOUNT_DERIVATION_DOMAIN: &[u8] = b"ProofExchange-sub-account-v1"
 /// them, so only the engine's transfer semantics can move their funds. The
 /// instantiation is frozen; changing it changes every derived address and
 /// requires a new domain string.
-pub fn derive_sub_account(master: &[u8; 20], sub_account_id: u32) -> [u8; 20] {
+pub fn derive_sub_account(master: &OwnerAddress, sub_account_id: u32) -> OwnerAddress {
     let mut preimage = Vec::with_capacity(SUB_ACCOUNT_DERIVATION_DOMAIN.len().saturating_add(24));
     preimage.extend_from_slice(SUB_ACCOUNT_DERIVATION_DOMAIN);
-    preimage.extend_from_slice(master);
+    preimage.extend_from_slice(master.as_bytes());
     preimage.extend_from_slice(&sub_account_id.to_be_bytes());
     let hash = Keccak256::digest(&preimage);
     let mut out = [0u8; 20];
     out.copy_from_slice(&hash[..20]);
-    out
+    OwnerAddress::new(out)
 }
 
 /// Hash a CometBFT chain_id string into the 32-byte form used in the
@@ -262,8 +262,12 @@ mod tests {
             ),
         ];
         for (master, sub_account_id, expected) in vectors {
-            let derived = derive_sub_account(master, sub_account_id);
-            let hex: String = derived.iter().map(|byte| format!("{byte:02x}")).collect();
+            let derived = derive_sub_account(&OwnerAddress::new(*master), sub_account_id);
+            let hex: String = derived
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
             assert_eq!(
                 hex, expected,
                 "frozen sub-account derivation vector changed for \
@@ -283,9 +287,11 @@ mod tests {
             (&[0x00; 20], 2),
             (&[0x42; 20], u32::MAX),
         ];
-        let frozen: Vec<[u8; 20]> = cases
+        let frozen: Vec<OwnerAddress> = cases
             .iter()
-            .map(|(master, sub_account_id)| derive_sub_account(master, *sub_account_id))
+            .map(|(master, sub_account_id)| {
+                derive_sub_account(&OwnerAddress::new(**master), *sub_account_id)
+            })
             .collect();
 
         for domain in [
@@ -303,7 +309,7 @@ mod tests {
                 let mut other = [0u8; 20];
                 other.copy_from_slice(&hash[..20]);
                 assert!(
-                    !frozen.contains(&other),
+                    !frozen.contains(&OwnerAddress::new(other)),
                     "domain {domain:?} reproduced a frozen sub-account address"
                 );
             }

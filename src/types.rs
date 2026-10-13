@@ -469,6 +469,65 @@ pub struct SignerAddress(pub [u8; 20]);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AccountAddress(pub [u8; 20]);
 
+/// The owner of a trading account: an account address. A sub-account's master
+/// and its derived children are both owner addresses. Distinct from
+/// [`AccountAddress`] (an admin-action target) and [`SignerAddress`] (a
+/// governance roster member) so the three cannot be swapped at a call site.
+///
+/// The 20 bytes are private to the encodings here and in [`crate::crypto`];
+/// every other module goes through [`OwnerAddress::as_bytes`] so no caller
+/// re-derives the layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct OwnerAddress([u8; 20]);
+
+impl OwnerAddress {
+    pub const fn new(bytes: [u8; 20]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw 20 bytes, for the engine's state keys and signature preimages.
+    /// The single accessor callers use instead of touching the layout.
+    pub const fn as_bytes(&self) -> &[u8; 20] {
+        &self.0
+    }
+
+    pub const fn into_bytes(self) -> [u8; 20] {
+        self.0
+    }
+
+    /// Read an address out of a storage key's 20-byte address segment. The
+    /// extraction lives with the type so no key reader re-implements the
+    /// layout; a segment of the wrong length is `None`, never a truncation.
+    pub fn from_key_segment(segment: &[u8]) -> Option<Self> {
+        <[u8; 20]>::try_from(segment).ok().map(Self)
+    }
+}
+
+impl Serialize for OwnerAddress {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::wire_bytes::serialize(&self.0, serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for OwnerAddress {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self(crate::wire_bytes::deserialize(deserializer)?))
+    }
+}
+
+/// Lowercase hex, the canonical string form the ABCI event writer emits for a
+/// byte array. The `AbciEvent` derive renders a non-array field through
+/// `Display`, so this keeps an owner attribute byte-identical to a raw
+/// `[u8; 20]` field's.
+impl core::fmt::Display for OwnerAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
 /// Number of member approvals required to execute an admin proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SignatureThreshold(pub u32);
@@ -735,6 +794,12 @@ pub enum AdminAction {
     /// rewrite. The genesis parse seeds the first registry; this action is
     /// the live-rotation path.
     SetOperatorReceiptRegistry(SetOperatorReceiptRegistry),
+    /// Governance authorization to create and fund master-owned sub-accounts
+    /// (`CreateSubAccount`, `SubAccountTransfer`). Carries no payload: the
+    /// quorum-executed proposal is itself the authorization. One-way — there
+    /// is no disable arm, because a registry that stops admitting transfers
+    /// would strand capital in a child whose only mover is its master.
+    EnableSubAccounts,
 }
 
 /// Payload of [`AdminAction::SetOperatorReceiptRegistry`]: the operator
@@ -973,6 +1038,9 @@ pub enum AdminActionType {
     SetWithdrawalLimit = 19,
     /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112).
     SetOperatorReceiptRegistry = 20,
+    /// Authorizes the sub-account actions (SA-1). Governed like
+    /// `UnpauseBridge`: no payload, the quorum execution is the effect.
+    EnableSubAccounts = 21,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01D = 17,
     /// Reserved by RT-01: discriminant only, no behaviour.
@@ -999,6 +1067,7 @@ impl AdminAction {
             Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
             Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
+            Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
         }
     }
 
@@ -2584,8 +2653,7 @@ pub struct RevokeAgent {
 /// via `derive_sub_account(owner, sub_account_id)`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CreateSubAccount {
-    #[serde(with = "crate::wire_bytes")]
-    pub owner: [u8; 20],
+    pub owner: OwnerAddress,
     pub sub_account_id: u32,
     #[serde(with = "crate::wire_bytes")]
     pub name: [u8; 32],
@@ -2596,23 +2664,18 @@ pub struct CreateSubAccount {
 /// must pass the maintenance-margin solvency check.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubAccountTransfer {
-    #[serde(with = "crate::wire_bytes")]
-    pub owner: [u8; 20],
-    #[serde(with = "crate::wire_bytes")]
-    pub from: [u8; 20],
-    #[serde(with = "crate::wire_bytes")]
-    pub to: [u8; 20],
+    pub owner: OwnerAddress,
+    pub from: OwnerAddress,
+    pub to: OwnerAddress,
     pub amount: u64,
 }
 
 /// Registry row for a sub-account.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubAccount {
-    #[serde(with = "crate::wire_bytes")]
-    pub master: [u8; 20],
+    pub master: OwnerAddress,
     pub sub_account_id: u32,
-    #[serde(with = "crate::wire_bytes")]
-    pub address: [u8; 20],
+    pub address: OwnerAddress,
     #[serde(with = "crate::wire_bytes")]
     pub name: [u8; 32],
     pub created_height: u64,
@@ -3910,15 +3973,15 @@ pub enum Event {
         previous_reason: String,
     },
     SubAccountCreated {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         sub_account_id: u32,
-        address: [u8; 20],
+        address: OwnerAddress,
         name: [u8; 32],
     },
     SubAccountTransferCompleted {
-        owner: [u8; 20],
-        from: [u8; 20],
-        to: [u8; 20],
+        owner: OwnerAddress,
+        from: OwnerAddress,
+        to: OwnerAddress,
         amount: u64,
     },
     /// Bracket attached to a not-yet-filled order (pre-fill trigger).
@@ -3996,6 +4059,10 @@ pub enum Event {
         size: u64,
         cash_delta: i64,
     },
+    /// The admin quorum authorized the sub-account actions (SA-1): every
+    /// block from this one admits `CreateSubAccount` and
+    /// `SubAccountTransfer`.
+    SubAccountsEnabled { proposal_id: u64 },
 }
 
 impl Event {
@@ -4461,9 +4528,9 @@ pub enum ExecError {
     SubAccountIdZero,
     /// Transfer rejected: the amount must be greater than zero.
     SubAccountTransferZeroAmount,
-    /// Sub-account actions are decoded by this wire version but the chain
-    /// has not enabled them yet: the SA-1 handlers land behind a parked
-    /// activation, so pre-activation submissions reject closed.
+    /// Sub-account actions are decoded by this wire version but the chain has
+    /// not authorized them: the governed `EnableSubAccounts` proposal has not
+    /// executed, so submissions reject closed and write nothing.
     SubAccountsInactive,
     /// A live Solana payout lease on this withdrawal is held by a different
     /// watcher, so this `ClaimWithdrawalPayout` is rejected. Fail-closed:
@@ -4796,7 +4863,7 @@ impl ExecError {
                 "Sub-account transfer amount must be greater than zero."
             }
             ExecError::SubAccountsInactive => {
-                "Sub-account actions are not enabled on this chain yet; the handlers land behind a parked activation."
+                "Sub-account actions are not enabled on this chain; the governed EnableSubAccounts action admits them."
             }
             ExecError::InternalError(_) => {
                 "Catch-all for unexpected runtime failures (panics caught by the FFI boundary, etc.). \
@@ -5408,9 +5475,9 @@ mod tests {
             reduce_only: false,
         };
         let sub_transfer = Event::SubAccountTransferCompleted {
-            owner: [0x01; 20],
-            from: [0x01; 20],
-            to: [0x02; 20],
+            owner: OwnerAddress::new([0x01; 20]),
+            from: OwnerAddress::new([0x01; 20]),
+            to: OwnerAddress::new([0x02; 20]),
             amount: 500,
         };
 
@@ -5646,6 +5713,38 @@ mod tests {
             }
             assert_eq!(reason.to_string(), display);
         }
+    }
+
+    /// `OwnerAddress` reaches the derive through `Display` rather than the
+    /// byte-array hex path, so pin the two: the encoded event must be
+    /// byte-identical to what the same field wrote as a raw `[u8; 20]`, or
+    /// every indexer reading sub-account events sees a new format.
+    #[test]
+    fn owner_address_renders_what_a_raw_byte_array_field_writes() {
+        use crate::abci_event::AbciEventWriter;
+
+        let owner = OwnerAddress::new([0xA5; 20]);
+        let mut writer = AbciEventWriter::new();
+        Event::SubAccountCreated {
+            owner,
+            sub_account_id: 3,
+            address: owner,
+            name: [0u8; 32],
+        }
+        .encode_abci(&mut writer);
+
+        let mut expected = AbciEventWriter::new();
+        expected.begin_event("sub_account_created", 4);
+        expected.write_attr_hex("owner", &[0xA5; 20]);
+        expected.write_attr_u64("sub_account_id", 3);
+        expected.write_attr_hex("address", &[0xA5; 20]);
+        expected.write_attr_hex("name", &[0u8; 32]);
+
+        assert_eq!(
+            writer.into_vec(),
+            expected.into_vec(),
+            "an OwnerAddress field must write the bytes a raw byte-array field writes"
+        );
     }
 
     /// The ABCI attribute rendering of the appended variants stays

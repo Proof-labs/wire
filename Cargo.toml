@@ -110,7 +110,13 @@ name = "proof-wire"
 # Event::OrderMigrated and Event::PositionMigrated as appended variants, and
 # abci_event::EventPhase, the `phase` attribute that labels block-level events
 # (rendered by proof-wire-derive 1.2).
-version = "6.0.0"
+#
+# 6.0.0 -> 6.1.0: additive wire change (SA-1). New
+# AdminAction::EnableSubAccounts (inner tag 0x15) and
+# Event::SubAccountsEnabled authorize the sub-account actions at quorum
+# instead of through a compiled activation height. No new outer action bytes and
+# no new ExecError codes. Pre-existing bytes still decode unchanged -> MINOR.
+version = "6.1.0"
 edition = "2021"
 
 [dependencies]
