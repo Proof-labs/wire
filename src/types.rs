@@ -1889,6 +1889,24 @@ pub struct LiquidateAccounts {
     pub owners: Vec<[u8; 20]>,
 }
 
+pub const MAX_EXECUTE_TRIGGERS: usize = 256;
+
+/// One position bracket, addressed by its position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TriggerRef {
+    pub owner: [u8; 20],
+    pub market: MarketId,
+}
+
+/// Proposer-injected trigger candidates. UNSIGNED internal action with the
+/// same ingress rules as [`LiquidateAccounts`]: it carries no authority, and
+/// each listed bracket fires only if its condition holds against the block's
+/// mark. The list is strictly sorted and at most [`MAX_EXECUTE_TRIGGERS`] long.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecuteTriggers {
+    pub triggers: Vec<TriggerRef>,
+}
+
 /// Test/admin action — force-runs a funding tick on one market.
 /// See `Action::RunFundingTick` for rationale.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -5408,19 +5426,19 @@ pub mod prelude {
         BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelOrder, CancelReason,
         CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit,
         ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
-        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, FailDeposit,
-        FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason, LiquidateAccounts,
-        MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder,
-        OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason,
-        OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome, PendingTriggerDiscardReason,
-        PlaceOrder, Position, ResolveEvent, RevokeAgent, RunFundingTick, SetAccountFeeOverride,
-        SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer, TimeInForce, TxContext,
-        UpdateMarketFees, Withdraw, WithdrawRequest, WithdrawalPayoutLease,
-        WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX,
-        DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
-        DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
-        MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
-        PREDICTION_BINARY_TICK_SIZE,
+        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers,
+        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
+        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards,
+        MarketOrder, OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry,
+        OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome,
+        PendingTriggerDiscardReason, PlaceOrder, Position, ResolveEvent, RevokeAgent,
+        RunFundingTick, SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount,
+        SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw,
+        WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar, WithdrawalRecord,
+        WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
+        DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
+        DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
+        PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,
     };
 }
 

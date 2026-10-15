@@ -197,6 +197,7 @@ define_actions! {
     // may hold the lease on a `Pending` withdrawal, so an active/active
     // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
+    ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -220,8 +221,6 @@ pub enum BlockPhase {
 }
 
 /// Classify one semantic action into the approved trigger-era block spine.
-/// Scheduled trigger-configuration transitions, mark freezing, and the
-/// trigger sweep are internal Rust phases and therefore have no wire action.
 pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
     match action_type {
         ActionType::OracleUpdate
@@ -245,7 +244,8 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::CancelClientOrder
         | ActionType::CancelAllOrders
         | ActionType::SetPositionTriggers
-        | ActionType::CancelPositionTriggers => BlockPhase::TriggerManagement,
+        | ActionType::CancelPositionTriggers
+        | ActionType::ExecuteTriggers => BlockPhase::TriggerManagement,
         ActionType::PlaceOrder
         | ActionType::MarketOrder
         | ActionType::Withdraw
@@ -535,6 +535,32 @@ pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, Ex
     )
 }
 
+/// Encode the proposer-injected internal `ExecuteTriggers` action in its
+/// canonical unsigned form, under the same rules as
+/// [`encode_liquidate_accounts_tx`].
+pub fn encode_execute_triggers_tx(
+    triggers: Vec<crate::types::TriggerRef>,
+) -> Result<Vec<u8>, ExecError> {
+    if triggers.len() > crate::types::MAX_EXECUTE_TRIGGERS {
+        return Err(ExecError::DecodeError(format!(
+            "ExecuteTriggers count {} exceeds maximum {}",
+            triggers.len(),
+            crate::types::MAX_EXECUTE_TRIGGERS
+        )));
+    }
+    if triggers.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(ExecError::DecodeError(
+            "ExecuteTriggers entries must be strictly sorted and unique".to_string(),
+        ));
+    }
+    encode_signed_tx(
+        &Action::ExecuteTriggers(crate::types::ExecuteTriggers { triggers }),
+        0,
+        &[0u8; 32],
+        &[0u8; 64],
+    )
+}
+
 /// Sign an action and encode it as a wire envelope, binding the
 /// signature to a specific `chain_id`. The signing bytes carry a 32-byte
 /// chain_id prefix; `chain_id` is established by genesis / snapshot-load,
@@ -722,6 +748,7 @@ pub fn canonical_action_type(bytes: &[u8]) -> Option<ActionType> {
     let decoded = decode_tx(bytes).ok()?;
     let canonical = match &decoded.action {
         Action::LiquidateAccounts(cmd) => encode_liquidate_accounts_tx(cmd.owners.clone()).ok()?,
+        Action::ExecuteTriggers(cmd) => encode_execute_triggers_tx(cmd.triggers.clone()).ok()?,
         _ => encode_signed_tx(
             &decoded.action,
             decoded.seq,
@@ -3477,6 +3504,7 @@ mod tests {
                 ActionType::CancelPositionTriggers,
                 BlockPhase::TriggerManagement,
             ),
+            (ActionType::ExecuteTriggers, BlockPhase::TriggerManagement),
             (ActionType::ResolveEvent, BlockPhase::Ordinary),
             (ActionType::CreateSubAccount, BlockPhase::Ordinary),
             (ActionType::SubAccountTransfer, BlockPhase::Ordinary),
@@ -4141,6 +4169,24 @@ mod tests {
             // Must not panic
             let _ = decode_tx(&garbage);
         }
+    }
+
+    #[test]
+    fn execute_triggers_wire_vector_is_pinned() {
+        // exchange-node/execute_triggers_test.go pins the same bytes.
+        let tx = encode_execute_triggers_tx(vec![crate::types::TriggerRef {
+            owner: [0x01; 20],
+            market: 7,
+        }])
+        .unwrap();
+        assert_eq!(
+            canonical_action_type(&tx),
+            Some(ActionType::ExecuteTriggers)
+        );
+        assert_eq!(
+            hex::encode(&tx),
+            "96022f00c41b919192dc0014010101010101010101010101010101010101010107c4200000000000000000000000000000000000000000000000000000000000000000c44000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        );
     }
 
     #[test]
