@@ -3866,6 +3866,10 @@ pub enum Event {
     /// application at `effective_height`. The complete replacement is evented
     /// so operators can audit the scheduled transition without interpreting
     /// proposal bytes. This event does not mean the policy is effective yet.
+    ///
+    /// Deprecated: the action that scheduled it is retired (DEC-255) and the
+    /// engine never constructs this. The variant stays so historical blocks
+    /// decode.
     TriggerMarketConfigScheduled {
         market: MarketId,
         version: u64,
@@ -3879,6 +3883,9 @@ pub enum Event {
     },
     /// A previously scheduled trigger-market policy became effective at this
     /// block's automatic pre-transaction configuration phase.
+    ///
+    /// Deprecated: the engine never constructs this (DEC-255). The variant
+    /// stays so historical blocks decode.
     TriggerMarketConfigActivated {
         market: MarketId,
         version: u64,
