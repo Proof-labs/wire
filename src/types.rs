@@ -477,6 +477,10 @@ pub struct AccountAddress(pub [u8; 20]);
 /// The 20 bytes are private to the encodings here and in [`crate::crypto`];
 /// every other module goes through [`OwnerAddress::as_bytes`] so no caller
 /// re-derives the layout.
+///
+/// Deliberately no `From<[u8; 20]>`: the raw-to-typed wrap must stay a
+/// visible `OwnerAddress::new` call at the exact ingress that first learns
+/// the address, so a reviewer can grep every place bytes become an owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct OwnerAddress([u8; 20]);
 
@@ -1894,7 +1898,7 @@ pub const MAX_EXECUTE_TRIGGERS: usize = 256;
 /// One position bracket, addressed by its position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TriggerRef {
-    pub owner: [u8; 20],
+    pub owner: OwnerAddress,
     pub market: MarketId,
 }
 
@@ -3888,7 +3892,7 @@ pub enum Event {
     /// A whole-position protection bracket was installed or atomically
     /// replaced. Zero client/limb ids mean the optional field was absent.
     PositionTriggersSet {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
@@ -3914,7 +3918,7 @@ pub enum Event {
     },
     /// A position close or side flip invalidated both linked limbs.
     PositionTriggersInvalidated {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
@@ -3927,7 +3931,7 @@ pub enum Event {
     /// A crossed limb passed authoritative snapshot/account validation and
     /// began its one bounded reduce-only IOC-limit attempt.
     PositionTriggerActivated {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
@@ -3945,7 +3949,7 @@ pub enum Event {
     },
     /// Terminal result of the activated limb's single bounded attempt.
     PositionTriggerExecuted {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
@@ -3969,7 +3973,7 @@ pub enum Event {
     /// A crossed limb could not be attempted this block and stays armed.
     /// Emitted on every attempt while it stays blocked.
     PositionTriggerDeferred {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         position_epoch: u64,
         group_id: u64,
@@ -4004,7 +4008,7 @@ pub enum Event {
     },
     /// Bracket attached to a not-yet-filled order (pre-fill trigger).
     PendingTriggersAttached {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         order_id: u64,
         /// Client-assigned order id. `0` means absent.
@@ -4016,7 +4020,7 @@ pub enum Event {
     /// fill, or install refused at fill time). Promotion emits
     /// `PositionTriggersSet`, not this.
     PendingTriggersDiscarded {
-        owner: [u8; 20],
+        owner: OwnerAddress,
         market: MarketId,
         order_id: u64,
         reason: PendingTriggerDiscardReason,
@@ -5467,7 +5471,7 @@ mod tests {
     #[test]
     fn pending_trigger_events_round_trip_in_mixed_streams() {
         let attached = Event::PendingTriggersAttached {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             order_id: 5,
             client_order_id: 77,
@@ -5475,7 +5479,7 @@ mod tests {
             take_profit: Some(sample_limb(110_000, 50, 12)),
         };
         let discarded = Event::PendingTriggersDiscarded {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             order_id: 5,
             reason: PendingTriggerDiscardReason::InstallRejected,
@@ -5536,7 +5540,7 @@ mod tests {
     #[test]
     fn pending_triggers_attached_nil_limbs_round_trip() {
         let event = Event::PendingTriggersAttached {
-            owner: [0x11; 20],
+            owner: OwnerAddress::new([0x11; 20]),
             market: 1,
             order_id: 9,
             client_order_id: 0,
@@ -5585,7 +5589,7 @@ mod tests {
     #[test]
     fn invalidation_reason_defaults_to_zero_on_old_bytes() {
         let event = Event::PositionTriggersInvalidated {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             position_epoch: 3,
             group_id: 9,
@@ -5603,7 +5607,7 @@ mod tests {
                 group_id,
                 invalidation_reason,
             } => {
-                assert_eq!(owner, [0xA5; 20]);
+                assert_eq!(owner, OwnerAddress::new([0xA5; 20]));
                 assert_eq!(market, 7);
                 assert_eq!(position_epoch, 3);
                 assert_eq!(group_id, 9);
@@ -5622,7 +5626,7 @@ mod tests {
     #[test]
     fn source_order_id_defaults_and_round_trips() {
         let make = |source_order_id| Event::PositionTriggersSet {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             position_epoch: 3,
             group_id: 9,
@@ -5676,7 +5680,7 @@ mod tests {
     fn invalidation_reason_values_round_trip() {
         for reason in [1u8, 2, 3] {
             let event = Event::PositionTriggersInvalidated {
-                owner: [0x07; 20],
+                owner: OwnerAddress::new([0x07; 20]),
                 market: 2,
                 position_epoch: 1,
                 group_id: 4,
@@ -5718,7 +5722,7 @@ mod tests {
         ];
         for (reason, display) in cases {
             let event = Event::PendingTriggersDiscarded {
-                owner: [0x03; 20],
+                owner: OwnerAddress::new([0x03; 20]),
                 market: 5,
                 order_id: 8,
                 reason,
@@ -5771,7 +5775,7 @@ mod tests {
     #[test]
     fn pending_trigger_events_render_abci_attributes() {
         let attached_some = Event::PendingTriggersAttached {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             order_id: 5,
             client_order_id: 77,
@@ -5793,7 +5797,7 @@ mod tests {
         );
 
         let attached_none = Event::PendingTriggersAttached {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             order_id: 5,
             client_order_id: 0,
@@ -5814,7 +5818,7 @@ mod tests {
         );
 
         let discarded = Event::PendingTriggersDiscarded {
-            owner: [0xA5; 20],
+            owner: OwnerAddress::new([0xA5; 20]),
             market: 7,
             order_id: 5,
             reason: PendingTriggerDiscardReason::OrderCancelled,

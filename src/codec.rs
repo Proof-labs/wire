@@ -4175,7 +4175,7 @@ mod tests {
     fn execute_triggers_wire_vector_is_pinned() {
         // exchange-node/execute_triggers_test.go pins the same bytes.
         let tx = encode_execute_triggers_tx(vec![crate::types::TriggerRef {
-            owner: [0x01; 20],
+            owner: crate::types::OwnerAddress::new([0x01; 20]),
             market: 7,
         }])
         .unwrap();
