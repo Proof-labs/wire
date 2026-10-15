@@ -116,7 +116,17 @@ name = "proof-wire"
 # Event::SubAccountsEnabled authorize the sub-account actions at quorum
 # instead of through a compiled activation height. No new outer action bytes and
 # no new ExecError codes. Pre-existing bytes still decode unchanged -> MINOR.
-version = "6.1.0"
+#
+# 6.1.0 -> 6.2.0: additive wire change (triggers as ordinary orders). New
+# proposer-injected outer action ExecuteTriggers at 0x2F carrying a sorted,
+# deduplicated Vec<TriggerRef> (owner, market), capped at
+# MAX_EXECUTE_TRIGGERS; rejected from the mempool on every ingress route like
+# LiquidateAccounts (0x1D). TriggerOutcomeReason gains the order-path outcomes
+# market_closed and engine_fault, and Event::PositionTriggerDeferred is now
+# emitted once per attempt while a limb stays blocked rather than once per
+# market transition. No existing action bytes, event tags or ExecError codes
+# change; pre-existing bytes still decode unchanged -> MINOR.
+version = "6.2.0"
 edition = "2021"
 
 [dependencies]
