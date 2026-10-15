@@ -3966,8 +3966,8 @@ pub enum Event {
         /// Empty when the terminal result has no additional reason.
         reason: String,
     },
-    /// Account-level evaluation deferred this crossed limb. Repeated equal
-    /// reasons are suppressed by the lifecycle repository.
+    /// A crossed limb could not be attempted this block and stays armed.
+    /// Emitted on every attempt while it stays blocked.
     PositionTriggerDeferred {
         owner: [u8; 20],
         market: MarketId,
