@@ -97,6 +97,48 @@ fn legacy_summary_decodes_as_a_market_order() {
 }
 
 #[test]
+fn trade_executed_appends_its_new_attributes() {
+    let event = Event::TradeExecuted {
+        fill_id: 1,
+        market: 7,
+        price: 100,
+        quantity: 2,
+        maker_order_id: 3,
+        maker_client_order_id: 0,
+        maker_owner: OWNER,
+        maker_side: Side::Sell,
+        taker_order_id: 4,
+        taker_owner: OWNER,
+        taker_client_order_id: 0,
+        taker_fee: 1,
+        maker_fee: -1,
+        mark_price: Some(1_234),
+        oracle_price: None,
+    };
+    let mut rendered = AbciEventWriter::new();
+    event.encode_abci(&mut rendered);
+
+    let mut expected = AbciEventWriter::new();
+    expected.begin_event("trade_executed", 15);
+    expected.write_attr_u64("fill_id", 1);
+    expected.write_attr_u64("market", 7);
+    expected.write_attr_u64("price", 100);
+    expected.write_attr_u64("quantity", 2);
+    expected.write_attr_u64("maker_order_id", 3);
+    expected.write_attr_u64("maker_client_order_id", 0);
+    expected.write_attr_hex("maker_owner", &OWNER);
+    expected.write_attr_display("maker_side", &Side::Sell);
+    expected.write_attr_u64("taker_order_id", 4);
+    expected.write_attr_hex("taker_owner", &OWNER);
+    expected.write_attr_u64("taker_client_order_id", 0);
+    expected.write_attr_display("taker_fee", &1_i64);
+    expected.write_attr_display("maker_fee", &-1_i64);
+    expected.write_attr_display("mark_price", &1_234_u64);
+    expected.write_attr("oracle_price", "");
+    assert_eq!(rendered.into_vec(), expected.into_vec());
+}
+
+#[test]
 fn summary_appends_its_new_attributes() {
     let event = Event::MarketOrderProcessed {
         order_id: 4,

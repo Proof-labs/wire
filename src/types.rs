@@ -3292,6 +3292,7 @@ pub enum Event {
         /// Mark price in force when the taker crossed, before this fill.
         #[serde(default)]
         mark_price: Option<u64>,
+        /// Stored oracle price at the fill; not freshness-gated.
         #[serde(default)]
         oracle_price: Option<u64>,
     },
