@@ -169,6 +169,10 @@ required-features = ["full"]
 name = "conditional_settled_conversion"
 required-features = ["full"]
 
+[[test]]
+name = "order_reporting_events"
+required-features = ["full"]
+
 [dev-dependencies]
 hex = "0.4"
 serde_json = "1"
