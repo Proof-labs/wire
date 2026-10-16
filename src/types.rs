@@ -1238,6 +1238,13 @@ pub enum TimeInForce {
     Fok = 2,
 }
 
+impl TimeInForce {
+    /// The time in force of a market order or position close.
+    pub const fn immediate() -> Self {
+        Self::Ioc
+    }
+}
+
 impl core::fmt::Display for TimeInForce {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -3280,6 +3287,11 @@ pub enum Event {
         taker_fee: i64,
         /// Maker fee in micro-USDC (positive = charged, negative = rebate).
         maker_fee: i64,
+        /// Mark price when the fill is recorded, before the fill moves it.
+        #[serde(default)]
+        mark_price: Option<u64>,
+        #[serde(default)]
+        oracle_price: Option<u64>,
     },
     FeesCollected {
         market: MarketId,
@@ -3699,24 +3711,17 @@ pub enum Event {
         equity: i64,
         maintenance_margin: u64,
     },
-    /// Emitted exactly once at the end of every market-order tx that passes
-    /// envelope checks, regardless of how many fills happened.
+    /// Emitted once for every accepted order that never rests: a market
+    /// order, a position close, or an IOC or FOK limit order. Any unfilled
+    /// remainder is dropped.
     ///
-    /// Market orders use IOC semantics — any unfilled remainder is silently
-    /// dropped. Without this event, callers would have to count downstream
-    /// `TradeExecuted` events to learn whether a market order actually moved
-    /// any quantity, and could not distinguish "no counterparty" from "fully
-    /// filled and the trade events arrived in a different stream view".
-    ///
-    /// Off-chain monitors and SDKs should treat this as the authoritative
-    /// "did my market order do anything?" signal:
     ///   - `filled_quantity == requested_quantity` → fully filled
     ///   - `0 < filled_quantity < requested_quantity` → partial fill, rest dropped
     ///   - `filled_quantity == 0` → no counterparty (or all counterparties were
     ///     the taker themselves and got rejected by self-match prevention)
     MarketOrderProcessed {
-        /// Engine-assigned id of this market order, referenceable in fills
-        /// and order history.
+        /// Engine-assigned id of this order, referenceable in fills and
+        /// order history.
         order_id: OrderId,
         market: MarketId,
         owner: [u8; 20],
@@ -3725,6 +3730,11 @@ pub enum Event {
         filled_quantity: u64,
         /// Client-assigned order id. `0` means absent.
         client_order_id: u64,
+        #[serde(default = "TimeInForce::immediate")]
+        time_in_force: TimeInForce,
+        /// `None` for a market order or position close.
+        #[serde(default)]
+        limit_price: Option<u64>,
     },
     /// Post-mutation L2 level snapshot emitted on every resting-order book
     /// change (place, cancel, fill, amend, expiry, liquidation cancel). Read
@@ -4092,6 +4102,14 @@ pub enum Event {
     /// block from this one admits `CreateSubAccount` and
     /// `SubAccountTransfer`.
     SubAccountsEnabled { proposal_id: u64 },
+    /// An order transaction failed; `code` is its `ExecError` code. A basket
+    /// reports each of its legs.
+    OrderRejected {
+        owner: [u8; 20],
+        market: MarketId,
+        client_order_id: Option<u64>,
+        code: u32,
+    },
 }
 
 impl Event {
