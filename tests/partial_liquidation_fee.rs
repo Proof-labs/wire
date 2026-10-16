@@ -42,10 +42,8 @@ fn penalty_receipt_attributes_and_round_trip_are_exact() {
 fn full_close_penalty_receipt_attributes_and_round_trip_are_exact() {
     let event = Event::FullLiquidationFee {
         owner: [0xcd; 20],
-        market: 3,
-        pool_id: 1,
-        fill_id: 41,
         config_sequence: 2,
+        closed_notional: 700,
         assessed: 7,
         collected: 4,
         waived: 3,
@@ -61,12 +59,10 @@ fn full_close_penalty_receipt_attributes_and_round_trip_are_exact() {
     let mut actual = AbciEventWriter::new();
     event.encode_abci(&mut actual);
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("full_liquidation_fee", 8);
+    expected.begin_event("full_liquidation_fee", 6);
     expected.write_attr_hex("owner", &[0xcd; 20]);
-    expected.write_attr_u64("market", 3);
-    expected.write_attr_display("pool_id", &1_u8);
-    expected.write_attr_u64("fill_id", 41);
     expected.write_attr_u64("config_sequence", 2);
+    expected.write_attr_u64("closed_notional", 700);
     expected.write_attr_u64("assessed", 7);
     expected.write_attr_u64("collected", 4);
     expected.write_attr_u64("waived", 3);
