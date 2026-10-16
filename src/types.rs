@@ -3172,6 +3172,27 @@ impl fmt::Display for PendingTriggerDiscardReason {
     }
 }
 
+/// Why a never-resting order filled less than it requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnfilledReason {
+    /// A reduce-only order was capped at the position size.
+    ReduceOnlyCap = 1,
+    /// The only depth left within the limit was the taker's own orders.
+    SelfTrade = 2,
+    /// The book had no more depth within the limit.
+    NoLiquidity = 3,
+}
+
+impl fmt::Display for UnfilledReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UnfilledReason::ReduceOnlyCap => f.write_str("reduce_only_cap"),
+            UnfilledReason::SelfTrade => f.write_str("self_trade"),
+            UnfilledReason::NoLiquidity => f.write_str("no_liquidity"),
+        }
+    }
+}
+
 /// Why a winning conditional-perp position was paid in cash only instead of
 /// converting into a perpetual position on its underlying. Serialised as a
 /// string in ABCI events.
@@ -3720,8 +3741,7 @@ pub enum Event {
     ///
     ///   - `filled_quantity == requested_quantity` → fully filled
     ///   - `0 < filled_quantity < requested_quantity` → partial fill, rest dropped
-    ///   - `filled_quantity == 0` → no counterparty (or all counterparties were
-    ///     the taker themselves and got rejected by self-match prevention)
+    ///   - `filled_quantity == 0` → nothing filled; `unfilled_reason` says why
     MarketOrderProcessed {
         /// Engine-assigned id of this order, referenceable in fills and
         /// order history.
@@ -3738,6 +3758,9 @@ pub enum Event {
         /// `None` for a market order or position close.
         #[serde(default)]
         limit_price: Option<u64>,
+        /// Why less than `requested_quantity` filled; `None` when it all filled.
+        #[serde(default)]
+        unfilled_reason: Option<UnfilledReason>,
     },
     /// Post-mutation L2 level snapshot emitted on every resting-order book
     /// change (place, cancel, fill, amend, expiry, liquidation cancel). Read

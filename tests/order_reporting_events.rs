@@ -1,12 +1,13 @@
 //! `TradeExecuted` gains the mark and oracle price at the fill, and
-//! `MarketOrderProcessed` gains a time in force and limit price. Bytes written
+//! `MarketOrderProcessed` gains a time in force, limit price and unfilled
+//! reason. Bytes written
 //! before the fields existed decode with them absent, and the existing ABCI
 //! attributes render as before with the new ones appended.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
 use proof_wire::abci_event::AbciEventWriter;
-use proof_wire::types::{Event, Side, TimeInForce};
+use proof_wire::types::{Event, Side, TimeInForce, UnfilledReason};
 use serde::Serialize;
 
 const OWNER: [u8; 20] = [0xB1; 20];
@@ -87,6 +88,7 @@ fn legacy_summary_decodes_as_a_market_order() {
     let Event::MarketOrderProcessed {
         time_in_force,
         limit_price,
+        unfilled_reason,
         ..
     } = decoded
     else {
@@ -94,6 +96,7 @@ fn legacy_summary_decodes_as_a_market_order() {
     };
     assert_eq!(time_in_force, TimeInForce::Ioc, "only market orders had it");
     assert_eq!(limit_price, None);
+    assert_eq!(unfilled_reason, None);
 }
 
 #[test]
@@ -148,14 +151,15 @@ fn summary_appends_its_new_attributes() {
         requested_quantity: 5,
         filled_quantity: 2,
         client_order_id: 0,
-        time_in_force: TimeInForce::Fok,
+        time_in_force: TimeInForce::Ioc,
         limit_price: Some(100),
+        unfilled_reason: Some(UnfilledReason::NoLiquidity),
     };
     let mut rendered = AbciEventWriter::new();
     event.encode_abci(&mut rendered);
 
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("market_order_processed", 9);
+    expected.begin_event("market_order_processed", 10);
     expected.write_attr_u64("order_id", 4);
     expected.write_attr_u64("market", 7);
     expected.write_attr_hex("owner", &OWNER);
@@ -163,7 +167,19 @@ fn summary_appends_its_new_attributes() {
     expected.write_attr_u64("requested_quantity", 5);
     expected.write_attr_u64("filled_quantity", 2);
     expected.write_attr_u64("client_order_id", 0);
-    expected.write_attr_display("time_in_force", &TimeInForce::Fok);
+    expected.write_attr_display("time_in_force", &TimeInForce::Ioc);
     expected.write_attr_display("limit_price", &100_u64);
+    expected.write_attr("unfilled_reason", "no_liquidity");
     assert_eq!(rendered.into_vec(), expected.into_vec());
+}
+
+#[test]
+fn unfilled_reason_literals_stay_stable() {
+    for (reason, literal) in [
+        (UnfilledReason::ReduceOnlyCap, "reduce_only_cap"),
+        (UnfilledReason::SelfTrade, "self_trade"),
+        (UnfilledReason::NoLiquidity, "no_liquidity"),
+    ] {
+        assert_eq!(reason.to_string(), literal);
+    }
 }
