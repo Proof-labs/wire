@@ -68,8 +68,8 @@ pub enum LiquidationConfigError {
     FullCloseThresholdOutOfRange { numerator: u32, denominator: u32 },
     /// The partial penalty exceeds [`MAX_PARTIAL_PENALTY_BPS`].
     PenaltyAboveMaximum { partial_penalty_bps: u32 },
-    /// A work limit is zero.
-    ZeroWorkLimit,
+    /// A work limit is zero; `field` names the configuration field.
+    ZeroWorkLimit { field: &'static str },
     /// More fills could commit than candidate prefixes may be inspected.
     FillsExceedCandidatePrefixes {
         max_committed_fills: u32,
@@ -102,7 +102,9 @@ impl core::fmt::Display for LiquidationConfigError {
                 f,
                 "partial penalty {partial_penalty_bps} bps exceeds {MAX_PARTIAL_PENALTY_BPS} bps"
             ),
-            Self::ZeroWorkLimit => f.write_str("every work limit must be non-zero"),
+            Self::ZeroWorkLimit { field } => {
+                write!(f, "work limit {field} must be non-zero")
+            }
             Self::FillsExceedCandidatePrefixes {
                 max_committed_fills,
                 max_candidate_prefixes,
@@ -144,16 +146,15 @@ impl LiquidationConfig {
                 partial_penalty_bps: self.partial_penalty_bps.0,
             });
         }
-        if [
-            self.max_book_orders.0,
-            self.max_candidate_prefixes.0,
-            self.max_committed_fills.0,
-            self.max_state_reads.0,
-            self.max_state_read_bytes.0,
-        ]
-        .contains(&0)
-        {
-            return Err(LiquidationConfigError::ZeroWorkLimit);
+        let work_limits = [
+            ("max_book_orders", self.max_book_orders.0),
+            ("max_candidate_prefixes", self.max_candidate_prefixes.0),
+            ("max_committed_fills", self.max_committed_fills.0),
+            ("max_state_reads", self.max_state_reads.0),
+            ("max_state_read_bytes", self.max_state_read_bytes.0),
+        ];
+        if let Some((field, _)) = work_limits.iter().find(|(_, limit)| *limit == 0) {
+            return Err(LiquidationConfigError::ZeroWorkLimit { field });
         }
         if self.max_committed_fills > self.max_candidate_prefixes {
             return Err(LiquidationConfigError::FillsExceedCandidatePrefixes {

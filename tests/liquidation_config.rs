@@ -154,7 +154,9 @@ fn each_bound_refuses_with_the_rule_it_breaks() {
                 max_state_read_bytes: LiquidationReadBytes(0),
                 ..config()
             },
-            LiquidationConfigError::ZeroWorkLimit,
+            LiquidationConfigError::ZeroWorkLimit {
+                field: "max_state_read_bytes",
+            },
         ),
         (
             LiquidationConfig {
