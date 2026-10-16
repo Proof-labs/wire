@@ -19,6 +19,8 @@ pub mod codec;
 #[cfg(feature = "full")]
 pub mod crypto;
 #[cfg(feature = "full")]
+pub mod liquidation_config;
+#[cfg(feature = "full")]
 pub mod query;
 #[cfg(feature = "full")]
 pub mod triggers;

@@ -2198,7 +2198,7 @@ mod tests {
             AdminActionType::ScheduleUpgrade,
             AdminActionType::CancelUpgrade,
             AdminActionType::SetPlpConfig,
-            AdminActionType::ReservedRt01D,
+            AdminActionType::SetLiquidationConfig,
             AdminActionType::ReservedRt01E,
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
@@ -2221,7 +2221,7 @@ mod tests {
                 | AdminActionType::ScheduleUpgrade
                 | AdminActionType::CancelUpgrade
                 | AdminActionType::SetPlpConfig
-                | AdminActionType::ReservedRt01D
+                | AdminActionType::SetLiquidationConfig
                 | AdminActionType::ReservedRt01E
                 | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry

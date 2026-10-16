@@ -132,11 +132,17 @@ name = "proof-wire"
 # and FOK limit orders, and Event::OrderRejected is appended. Pre-existing
 # bytes still decode unchanged -> MINOR.
 #
-# 6.3.0 -> 6.4.0: additive wire change (short-fill reasons). MarketOrderProcessed
-# reports the submitted quantity again and gains a trailing defaulted
-# unfilled_reason (ReduceOnlyCap, SelfTrade or NoLiquidity, nil when it all
-# filled) with the UnfilledReason enum. Pre-existing bytes still decode
-# unchanged -> MINOR.
+# 6.3.0 -> 6.4.0: additive wire change (short-fill reasons and the global
+# liquidation configuration). MarketOrderProcessed reports the submitted
+# quantity again and gains a trailing defaulted unfilled_reason
+# (ReduceOnlyCap, SelfTrade or NoLiquidity, nil when it all filled) with the
+# UnfilledReason enum; inner admin tag 0x11 leaves its RT-01 reservation as
+# AdminAction::SetLiquidationConfig, carrying the global liquidation
+# configuration (target ratio, exact full-close threshold, partial penalty,
+# work limits) behind a compare-and-set sequence, and
+# Event::LiquidationConfigSet is appended. No existing action bytes, event
+# tags or ExecError codes change; pre-existing bytes still decode unchanged
+# -> MINOR.
 version = "6.4.0"
 edition = "2021"
 
@@ -182,6 +188,10 @@ required-features = ["full"]
 
 [[test]]
 name = "order_reporting_events"
+required-features = ["full"]
+
+[[test]]
+name = "liquidation_config"
 required-features = ["full"]
 
 [dev-dependencies]

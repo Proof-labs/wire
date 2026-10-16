@@ -804,6 +804,9 @@ pub enum AdminAction {
     /// is no disable arm, because a registry that stops admitting transfers
     /// would strand capital in a child whose only mover is its master.
     EnableSubAccounts,
+    /// Replaces the global liquidation configuration. Executes only when
+    /// `predecessor` names the stored configuration's sequence.
+    SetLiquidationConfig(crate::liquidation_config::SetLiquidationConfig),
 }
 
 /// Payload of [`AdminAction::SetOperatorReceiptRegistry`]: the operator
@@ -1036,6 +1039,8 @@ pub enum AdminActionType {
     CancelUpgrade = 15,
     /// Writes or replaces the global PLP backstop configuration.
     SetPlpConfig = 16,
+    /// Replaces the global liquidation configuration.
+    SetLiquidationConfig = 17,
     /// Writes (or replaces) the per-account rolling withdrawal limit
     /// (CU-06, S39). `cap = 0` disables the limit; `window_secs` is the
     /// rolling-window length in seconds (production: 86_400).
@@ -1045,8 +1050,6 @@ pub enum AdminActionType {
     /// Authorizes the sub-account actions (SA-1). Governed like
     /// `UnpauseBridge`: no payload, the quorum execution is the effect.
     EnableSubAccounts = 21,
-    /// Reserved by RT-01: discriminant only, no behaviour.
-    ReservedRt01D = 17,
     /// Reserved by RT-01: discriminant only, no behaviour.
     ReservedRt01E = 18,
 }
@@ -1072,6 +1075,7 @@ impl AdminAction {
             Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
+            Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
         }
     }
 
@@ -4137,6 +4141,21 @@ pub enum Event {
         market: MarketId,
         client_order_id: Option<u64>,
         code: u32,
+    },
+    /// The admin quorum replaced the global liquidation configuration.
+    /// Carries the complete post-write configuration.
+    LiquidationConfigSet {
+        sequence: u64,
+        target_ratio_bps: u32,
+        full_close_numerator: u32,
+        full_close_denominator: u32,
+        partial_penalty_bps: u32,
+        max_book_orders: u32,
+        max_candidate_prefixes: u32,
+        max_committed_fills: u32,
+        max_state_reads: u32,
+        max_state_read_bytes: u32,
+        proposal_id: u64,
     },
 }
 

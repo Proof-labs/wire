@@ -100,7 +100,7 @@ are not outer transaction action bytes.
 | 0x0E | `ScheduleUpgrade`                 | governed; schedules the pending protocol-upgrade plan |
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
 | 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
-| 0x11 | `ReservedRt01D`                   | reserved for `SetLiquidationConfig`; discriminant only, no behaviour |
+| 0x11 | `SetLiquidationConfig`            | governed; replaces the global liquidation configuration (compare-and-set on its sequence) |
 | 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
@@ -117,6 +117,10 @@ hash commits it, so it can never be repurposed regardless of when it
 activates. Tag `0x03` was `CreateImpactMarket`, retired with the impact-market
 family in 2.0.0; historical proposal hashes commit it, so it is never
 reassigned.
+
+Tag `0x11` (`SetLiquidationConfig`) claims the RT-01 reservation. Its one
+record lives under state prefix `0x68`; genesis and the upgrade that introduces
+it write the initial record, so a running chain always has one.
 
 Tag `0x0A` (`AttachConditional`) claims the RT-01 reservation: governed like
 `CreateEvent` (tag `0x09`), it attaches one underlying perpetual to an
@@ -160,7 +164,7 @@ that gives it behaviour.
 |---|---|---|---|
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
-| Inner admin tags | `0x11`–`0x12` | `AdminActionType` discriminant-only variants | parked: liquidation config (`0x11`), insurance-fund funding (`0x12`) |
+| Inner admin tags | `0x12` | `AdminActionType` discriminant-only variant | parked: insurance-fund funding |
 
 ## Process for adding a new byte
 
