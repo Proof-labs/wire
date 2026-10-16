@@ -3287,7 +3287,7 @@ pub enum Event {
         taker_fee: i64,
         /// Maker fee in micro-USDC (positive = charged, negative = rebate).
         maker_fee: i64,
-        /// Mark price when the fill is recorded, before the fill moves it.
+        /// Mark price in force when the taker crossed, before this fill.
         #[serde(default)]
         mark_price: Option<u64>,
         #[serde(default)]
@@ -4102,8 +4102,8 @@ pub enum Event {
     /// block from this one admits `CreateSubAccount` and
     /// `SubAccountTransfer`.
     SubAccountsEnabled { proposal_id: u64 },
-    /// An order transaction failed; `code` is its `ExecError` code. A basket
-    /// reports each of its legs.
+    /// An order transaction from a signer authorized for `owner` failed;
+    /// `code` is its `ExecError` code. A basket reports each of its legs.
     OrderRejected {
         owner: [u8; 20],
         market: MarketId,
