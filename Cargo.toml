@@ -131,7 +131,13 @@ name = "proof-wire"
 # trailing defaulted time_in_force/limit_price and is now also emitted for IOC
 # and FOK limit orders, and Event::OrderRejected is appended. Pre-existing
 # bytes still decode unchanged -> MINOR.
-version = "6.3.0"
+#
+# 6.3.0 -> 6.4.0: additive wire change (short-fill reasons). MarketOrderProcessed
+# reports the submitted quantity again and gains a trailing defaulted
+# unfilled_reason (ReduceOnlyCap, SelfTrade or NoLiquidity, nil when it all
+# filled) with the UnfilledReason enum. Pre-existing bytes still decode
+# unchanged -> MINOR.
+version = "6.4.0"
 edition = "2021"
 
 [features]
