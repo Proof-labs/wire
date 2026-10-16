@@ -146,9 +146,10 @@ name = "proof-wire"
 # Event::LiquidationConfigSet is appended, then Event::PartialLiquidationFee
 # (the per-fill partial-liquidation penalty receipt), then
 # Event::FullLiquidationFee (the full-liquidation penalty receipt, one per
-# completed full close). No existing action bytes, existing event tags or
-# ExecError codes change; pre-existing bytes still decode unchanged ->
-# MINOR.
+# completed full close), then Event::LiquidationProgressReported (one
+# outcome per owner a liquidation batch names) with its LiquidationProgress
+# enum. No existing action bytes, existing event tags or ExecError codes
+# change; pre-existing bytes still decode unchanged -> MINOR.
 version = "6.4.0"
 edition = "2021"
 
@@ -202,6 +203,10 @@ required-features = ["full"]
 
 [[test]]
 name = "partial_liquidation_fee"
+required-features = ["full"]
+
+[[test]]
+name = "liquidation_progress"
 required-features = ["full"]
 
 [dev-dependencies]

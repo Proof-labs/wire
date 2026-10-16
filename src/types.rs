@@ -4189,6 +4189,16 @@ pub enum Event {
         collected: u64,
         waived: u64,
     },
+    /// How one owner named in a `LiquidateAccounts` batch ended this block:
+    /// one per named owner, after that owner's other events. A deferred
+    /// owner was not attempted; a failed owner's attempt kept no writes.
+    /// `config_sequence` names the liquidation configuration the batch ran
+    /// under.
+    LiquidationProgressReported {
+        owner: [u8; 20],
+        outcome: crate::liquidation_progress::LiquidationProgress,
+        config_sequence: u64,
+    },
 }
 
 impl Event {
@@ -4205,6 +4215,7 @@ impl Event {
             Self::TradeExecuted { .. }
                 | Self::PartialLiquidationFee { .. }
                 | Self::FullLiquidationFee { .. }
+                | Self::LiquidationProgressReported { .. }
                 | Self::PositionTriggersSet { .. }
                 | Self::PositionTriggersCancelled { .. }
                 | Self::PositionTriggersInvalidated { .. }
