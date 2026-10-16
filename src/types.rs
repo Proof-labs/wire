@@ -4102,8 +4102,10 @@ pub enum Event {
     /// block from this one admits `CreateSubAccount` and
     /// `SubAccountTransfer`.
     SubAccountsEnabled { proposal_id: u64 },
-    /// An order transaction from a signer authorized for `owner` failed;
-    /// `code` is its `ExecError` code. A basket reports each of its legs.
+    /// The engine refused an order for a trading reason (margin, limits,
+    /// liquidity, market state); `code` is its `ExecError` code. Not emitted
+    /// when the transaction itself is rejected (signature, nonce,
+    /// authorization) or on an engine fault. A basket reports each leg.
     OrderRejected {
         owner: [u8; 20],
         market: MarketId,
