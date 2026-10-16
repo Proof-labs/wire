@@ -42,8 +42,7 @@ fn every_outcome_round_trips_under_a_distinct_attribute_value() {
             rmp_serde::to_vec(&format!("{outcome:?}")).expect("name encodes"),
             "an outcome encodes as its variant name"
         );
-        let decoded: LiquidationProgress =
-            rmp_serde::from_slice(&bytes).expect("outcome decodes");
+        let decoded: LiquidationProgress = rmp_serde::from_slice(&bytes).expect("outcome decodes");
         assert_eq!(decoded, outcome);
         assert_eq!(outcome.to_string(), outcome.as_str());
         assert!(
