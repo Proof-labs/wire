@@ -4157,6 +4157,22 @@ pub enum Event {
         max_state_read_bytes: u32,
         proposal_id: u64,
     },
+    /// The partial-liquidation penalty on one book fill that reduced
+    /// `owner`'s position. `assessed` is the fill's notional times the
+    /// configured penalty rate, floored; `collected` is the part the owner's
+    /// eligible equity covered, paid to `pool_id`'s insurance fund; `waived`
+    /// is the rest, which is never owed later. `config_sequence` names the
+    /// liquidation configuration that set the rate.
+    PartialLiquidationFee {
+        owner: [u8; 20],
+        market: MarketId,
+        pool_id: u8,
+        fill_id: FillId,
+        config_sequence: u64,
+        assessed: u64,
+        collected: u64,
+        waived: u64,
+    },
 }
 
 impl Event {
@@ -4171,6 +4187,7 @@ impl Event {
         matches!(
             self,
             Self::TradeExecuted { .. }
+                | Self::PartialLiquidationFee { .. }
                 | Self::PositionTriggersSet { .. }
                 | Self::PositionTriggersCancelled { .. }
                 | Self::PositionTriggersInvalidated { .. }
