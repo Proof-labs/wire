@@ -126,7 +126,12 @@ name = "proof-wire"
 # emitted once per attempt while a limb stays blocked rather than once per
 # market transition. No existing action bytes, event tags or ExecError codes
 # change; pre-existing bytes still decode unchanged -> MINOR.
-version = "6.2.0"
+# 6.2.0 -> 6.3.0: additive wire change (order reporting). TradeExecuted gains
+# trailing defaulted mark_price/oracle_price, MarketOrderProcessed gains
+# trailing defaulted time_in_force/limit_price and is now also emitted for IOC
+# and FOK limit orders, and Event::OrderRejected is appended. Pre-existing
+# bytes still decode unchanged -> MINOR.
+version = "6.3.0"
 edition = "2021"
 
 [features]
