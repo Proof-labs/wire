@@ -1201,6 +1201,7 @@ pub struct EmergencyAdminAction {
     Clone,
     Copy,
     Debug,
+    Default,
     PartialEq,
     Eq,
     PartialOrd,
@@ -1212,6 +1213,7 @@ pub struct EmergencyAdminAction {
 )]
 pub enum Side {
     #[display("buy")]
+    #[default]
     Buy = 1,
     #[display("sell")]
     Sell = 2,
@@ -2018,7 +2020,7 @@ pub struct AtomicBasketOrder {
 }
 
 /// Place a resting limit order on the book. May partially fill immediately.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlaceOrder {
     pub market: MarketId,
     #[serde(with = "crate::wire_bytes")]
