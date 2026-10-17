@@ -2523,7 +2523,7 @@ mod tests {
         }
     }
 
-    /// The impact-market family is gone: its outer action bytes (0x0E,
+    /// The legacy event-plus-conditional record is gone: its outer action bytes (0x0E,
     /// 0x0F) and its inner admin tag (3) are retired, never reassigned, and
     /// fail closed at decode instead of mapping onto any other action.
     #[test]

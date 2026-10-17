@@ -58,7 +58,7 @@ pub const BINARY_PRICE_MAX: u64 = 1_000_000;
 
 /// Published size scale for prediction-binary books (EBY). Fixed at 2dp
 /// (hundredths of a contract) rather than inheriting the underlying perp's
-/// scale — this matches the conditional-market convention on Kalshi (whole→2dp
+/// scale — this matches the conditional-perp convention on Kalshi (whole→2dp
 /// fixed-point contracts) and Polymarket (2 size-decimals). Conditional perps
 /// (CPY/CPN) still inherit the underlying's scale; only the binary legs are
 /// pinned here. The engine honors this scale: a position of `size = 100` is
@@ -1013,7 +1013,7 @@ pub enum AdminActionType {
     CreateMarket = 1,
     UpdateAdminSignerRegistry = 2,
     #[deprecated(
-        note = "retired with the impact-market family; no AdminAction arm, never reassigned"
+        note = "retired with the legacy event-plus-conditional record; no AdminAction arm, never reassigned"
     )]
     CreateImpactMarket = 3,
     Batch = 4,
@@ -1499,7 +1499,7 @@ pub struct MarketConfig {
     /// Market kind (perp / conditional perp / prediction binary).
     ///
     /// `#[serde(default)]` so existing on-chain `MarketConfig` records written
-    /// before impact markets existed decode cleanly as `MarketKind::Perp`.
+    /// before conditionals existed decode cleanly as `MarketKind::Perp`.
     #[serde(default)]
     pub kind: MarketKind,
     /// Maximum absolute position size per account, in contracts. Enforced
@@ -1529,7 +1529,7 @@ pub struct MarketConfig {
     /// `default_ttl_ms` rather than requiring manual cleanup.
     ///
     /// Recommended value for perps: 60_000 (1 minute) to match
-    /// the MM refresh cadence. For impact markets: longer (minutes)
+    /// the MM refresh cadence. For conditionals: longer (minutes)
     /// because their MMs don't re-quote as often.
     #[serde(default)]
     pub default_ttl_ms: u64,
@@ -2012,7 +2012,7 @@ pub struct AtomicBasketLeg {
     pub reduce_only: bool,
 }
 
-/// Native all-or-revert multi-leg order for impact-market baskets.
+/// Native all-or-revert multi-leg order for conditional baskets.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AtomicBasketOrder {
     #[serde(with = "crate::wire_bytes")]
@@ -2852,7 +2852,7 @@ pub struct UpdateMarketFees {
     /// unchanged. Setting to 0 disables auto-cancel sweeps for this
     /// market. Operators tune this per-market via the relayer-signed
     /// admin action; recommended: 60_000 (1 minute) for perps, longer
-    /// for impact markets whose MMs re-quote less often. Motivated
+    /// for conditionals whose MMs re-quote less often. Motivated
     /// by the 2026-04-23 incident where alice's orphaned-order
     /// backlog locked $6M IM against $2.9M equity and made the BTC
     /// book permanently one-sided — see `run_order_expiry` docstring.
@@ -4505,12 +4505,12 @@ pub enum ExecError {
     /// off the book directly and have no oracle layer. The only oracle
     /// reading happens at resolution, against the underlying perp.
     /// Returned defensively so a misbehaving feeder or replayed update
-    /// can't corrupt the impact market's state.
+    /// can't corrupt the conditional's state.
     ///
     /// Variant defined in Phase A but not yet wired in `handle_oracle_update`
     /// (see comment there): the engine-side reject lands in Phase D
     /// alongside the `get_mark_price` book-mid fallback and the rewrite
-    /// of impact-market test setup helpers, so the rollout is atomic.
+    /// of conditional test setup helpers, so the rollout is atomic.
     OracleNotApplicable {
         market: MarketId,
     },
@@ -4733,7 +4733,7 @@ impl ExecError {
             ExecError::MarketAlreadyExists(_) => 22,
             ExecError::InvalidMarketConfig(_) => 23,
             // 24 and 25 were ImpactMarketAlreadyExists / ImpactMarketNotFound,
-            // retired with the impact-market family; never reassigned.
+            // retired with the legacy event-plus-conditional record; never reassigned.
             ExecError::MarketClosedForTrading(_) => 26,
             ExecError::BinaryPriceOutOfRange => 27,
             ExecError::InvalidResolution(_) => 28,

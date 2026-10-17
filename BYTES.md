@@ -18,48 +18,48 @@ whose action has been removed is **retired**: its row stays, marked
 
 ## Action types
 
-Byte 2 of the transaction envelope, assigned by `define_actions!`. Names below
-follow the gateway's `ACTION_*` spelling; the engine's identifiers are the bare
-CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
+Byte 2 of the transaction envelope, assigned by `define_actions!`. Names are
+the engine's PascalCase identifiers, the canonical vocabulary every other
+spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 
-| Byte | Constant                          | Status   |
-|------|-----------------------------------|----------|
-| 0x01 | `ACTION_PLACE_ORDER`              | shipped  |
+| Byte | Name                                | Status   |
+|------|-------------------------------------|----------|
+| 0x01 | `PlaceOrder`                        | shipped  |
   ↳ proof-wire 2.1.0: `PlaceOrder` payload gains trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte and field order unchanged.
-| 0x02 | `ACTION_CANCEL_ORDER`             | shipped  |
-| 0x03 | `ACTION_ORACLE_UPDATE`            | shipped  |
-| 0x04 | `ACTION_MARKET_ORDER`             | shipped  |
+| 0x02 | `CancelOrder`                       | shipped  |
+| 0x03 | `OracleUpdate`                      | shipped  |
+| 0x04 | `MarketOrder`                       | shipped  |
   ↳ proof-wire 2.1.0: `MarketOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
-| 0x05 | `ACTION_DEPOSIT`                  | shipped  |
-| 0x06 | `ACTION_WITHDRAW`                 | shipped  |
-| 0x07 | `ACTION_CREATE_MARKET`            | shipped  |
-| 0x08 | `ACTION_WITHDRAW_REQUEST`         | shipped  |
-| 0x09 | `ACTION_CONFIRM_DEPOSIT`          | shipped  |
-| 0x0A | `ACTION_CONFIRM_WITHDRAWAL`       | shipped  |
-| 0x0B | `ACTION_FAIL_WITHDRAWAL`          | shipped  |
-| 0x0C | `ACTION_APPROVE_AGENT`            | shipped  |
-| 0x0D | `ACTION_REVOKE_AGENT`             | shipped  |
-| 0x0E | `ACTION_CREATE_IMPACT_MARKET`     | retired  |
-| 0x0F | `ACTION_RESOLVE_IMPACT_MARKET`    | retired  |
-| 0x10 | `ACTION_UPDATE_MARKET_FEES`       | shipped  |
-| 0x11 | `ACTION_RUN_LIQUIDATION_SWEEP`    | retired  |
-| 0x12 | `ACTION_RUN_FUNDING_TICK`         | shipped  |
-| 0x13 | `ACTION_SET_ACCOUNT_FEE_OVERRIDE` | planned  |
-| 0x14 | `ACTION_ORACLE_UPDATE_COMPOSITE`  | planned  |
-| 0x15 | `ACTION_FAIL_DEPOSIT`             | planned  |
-| 0x16 | `ACTION_SET_USER_MARKET_LEVERAGE` | planned  |
-| 0x17 | `ACTION_CLOSE_POSITION`            | shipped  |
-| 0x18 | `ACTION_CANCEL_CLIENT_ORDER`       | shipped  |
-| 0x19 | `ACTION_CANCEL_ALL_ORDERS`         | shipped  |
-| 0x1A | `ACTION_CANCEL_REPLACE_ORDER`      | shipped  |
+| 0x05 | `Deposit`                           | shipped  |
+| 0x06 | `Withdraw`                          | shipped  |
+| 0x07 | `CreateMarket`                      | shipped  |
+| 0x08 | `WithdrawRequest`                   | shipped  |
+| 0x09 | `ConfirmDeposit`                    | shipped  |
+| 0x0A | `ConfirmWithdrawal`                 | shipped  |
+| 0x0B | `FailWithdrawal`                    | shipped  |
+| 0x0C | `ApproveAgent`                      | shipped  |
+| 0x0D | `RevokeAgent`                       | shipped  |
+| 0x0E | `CreateImpactMarket`                | retired  |
+| 0x0F | `ResolveImpactMarket`               | retired  |
+| 0x10 | `UpdateMarketFees`                  | shipped  |
+| 0x11 | `RunLiquidationSweep`               | retired  |
+| 0x12 | `RunFundingTick`                    | shipped  |
+| 0x13 | `SetAccountFeeOverride`             | planned  |
+| 0x14 | `OracleUpdateComposite`             | planned  |
+| 0x15 | `FailDeposit`                       | planned  |
+| 0x16 | `SetUserMarketLeverage`             | planned  |
+| 0x17 | `ClosePosition`                     | shipped  |
+| 0x18 | `CancelClientOrder`                 | shipped  |
+| 0x19 | `CancelAllOrders`                   | shipped  |
+| 0x1A | `CancelReplaceOrder`                | shipped  |
   ↳ proof-wire 2.1.0: `CancelReplaceOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
-| 0x1B | `ACTION_AMEND_ORDER`               | shipped  |
-| 0x1C | `ACTION_ATOMIC_BASKET_ORDER`       | shipped  |
-| 0x1D | `ACTION_LIQUIDATE_ACCOUNTS`        | shipped  |
-| 0x1E | `ACTION_PROPOSE_ADMIN_ACTION`      | planned  |
-| 0x1F | `ACTION_APPROVE_ADMIN_ACTION`      | planned  |
-| 0x20 | `ACTION_REJECT_ADMIN_ACTION`       | planned  |
-| 0x21 | `ACTION_EMERGENCY_ADMIN_ACTION`    | planned  |
+| 0x1B | `AmendOrder`                        | shipped  |
+| 0x1C | `AtomicBasketOrder`                 | shipped  |
+| 0x1D | `LiquidateAccounts`                 | shipped  |
+| 0x1E | `ProposeAdminAction`                | planned  |
+| 0x1F | `ApproveAdminAction`                | planned  |
+| 0x20 | `RejectAdminAction`                 | planned  |
+| 0x21 | `EmergencyAdminAction`              | planned  |
 | 0x22 | `ConfirmWithdrawalReceipt`          | engine-native |
 | 0x23 | `FailWithdrawalReceipt`             | engine-native |
 | 0x24 | `AuthorizeWithdrawal`               | engine-native |
@@ -83,7 +83,7 @@ CamelCase forms (`PlaceOrder`, not `ACTION_PLACE_ORDER`).
 are not outer transaction action bytes.
 
 | Byte | Variant                           | Status   |
-|------|-----------------------------------|----------|
+|------|-------------------------------------|----------|
 | 0x01 | `CreateMarket`                    | planned  |
 | 0x02 | `UpdateAdminSignerRegistry`       | planned  |
 | 0x03 | `CreateImpactMarket`              | retired  |
@@ -114,7 +114,7 @@ Tag `0x04` (`Batch`) is admin-actions v2: admission is height-gated by
 `UPGRADE_HEIGHT_ADMIN_ACTIONS_V2` (parked at `u64::MAX` on trunk, pinned at
 release-tag time), but the tag is ASSIGNED from this commit on. The content
 hash commits it, so it can never be repurposed regardless of when it
-activates. Tag `0x03` was `CreateImpactMarket`, retired with the impact-market
+activates. Tag `0x03` was `CreateImpactMarket`, retired with the conditional
 family in 2.0.0; historical proposal hashes commit it, so it is never
 reassigned.
 

@@ -4,7 +4,7 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
 /// Derive macro that generates legacy `encode_abci` plus an optional
 /// coordinate-aware encoder. Passing `None` is byte-identical to the legacy
-/// format; callers opt selected event families into four canonical chain
+/// format; callers opt selected event kinds into four canonical chain
 /// attributes without changing enum constructors.
 /// for an enum where each variant has named fields.
 ///
