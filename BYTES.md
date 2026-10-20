@@ -105,9 +105,9 @@ are not outer transaction action bytes.
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
 | 0x15 | `EnableSubAccounts`                | governed; authorizes the sub-account actions (SA-1), one-way |
-| 0x16 | reserved                          | partial-liquidation settings; no behavior in this release |
-| 0x17 | reserved                          | partial-liquidation settings; no behavior in this release |
-| 0x18 | reserved                          | partial-liquidation settings; no behavior in this release |
+| 0x16 | reserved                         | partial-liquidation settings; no behavior in this release |
+| 0x17 | reserved                         | partial-liquidation settings; no behavior in this release |
+| 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x19 | `WithdrawInsuranceFund`           | quorum-authorized pool withdrawal to a named account; pool remains nonnegative |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
@@ -119,9 +119,8 @@ Insurance transfer events start with the named account movement, followed by
 `InsuranceFundUpdated` and the corresponding funding/withdrawal receipt for
 each allocation in ascending pool order. Funding uses `InsuranceSourceDebited`
 (not a treasury-only account); withdrawal uses `InsuranceRecipientCredited`.
-`TreasurySourceDebited` is accepted only as a historical decode alias for the
-unreleased prototype; new events use `InsuranceSourceDebited`. Action tags,
-payload bytes and funding/withdrawal replay IDs are unchanged by this naming.
+Action tags, payload bytes and funding/withdrawal replay IDs are unchanged by
+this naming.
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
