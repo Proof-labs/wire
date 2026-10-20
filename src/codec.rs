@@ -1985,6 +1985,100 @@ mod tests {
         }
     }
 
+    /// Frozen wire vectors for funding and withdrawal inner actions. The
+    /// proposal content hash commits these bytes. To regenerate after an
+    /// intended layout change, print
+    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())`.
+    #[test]
+    fn insurance_funding_wire_vectors_frozen() {
+        use crate::types::{
+            AccountAddress, FundInsuranceFund, InsuranceFundAllocation, InsuranceFundingId,
+            InsurancePoolId, InsuranceWithdrawalId, WithdrawInsuranceFund,
+        };
+        let cases = [
+            (
+                AdminAction::FundInsuranceFund(FundInsuranceFund {
+                    funding_id: InsuranceFundingId(7),
+                    source: AccountAddress([0xAB; 20]),
+                    allocations: vec![InsuranceFundAllocation {
+                        pool_id: InsurancePoolId(0),
+                        amount: 1_000_000,
+                    }],
+                }),
+                AdminActionType::FundInsuranceFund,
+                "81b146756e64496e737572616e636546756e649307dc0014ccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccab919200ce000f4240",
+            ),
+            (
+                AdminAction::FundInsuranceFund(FundInsuranceFund {
+                    funding_id: InsuranceFundingId(u64::MAX),
+                    source: AccountAddress([0xAB; 20]),
+                    allocations: vec![
+                        InsuranceFundAllocation {
+                            pool_id: InsurancePoolId(0),
+                            amount: 3,
+                        },
+                        InsuranceFundAllocation {
+                            pool_id: InsurancePoolId(2),
+                            amount: i64::MAX as u64,
+                        },
+                    ],
+                }),
+                AdminActionType::FundInsuranceFund,
+                "81b146756e64496e737572616e636546756e6493cfffffffffffffffffdc0014ccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccab929200039202cf7fffffffffffffff",
+            ),
+            (
+                AdminAction::WithdrawInsuranceFund(WithdrawInsuranceFund {
+                    withdrawal_id: InsuranceWithdrawalId(7),
+                    recipient: AccountAddress([0xAB; 20]),
+                    allocations: vec![InsuranceFundAllocation { pool_id: InsurancePoolId(0), amount: 1_000_000 }],
+                }),
+                AdminActionType::WithdrawInsuranceFund,
+                "81b55769746864726177496e737572616e636546756e649307dc0014ccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccab919200ce000f4240",
+            ),
+        ];
+        for (action, tag, expected) in cases {
+            let canonical = canonical_admin_action_bytes(&action)
+                .expect("insurance-funding action encodes canonically");
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen {tag:?} wire vector drifted"
+            );
+            let (decoded, re_encoded) =
+                canonicalize_admin_action(&canonical).expect("frozen bytes decode");
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(decoded.action_tag(), tag as u8);
+        }
+    }
+
+    #[test]
+    fn retired_treasury_registry_payload_is_not_a_withdrawal() {
+        #[derive(Serialize)]
+        enum RetiredAction {
+            UpdateTreasurySources {
+                add: Vec<[u8; 20]>,
+                remove: Vec<[u8; 20]>,
+            },
+        }
+        let bytes = rmp_serde::to_vec(&RetiredAction::UpdateTreasurySources {
+            add: vec![[1; 20]],
+            remove: vec![],
+        })
+        .expect("retired registry payload encodes for rejection test");
+        assert!(
+            canonicalize_admin_action(&bytes).is_err(),
+            "retired registry proposals cannot change meaning"
+        );
+        // The registry prototype never shipped. The merged receipt-rotation
+        // action owns 20; insurance withdrawal must never reuse its tag.
+        assert_eq!(AdminActionType::FundInsuranceFund as u8, 18);
+        assert_eq!(AdminActionType::SetOperatorReceiptRegistry as u8, 20);
+        assert_eq!(AdminActionType::WithdrawInsuranceFund as u8, 25);
+    }
+
     #[test]
     fn admin_action_unknown_arm_fails_closed() {
         // Unknown admin-action variants must fail decoding.
@@ -2182,7 +2276,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 20] = [
+        const ALL_INNER_TAGS: [AdminActionType; 21] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2199,7 +2293,8 @@ mod tests {
             AdminActionType::CancelUpgrade,
             AdminActionType::SetPlpConfig,
             AdminActionType::SetLiquidationConfig,
-            AdminActionType::ReservedRt01E,
+            AdminActionType::FundInsuranceFund,
+            AdminActionType::WithdrawInsuranceFund,
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
             AdminActionType::EnableSubAccounts,
@@ -2222,7 +2317,8 @@ mod tests {
                 | AdminActionType::CancelUpgrade
                 | AdminActionType::SetPlpConfig
                 | AdminActionType::SetLiquidationConfig
-                | AdminActionType::ReservedRt01E
+                | AdminActionType::FundInsuranceFund
+                | AdminActionType::WithdrawInsuranceFund
                 | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry
                 | AdminActionType::EnableSubAccounts => {}
