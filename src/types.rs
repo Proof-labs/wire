@@ -4431,6 +4431,36 @@ pub enum Event {
         size: u64,
         reason: AdlSkipReason,
     },
+    /// One position an owner's liquidation reduced, once per position per
+    /// attempt. `size_before` is the size before the attempt's first step
+    /// and `size_closed` the total its steps closed. The penalty is the sum
+    /// of the per-fill penalties charged on this position, partial or full
+    /// close alike; a close at mark charges none. `equity`, `maintenance`
+    /// and `binding_outcome` are the owner's binding outcome, with pending
+    /// funding, when the attempt was decided.
+    PositionLiquidated {
+        owner: [u8; 20],
+        market: MarketId,
+        side: Side,
+        mode: crate::liquidation_report::LiquidationMode,
+        size_before: u64,
+        size_closed: u64,
+        size_after: u64,
+        penalty_collected: u64,
+        penalty_waived: u64,
+        equity: i64,
+        maintenance: u64,
+        binding_outcome: crate::liquidation_report::BindingOutcome,
+        config_sequence: u64,
+    },
+    /// An owner's liquidation attempt failed and kept none of its writes.
+    /// `code` is its `ExecError` code; `refusal` names why when the attempt
+    /// was refused rather than erroring.
+    LiquidationFailed {
+        owner: [u8; 20],
+        code: u32,
+        refusal: Option<crate::liquidation_report::LiquidationRefusal>,
+    },
 }
 
 impl Event {
@@ -4447,6 +4477,8 @@ impl Event {
             Self::TradeExecuted { .. }
                 | Self::PartialLiquidationFee { .. }
                 | Self::LiquidationProgressReported { .. }
+                | Self::PositionLiquidated { .. }
+                | Self::LiquidationFailed { .. }
                 | Self::PositionTriggersSet { .. }
                 | Self::PositionTriggersCancelled { .. }
                 | Self::PositionTriggersInvalidated { .. }
@@ -4956,6 +4988,9 @@ pub enum ExecError {
     AccountOrderCapReached {
         max: u64,
     },
+    /// A liquidation attempt on one owner was refused without an engine
+    /// error; only reported in `Event::LiquidationFailed`.
+    LiquidationRefused(crate::liquidation_report::LiquidationRefusal),
     /// CU-06: the withdrawal would push the account's rolling-window
     /// outflow past the configured per-account cap.
     WithdrawalLimitExceeded {
@@ -5089,6 +5124,7 @@ impl ExecError {
             ExecError::InsuranceAllocationOrder { .. } => 108,
             ExecError::InsuranceAllocationZeroAmount { .. } => 109,
             ExecError::InsuranceAmountExceedsI64 { .. } => 110,
+            ExecError::LiquidationRefused(_) => 111,
             ExecError::InvalidPlpConfig(_) => 112,
             ExecError::InternalError(_) => 255,
         }
@@ -5442,6 +5478,9 @@ impl ExecError {
             }
             ExecError::AccountOrderCapReached { .. } => {
                 "Account already holds the maximum number of resting orders; cancel one before placing another."
+            }
+            ExecError::LiquidationRefused(_) => {
+                "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
             }
             ExecError::UserLeverageBelowMarketIm { .. } => {
                 "User-selected initial margin is below the market risk floor; only deleveraging above the market floor is allowed."
@@ -5869,6 +5908,9 @@ impl fmt::Display for ExecError {
             }
             ExecError::AccountOrderCapReached { max } => {
                 write!(f, "account resting-order cap reached: max {max}")
+            }
+            ExecError::LiquidationRefused(refusal) => {
+                write!(f, "liquidation refused: {refusal}")
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
@@ -6470,6 +6512,18 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "account resting-order cap reached: max 100"
+        );
+    }
+
+    #[test]
+    fn liquidation_refused_is_code_111() {
+        let err = ExecError::LiquidationRefused(
+            crate::liquidation_report::LiquidationRefusal::ReferenceUnavailable,
+        );
+        assert_eq!(err.code(), 111, "code 111 is permanently assigned");
+        assert_eq!(
+            err.to_string(),
+            "liquidation refused: reference_unavailable"
         );
     }
 }

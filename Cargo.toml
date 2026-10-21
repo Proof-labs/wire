@@ -164,7 +164,10 @@ name = "proof-wire"
 # LiquidationConfig, SetLiquidationConfig and Event::LiquidationConfigSet
 # drop max_candidate_prefixes, max_state_reads and max_state_read_bytes, so
 # their 6.4.0 bytes no longer decode; Event::FullLiquidationFee is removed
-# -> MAJOR.
+# -> MAJOR. Event::PositionLiquidated (one per position an owner's
+# liquidation reduced) and Event::LiquidationFailed (with its
+# LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
+# takes code 111.
 version = "6.4.0"
 edition = "2021"
 
@@ -222,6 +225,10 @@ required-features = ["full"]
 
 [[test]]
 name = "liquidation_progress"
+required-features = ["full"]
+
+[[test]]
+name = "liquidation_report"
 required-features = ["full"]
 
 [dev-dependencies]
