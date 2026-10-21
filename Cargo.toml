@@ -168,7 +168,7 @@ name = "proof-wire"
 # liquidation reduced) and Event::LiquidationFailed (with its
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
-version = "6.4.0"
+version = "7.0.0"
 edition = "2021"
 
 [features]
