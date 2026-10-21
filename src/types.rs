@@ -994,6 +994,63 @@ pub struct SetPlpConfig {
     pub enabled: bool,
 }
 
+impl SetPlpConfig {
+    /// Check the shape rules, returning the payload unchanged when all hold
+    /// and the first violated rule otherwise.
+    pub fn validate(self) -> Result<Self, PlpConfigError> {
+        if self.address.0 == [0u8; 20] {
+            return Err(PlpConfigError::ZeroAddress);
+        }
+        if self.enabled && self.bootstrap_balance == 0 {
+            return Err(PlpConfigError::ZeroBootstrapWhileEnabled {
+                min_balance_floor: self.min_balance_floor,
+            });
+        }
+        if self.min_balance_floor > self.bootstrap_balance {
+            return Err(PlpConfigError::FloorAboveBootstrap {
+                min_balance_floor: self.min_balance_floor,
+                bootstrap_balance: self.bootstrap_balance,
+            });
+        }
+        Ok(self)
+    }
+}
+
+/// A [`SetPlpConfig`] payload that breaks one shape rule, carried by
+/// [`ExecError::InvalidPlpConfig`] (code 112).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlpConfigError {
+    /// `address` is the all-zero account.
+    ZeroAddress,
+    /// `enabled` is set with a zero `bootstrap_balance`.
+    ZeroBootstrapWhileEnabled { min_balance_floor: u64 },
+    /// `min_balance_floor` exceeds `bootstrap_balance`.
+    FloorAboveBootstrap {
+        min_balance_floor: u64,
+        bootstrap_balance: u64,
+    },
+}
+
+impl fmt::Display for PlpConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PlpConfigError::ZeroAddress => write!(f, "PLP address must be non-zero"),
+            PlpConfigError::ZeroBootstrapWhileEnabled { min_balance_floor } => write!(
+                f,
+                "bootstrap_balance must be positive when enabled \
+                 (bootstrap_balance 0, min_balance_floor {min_balance_floor})"
+            ),
+            PlpConfigError::FloorAboveBootstrap {
+                min_balance_floor,
+                bootstrap_balance,
+            } => write!(
+                f,
+                "min_balance_floor {min_balance_floor} exceeds bootstrap_balance {bootstrap_balance}"
+            ),
+        }
+    }
+}
+
 impl From<SetPlpConfig> for PlpConfig {
     fn from(cmd: SetPlpConfig) -> Self {
         Self {
@@ -1915,7 +1972,7 @@ pub struct PlpConfig {
 
 /// Tier-2 haircut already applied for one pool in one consensus block.
 ///
-/// Stored under `keys::socialized_loss_block_accum(pool_id)`. A record from a
+/// Stored under the retired 0x28 prefix, keyed by pool. A record from a
 /// different height is treated as zero, so the budget resets lazily without an
 /// end-of-block sweep. `applied_micro_usdc` tracks cash actually debited, not
 /// the requested or theoretical cap amount.
@@ -3295,6 +3352,24 @@ impl fmt::Display for PendingTriggerDiscardReason {
     }
 }
 
+/// Why a profitable counterparty was left out of an auto-deleveraging
+/// candidate set. Serialised as a string in ABCI events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AdlSkipReason {
+    /// A market the counterparty's portfolio depends on (a position or a
+    /// resting order) has no fresh oracle verdict, so its solvency is
+    /// indeterminate.
+    StaleOracleDependency = 1,
+}
+
+impl fmt::Display for AdlSkipReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AdlSkipReason::StaleOracleDependency => f.write_str("stale_oracle_dependency"),
+        }
+    }
+}
+
 /// Why a never-resting order filled less than it requested.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnfilledReason {
@@ -4348,6 +4423,14 @@ pub enum Event {
         outcome: crate::liquidation_progress::LiquidationProgress,
         config_sequence: u64,
     },
+    /// A profitable position left out of the deficit's candidate set.
+    AdlCounterpartySkipped {
+        owner: [u8; 20],
+        market: MarketId,
+        pool_id: u8,
+        size: u64,
+        reason: AdlSkipReason,
+    },
 }
 
 impl Event {
@@ -4471,6 +4554,9 @@ pub enum ExecError {
     /// its arm is not admitted (unknown/disallowed arm, non-zero inner
     /// signer, bounds).
     InvalidAdminAction(String),
+    /// A `SetPlpConfig` payload breaks one of its shape rules; the payload
+    /// names which rule and the values that broke it.
+    InvalidPlpConfig(PlpConfigError),
     /// Canonical inner action bytes exceed `MAX_ADMIN_ACTION_BYTES`.
     AdminActionTooLarge {
         max: u32,
@@ -4992,6 +5078,8 @@ impl ExecError {
             ExecError::TooManyActiveEvents { .. } => 96,
             ExecError::MarkUnavailable { .. } => 97,
             ExecError::TriggerOrderIncompatible => 98,
+            ExecError::WithdrawalLimitExceeded { .. } => 99,
+            ExecError::AccountOrderCapReached { .. } => 100,
             ExecError::InsuranceFundingReplayed { .. } => 102,
             ExecError::InsuranceWithdrawalReplayed { .. } => 103,
             ExecError::MarketlessInsurancePool { .. } => 104,
@@ -5001,8 +5089,7 @@ impl ExecError {
             ExecError::InsuranceAllocationOrder { .. } => 108,
             ExecError::InsuranceAllocationZeroAmount { .. } => 109,
             ExecError::InsuranceAmountExceedsI64 { .. } => 110,
-            ExecError::WithdrawalLimitExceeded { .. } => 99,
-            ExecError::AccountOrderCapReached { .. } => 100,
+            ExecError::InvalidPlpConfig(_) => 112,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5322,6 +5409,9 @@ impl ExecError {
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
+            }
+            ExecError::InvalidPlpConfig(_) => {
+                "SetPlpConfig payload breaks a shape rule: zero address, zero bootstrap_balance while enabled, or min_balance_floor above bootstrap_balance."
             }
             ExecError::InsuranceFundingReplayed { .. } => {
                 "Insurance-fund funding id has already executed; each funding id executes at most once."
@@ -5749,6 +5839,7 @@ impl fmt::Display for ExecError {
             ExecError::TriggerOrderIncompatible => {
                 write!(f, "order cannot carry attached SL/TP limbs")
             }
+            ExecError::InvalidPlpConfig(error) => write!(f, "invalid PLP config: {error}"),
             ExecError::InsuranceFundingReplayed { funding_id } => {
                 write!(f, "insurance funding id {} already executed", funding_id.0)
             }
@@ -6308,6 +6399,67 @@ mod tests {
             err.to_string(),
             "order cannot carry attached SL/TP limbs",
             "display rendering is part of the operator contract"
+        );
+    }
+
+    /// Every `SetPlpConfig` shape fault shares code 112 and is told apart by
+    /// its typed payload, which the display names with the offending values.
+    #[test]
+    fn invalid_plp_config_is_code_112_and_names_the_rule() {
+        for (fault, rendered) in [
+            (
+                PlpConfigError::ZeroAddress,
+                "invalid PLP config: PLP address must be non-zero",
+            ),
+            (
+                PlpConfigError::ZeroBootstrapWhileEnabled {
+                    min_balance_floor: 0,
+                },
+                "invalid PLP config: bootstrap_balance must be positive when enabled \
+                 (bootstrap_balance 0, min_balance_floor 0)",
+            ),
+            (
+                PlpConfigError::FloorAboveBootstrap {
+                    min_balance_floor: 1_001,
+                    bootstrap_balance: 1_000,
+                },
+                "invalid PLP config: min_balance_floor 1001 exceeds bootstrap_balance 1000",
+            ),
+        ] {
+            let err = ExecError::InvalidPlpConfig(fault);
+            assert_eq!(err.code(), 112, "code 112 is assigned to PLP shape faults");
+            assert!(err
+                .meaning()
+                .starts_with("SetPlpConfig payload breaks a shape rule"));
+            assert_eq!(err.to_string(), rendered);
+        }
+    }
+
+    /// The skip reason renders as its snake-case literal, next to the owner.
+    #[test]
+    fn adl_counterparty_skipped_renders_owner_and_reason() {
+        let event = Event::AdlCounterpartySkipped {
+            owner: [0xA5; 20],
+            market: 7,
+            pool_id: 1,
+            size: 3,
+            reason: AdlSkipReason::StaleOracleDependency,
+        };
+        let mut writer = crate::abci_event::AbciEventWriter::new();
+        event.encode_abci(&mut writer);
+        let bytes = writer.into_vec();
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            text.contains("adl_counterparty_skipped"),
+            "event type must render: {text}"
+        );
+        assert!(
+            text.contains(&"a5".repeat(20)),
+            "skipped owner must render: {text}"
+        );
+        assert!(
+            text.contains("stale_oracle_dependency"),
+            "skip reason must render its literal: {text}"
         );
     }
 
