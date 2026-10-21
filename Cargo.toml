@@ -181,9 +181,9 @@ proof-wire-derive = { path = "derive", version = "1.2", optional = true }
 # No rand_core feature: the wire layer only verifies and deterministically
 # signs (SigningKey::from_bytes + sign) — nothing generates keys, so nothing
 # pulls getrandom, which would fail to build on wasm32-unknown-unknown.
-ed25519-dalek = { version = "2", optional = true }
-sha2 = { version = "0.10", optional = true }
-sha3 = { version = "0.10", optional = true }
+ed25519-dalek = { version = "=2.2.0", optional = true }
+sha2 = { version = "=0.10.9", optional = true }
+sha3 = { version = "=0.10.8", optional = true }
 
 [[example]]
 name = "decode_tx"
