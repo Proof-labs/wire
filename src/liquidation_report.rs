@@ -43,6 +43,11 @@ impl fmt::Display for LiquidationMode {
 /// event of the account's domain in ascending event order. Empty when the
 /// account holds no event exposure. Renders as `event_id:branch` pairs
 /// joined by commas.
+///
+/// Ratios compare exactly, and negative equity orders by its deficit. The
+/// account query's `binding_scenario` compares whole basis points and
+/// floors every nonpositive ratio at zero, so on a near-tie or between two
+/// insolvent outcomes the two can name different outcomes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BindingOutcome(pub Vec<BindingScenario>);
