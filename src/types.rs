@@ -447,6 +447,8 @@ pub const EMERGENCY_RATE_WINDOW_MS: u64 = 3_600_000;
 // record could be ring-evicted and a reintroduced signer would bypass
 // its rate limit.
 const _: () = assert!(MAX_EMERGENCY_RETAINED >= MAX_EMERGENCY_TOTAL_PER_WINDOW);
+/// Maximum per-pool allocations in one governed insurance transfer.
+pub const MAX_INSURANCE_FUNDING_ALLOCATIONS: usize = 8;
 
 /// Governance domain newtypes: consensus values are never bare
 /// primitives, so misuse is a compile error. All serialize
@@ -535,6 +537,56 @@ impl core::fmt::Display for OwnerAddress {
 /// Number of member approvals required to execute an admin proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SignatureThreshold(pub u32);
+
+/// Identifier of one insurance-fund funding. The engine executes each id at
+/// most once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InsuranceFundingId(pub u64);
+
+/// Identifier of one governed insurance withdrawal, independent of funding IDs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InsuranceWithdrawalId(pub u64);
+
+impl InsuranceWithdrawalId {
+    pub fn to_key_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
+/// Insurance-fund pool, the `pool_id` a market's `MarketConfig` names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InsurancePoolId(pub u8);
+
+impl core::fmt::Display for InsuranceFundingId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::fmt::Display for InsuranceWithdrawalId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::fmt::Display for InsurancePoolId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::fmt::Display for ProposalId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl InsuranceFundingId {
+    /// Big-endian key encoding, so prefix scans yield ascending id order.
+    pub fn to_key_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
 
 impl ProposalId {
     /// Big-endian key encoding, so prefix scans yield ascending id
@@ -807,6 +859,58 @@ pub enum AdminAction {
     /// Replaces the global liquidation configuration. Executes only when
     /// `predecessor` names the stored configuration's sequence.
     SetLiquidationConfig(crate::liquidation_config::SetLiquidationConfig),
+    /// Moves eligible cash from the named account into registered insurance pools.
+    FundInsuranceFund(FundInsuranceFund),
+    /// Moves insurance pool cash to the named account without making a pool negative.
+    WithdrawInsuranceFund(WithdrawInsuranceFund),
+}
+
+/// One pool's share of a [`FundInsuranceFund`], in microUSDC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundAllocation {
+    pub pool_id: InsurancePoolId,
+    /// Non-zero, at most `i64::MAX`.
+    pub amount: u64,
+}
+
+/// Payload of [`AdminAction::FundInsuranceFund`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundInsuranceFund {
+    /// Replay identity: a second execution of the same id is refused.
+    pub funding_id: InsuranceFundingId,
+    /// Account whose debit is authorized by the proposal's admin quorum.
+    pub source: AccountAddress,
+    /// 1..=`MAX_INSURANCE_FUNDING_ALLOCATIONS` allocations in strictly
+    /// ascending `pool_id` order; the debit is their sum.
+    pub allocations: Vec<InsuranceFundAllocation>,
+}
+
+/// Withdrawal allocations are positive pool debits in strictly ascending pool order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawInsuranceFund {
+    pub withdrawal_id: InsuranceWithdrawalId,
+    pub recipient: AccountAddress,
+    pub allocations: Vec<InsuranceFundAllocation>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceWithdrawalRecord {
+    pub recipient: AccountAddress,
+    pub total: u64,
+    pub proposal_id: ProposalId,
+    pub height: u64,
+}
+
+/// Stored receipt of one executed [`FundInsuranceFund`], keyed by its
+/// `funding_id`. Its presence is what refuses a replay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundingRecord {
+    pub source: AccountAddress,
+    /// Sum of the allocations, debited from `source`, in microUSDC.
+    pub total: u64,
+    pub proposal_id: ProposalId,
+    /// Block height of the execution.
+    pub height: u64,
 }
 
 /// Payload of [`AdminAction::SetOperatorReceiptRegistry`]: the operator
@@ -1050,8 +1154,10 @@ pub enum AdminActionType {
     /// Authorizes the sub-account actions (SA-1). Governed like
     /// `UnpauseBridge`: no payload, the quorum execution is the effect.
     EnableSubAccounts = 21,
-    /// Reserved by RT-01: discriminant only, no behaviour.
-    ReservedRt01E = 18,
+    /// Debits the quorum-authorized named account into insurance pools.
+    FundInsuranceFund = 18,
+    /// Withdraws pool insurance cash through the admin quorum.
+    WithdrawInsuranceFund = 25,
 }
 
 impl AdminAction {
@@ -1072,6 +1178,8 @@ impl AdminAction {
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
             Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
+            Self::FundInsuranceFund(_) => AdminActionType::FundInsuranceFund,
+            Self::WithdrawInsuranceFund(_) => AdminActionType::WithdrawInsuranceFund,
             Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
@@ -4094,6 +4202,55 @@ pub enum Event {
         enabled: bool,
         proposal_id: u64,
     },
+    /// A `FundInsuranceFund` debited `amount` (the sum of its allocations)
+    /// from the quorum-authorized named source, leaving `balance_after`.
+    InsuranceSourceDebited {
+        funding_id: InsuranceFundingId,
+        #[serde(with = "crate::wire_bytes")]
+        source: [u8; 20],
+        amount: u64,
+        balance_after: u64,
+        proposal_id: ProposalId,
+    },
+    /// One allocation of a `FundInsuranceFund` credited `amount` to pool
+    /// `pool_id`. `cumulative_funded` is the pool's lifetime funded total
+    /// over every executed funding, this one included — the running audit
+    /// aggregate a consumer chains on without replaying history. The
+    /// balance change itself is also reported by `InsuranceFundUpdated`.
+    InsuranceFundFunded {
+        funding_id: InsuranceFundingId,
+        #[serde(with = "crate::wire_bytes")]
+        source: [u8; 20],
+        pool_id: InsurancePoolId,
+        amount: u64,
+        cumulative_funded: u64,
+        proposal_id: ProposalId,
+    },
+    /// A `WithdrawInsuranceFund` credited `amount` to the named recipient,
+    /// leaving `balance_after`; the per-pool debits follow as
+    /// `InsuranceFundUpdated` + `InsuranceFundWithdrawn` pairs.
+    InsuranceRecipientCredited {
+        withdrawal_id: InsuranceWithdrawalId,
+        #[serde(with = "crate::wire_bytes")]
+        recipient: [u8; 20],
+        amount: u64,
+        balance_after: u64,
+        proposal_id: ProposalId,
+    },
+    /// One allocation of a `WithdrawInsuranceFund` debited `amount` from
+    /// pool `pool_id`. `cumulative_withdrawn` is the pool's lifetime
+    /// governed-withdrawal total, the withdrawal-side counterpart of
+    /// `InsuranceFundFunded.cumulative_funded`; the balance change itself
+    /// is also reported by `InsuranceFundUpdated`.
+    InsuranceFundWithdrawn {
+        withdrawal_id: InsuranceWithdrawalId,
+        #[serde(with = "crate::wire_bytes")]
+        recipient: [u8; 20],
+        pool_id: InsurancePoolId,
+        amount: u64,
+        cumulative_withdrawn: u64,
+        proposal_id: ProposalId,
+    },
     /// The admin quorum wrote (or replaced) the per-account rolling
     /// withdrawal limit (CU-06). Carries the full post-write configuration;
     /// a cap of 0 means the limit is disabled.
@@ -4692,6 +4849,43 @@ pub enum ExecError {
     /// does not admit, while the trigger feature is inactive at this height,
     /// or on a market without an effective enabled trigger policy.
     TriggerOrderIncompatible,
+    /// A `FundInsuranceFund` reused a `funding_id` that already executed.
+    InsuranceFundingReplayed {
+        funding_id: InsuranceFundingId,
+    },
+    InsuranceWithdrawalReplayed {
+        withdrawal_id: InsuranceWithdrawalId,
+    },
+    MarketlessInsurancePool {
+        pool_id: InsurancePoolId,
+    },
+    InsufficientInsuranceBalance {
+        pool_id: InsurancePoolId,
+        balance: i64,
+        requested: u64,
+    },
+    /// The insurance transfer names the zero account as source or recipient.
+    InsuranceTransferZeroAccount,
+    /// The insurance transfer carries `got` allocations; a transfer carries
+    /// 1..=`MAX_INSURANCE_FUNDING_ALLOCATIONS`.
+    InsuranceAllocationCount {
+        got: usize,
+    },
+    /// Two consecutive insurance allocations break the strictly ascending
+    /// pool order.
+    InsuranceAllocationOrder {
+        previous: InsurancePoolId,
+        next: InsurancePoolId,
+    },
+    /// The named pool's insurance allocation is zero.
+    InsuranceAllocationZeroAmount {
+        pool_id: InsurancePoolId,
+    },
+    /// An insurance amount (one allocation or their sum) does not fit the
+    /// signed ledger delta.
+    InsuranceAmountExceedsI64 {
+        amount: u64,
+    },
     /// The account already holds the maximum number of resting orders.
     AccountOrderCapReached {
         max: u64,
@@ -4818,6 +5012,15 @@ impl ExecError {
             ExecError::TooManyActiveEvents { .. } => 96,
             ExecError::MarkUnavailable { .. } => 97,
             ExecError::TriggerOrderIncompatible => 98,
+            ExecError::InsuranceFundingReplayed { .. } => 102,
+            ExecError::InsuranceWithdrawalReplayed { .. } => 103,
+            ExecError::MarketlessInsurancePool { .. } => 104,
+            ExecError::InsufficientInsuranceBalance { .. } => 105,
+            ExecError::InsuranceTransferZeroAccount => 106,
+            ExecError::InsuranceAllocationCount { .. } => 107,
+            ExecError::InsuranceAllocationOrder { .. } => 108,
+            ExecError::InsuranceAllocationZeroAmount { .. } => 109,
+            ExecError::InsuranceAmountExceedsI64 { .. } => 110,
             ExecError::WithdrawalLimitExceeded { .. } => 99,
             ExecError::AccountOrderCapReached { .. } => 100,
             ExecError::InternalError(_) => 255,
@@ -5139,6 +5342,33 @@ impl ExecError {
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
+            }
+            ExecError::InsuranceFundingReplayed { .. } => {
+                "Insurance-fund funding id has already executed; each funding id executes at most once."
+            }
+            ExecError::InsuranceWithdrawalReplayed { .. } => {
+                "Insurance withdrawal id has already executed."
+            }
+            ExecError::MarketlessInsurancePool { .. } => {
+                "Insurance transfer pool has no registered market."
+            }
+            ExecError::InsufficientInsuranceBalance { .. } => {
+                "Insurance withdrawal would make the pool balance negative."
+            }
+            ExecError::InsuranceTransferZeroAccount => {
+                "Insurance transfer names the zero account; a funding source or withdrawal recipient must be a real 20-byte address."
+            }
+            ExecError::InsuranceAllocationCount { .. } => {
+                "Insurance transfer must carry between 1 and the per-transfer allocation cap."
+            }
+            ExecError::InsuranceAllocationOrder { .. } => {
+                "Insurance transfer allocations must list each pool once, in strictly ascending pool order."
+            }
+            ExecError::InsuranceAllocationZeroAmount { .. } => {
+                "An insurance transfer allocation is zero; every allocation moves a positive amount."
+            }
+            ExecError::InsuranceAmountExceedsI64 { .. } => {
+                "An insurance transfer amount, or their sum, exceeds the ledger's signed bound."
             }
             ExecError::AccountOrderCapReached { .. } => {
                 "Account already holds the maximum number of resting orders; cancel one before placing another."
@@ -5539,6 +5769,33 @@ impl fmt::Display for ExecError {
             ExecError::TriggerOrderIncompatible => {
                 write!(f, "order cannot carry attached SL/TP limbs")
             }
+            ExecError::InsuranceFundingReplayed { funding_id } => {
+                write!(f, "insurance funding id {} already executed", funding_id.0)
+            }
+            ExecError::InsuranceWithdrawalReplayed { withdrawal_id } => {
+                write!(f, "insurance withdrawal id {} already executed", withdrawal_id.0)
+            }
+            ExecError::MarketlessInsurancePool { pool_id } => {
+                write!(f, "insurance pool {} has no registered market", pool_id.0)
+            }
+            ExecError::InsufficientInsuranceBalance { pool_id, balance, requested } => {
+                write!(f, "insurance pool {} balance {balance} cannot cover withdrawal {requested}", pool_id.0)
+            }
+            ExecError::InsuranceTransferZeroAccount => {
+                write!(f, "insurance transfer account must be non-zero")
+            }
+            ExecError::InsuranceAllocationCount { got } => {
+                write!(f, "insurance transfer needs 1..={MAX_INSURANCE_FUNDING_ALLOCATIONS} allocations, got {got}")
+            }
+            ExecError::InsuranceAllocationOrder { previous, next } => {
+                write!(f, "insurance transfer pools {} and {} are not in strictly ascending order", previous.0, next.0)
+            }
+            ExecError::InsuranceAllocationZeroAmount { pool_id } => {
+                write!(f, "insurance allocation for pool {} must be non-zero", pool_id.0)
+            }
+            ExecError::InsuranceAmountExceedsI64 { amount } => {
+                write!(f, "insurance amount {amount} exceeds i64::MAX")
+            }
             ExecError::AccountOrderCapReached { max } => {
                 write!(f, "account resting-order cap reached: max {max}")
             }
@@ -5590,6 +5847,30 @@ mod tests {
     fn round_trip(event: &Event) -> Event {
         let bytes = rmp_serde::to_vec(event).expect("event encodes");
         rmp_serde::from_slice(&bytes).expect("event decodes")
+    }
+
+    #[test]
+    fn insurance_source_event_is_account_neutral() {
+        let event = Event::InsuranceSourceDebited {
+            funding_id: InsuranceFundingId(1),
+            source: [2; 20],
+            amount: 300,
+            balance_after: 700,
+            proposal_id: ProposalId(4),
+        };
+        let value = serde_json::to_value(&event).expect("account-neutral event encodes");
+        assert!(value.get("InsuranceSourceDebited").is_some());
+        assert!(value.get("TreasurySourceDebited").is_none());
+        assert!(matches!(
+            round_trip(&event),
+            Event::InsuranceSourceDebited {
+                funding_id,
+                amount: 300,
+                balance_after: 700,
+                proposal_id,
+                ..
+            } if funding_id == InsuranceFundingId(1) && proposal_id == ProposalId(4)
+        ));
     }
 
     /// Appended-variant stability: the two new variants sit at the tail of
@@ -5984,6 +6265,51 @@ mod tests {
         assert_eq!(
             uncommitted.to_string(),
             "oracle verdict unavailable on market 4: no verdict committed for this block"
+        );
+    }
+
+    /// Codes 102–105 are the typed insurance-transfer refusals; each keeps its
+    /// own code so a failed proposal record names the invariant it hit.
+    #[test]
+    fn insurance_funding_errors_have_distinct_stable_codes() {
+        let cases = [
+            (
+                ExecError::InsuranceFundingReplayed {
+                    funding_id: InsuranceFundingId(7),
+                },
+                102,
+            ),
+            (
+                ExecError::InsuranceWithdrawalReplayed {
+                    withdrawal_id: InsuranceWithdrawalId(7),
+                },
+                103,
+            ),
+            (
+                ExecError::MarketlessInsurancePool {
+                    pool_id: InsurancePoolId(255),
+                },
+                104,
+            ),
+            (
+                ExecError::InsufficientInsuranceBalance {
+                    pool_id: InsurancePoolId(0),
+                    balance: 0,
+                    requested: 1,
+                },
+                105,
+            ),
+        ];
+        for (err, code) in cases {
+            assert_eq!(err.code(), code, "{err:?} keeps its assigned code");
+            assert!(!err.meaning().is_empty());
+        }
+        assert_eq!(
+            ExecError::MarketlessInsurancePool {
+                pool_id: InsurancePoolId(255)
+            }
+            .to_string(),
+            "insurance pool 255 has no registered market",
         );
     }
 

@@ -101,10 +101,26 @@ are not outer transaction action bytes.
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
 | 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
 | 0x11 | `SetLiquidationConfig`            | governed; replaces the global liquidation configuration (compare-and-set on its sequence) |
-| 0x12 | `ReservedRt01E`                   | reserved for insurance-fund funding (name not final); discriminant only, no behaviour |
+| 0x12 | `FundInsuranceFund`               | quorum-authorized named-account transfer into pools with registered markets |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
 | 0x15 | `EnableSubAccounts`                | governed; authorizes the sub-account actions (SA-1), one-way |
+| 0x16 | reserved                         | partial-liquidation settings; no behavior in this release |
+| 0x17 | reserved                         | partial-liquidation settings; no behavior in this release |
+| 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
+| 0x19 | `WithdrawInsuranceFund`           | quorum-authorized pool withdrawal to a named account; pool remains nonnegative |
+
+The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
+placeholder `0x13` were never activated. They are not compatibility assignments:
+the merged receipt registry owns `0x14`, and merged #836 owns `0x13`. Consumers
+must pin the revised insurance wire source before qualification or submission.
+
+Insurance transfer events start with the named account movement, followed by
+`InsuranceFundUpdated` and the corresponding funding/withdrawal receipt for
+each allocation in ascending pool order. Funding uses `InsuranceSourceDebited`
+(not a treasury-only account); withdrawal uses `InsuranceRecipientCredited`.
+Action tags, payload bytes and funding/withdrawal replay IDs are unchanged by
+this naming.
 
 The oracle-policy outer `0x2D`, inner `0x0C`, and state prefixes `0x51`–`0x53`
 are reserved now. Admission is disabled by `UPGRADE_HEIGHT_ORACLE_POLICY =
@@ -164,7 +180,6 @@ that gives it behaviour.
 |---|---|---|---|
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
-| Inner admin tags | `0x12` | `AdminActionType` discriminant-only variant | parked: insurance-fund funding |
 
 ## Process for adding a new byte
 
