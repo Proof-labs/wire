@@ -109,6 +109,7 @@ are not outer transaction action bytes.
 | 0x17 | reserved                          | partial-liquidation settings; no behavior in this release |
 | 0x18 | reserved                          | partial-liquidation settings; no behavior in this release |
 | 0x19 | `WithdrawInsuranceFund`           | quorum-authorized pool withdrawal to a named account; pool remains nonnegative |
+| 0x1A | `SetMarginOffsetPolicy`           | governed partial-margin offset policy |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:

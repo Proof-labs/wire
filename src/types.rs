@@ -18,6 +18,11 @@
 
 use core::fmt;
 
+use crate::margin_offsets::{
+    ConditionalMarket, MarginOffsetPairCount, MarginOffsetSequence, OffsetPairIndex,
+    OffsetResolutionTreatment, PartialOffsetBps, PerpetualMarket, SetMarginOffsetPolicy,
+    SettlementReferenceMarket,
+};
 use proof_wire_derive::AbciEvent;
 use serde::{Deserialize, Serialize};
 
@@ -458,6 +463,13 @@ pub const MAX_INSURANCE_FUNDING_ALLOCATIONS: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ProposalId(pub u64);
 
+impl fmt::Display for ProposalId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self(id) = self;
+        id.fmt(f)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EmergencyId(pub u64);
 
@@ -840,6 +852,8 @@ pub enum AdminAction {
     FundInsuranceFund(FundInsuranceFund),
     /// Moves insurance pool cash to the named account without making a pool negative.
     WithdrawInsuranceFund(WithdrawInsuranceFund),
+    /// Replaces the explicit partial-margin offset policy.
+    SetMarginOffsetPolicy(SetMarginOffsetPolicy),
 }
 
 /// One pool's share of a [`FundInsuranceFund`], in microUSDC.
@@ -1135,6 +1149,8 @@ pub enum AdminActionType {
     FundInsuranceFund = 18,
     /// Withdraws pool insurance cash through the admin quorum.
     WithdrawInsuranceFund = 25,
+    /// Replaces the explicit partial-margin offset policy.
+    SetMarginOffsetPolicy = 26,
 }
 
 impl AdminAction {
@@ -1161,6 +1177,7 @@ impl AdminAction {
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
             Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
+            Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
         }
     }
 
@@ -4324,6 +4341,22 @@ pub enum Event {
         owner: [u8; 20],
         outcome: crate::liquidation_progress::LiquidationProgress,
         config_sequence: u64,
+    },
+    /// The complete policy replacement precedes its canonical pair events.
+    MarginOffsetPolicySet {
+        sequence: MarginOffsetSequence,
+        pair_count: MarginOffsetPairCount,
+        proposal_id: ProposalId,
+    },
+    /// One pair in the replacement policy.
+    MarginOffsetPairConfigured {
+        sequence: MarginOffsetSequence,
+        index: OffsetPairIndex,
+        conditional_market: ConditionalMarket,
+        perpetual_market: PerpetualMarket,
+        settlement_reference_market: SettlementReferenceMarket,
+        rate_bps: PartialOffsetBps,
+        resolution: OffsetResolutionTreatment,
     },
 }
 
