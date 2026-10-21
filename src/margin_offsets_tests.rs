@@ -522,3 +522,24 @@ fn an_unknown_length_sequence_is_stopped_at_the_pair_bound() {
         "decoding stops after the first excess element"
     );
 }
+
+#[test]
+fn the_complete_admin_action_has_a_frozen_vector() {
+    let action = crate::types::AdminAction::SetMarginOffsetPolicy(SetMarginOffsetPolicy {
+        predecessor: None,
+        pairs: canonical(vec![pair(1, 2)]),
+    });
+    // Regenerate with: canonical_admin_action_bytes(&action), printed as hex.
+    assert_eq!(
+        hex::encode(crate::codec::canonical_admin_action_bytes(&action).expect("encodes")),
+        "81b55365744d617267696e4f6666736574506f6c69637992c09195010201cd1388b252656d6f76654f6e5265736f6c7574696f6e"
+    );
+    let revoke = crate::types::AdminAction::SetMarginOffsetPolicy(SetMarginOffsetPolicy {
+        predecessor: Some(sequence(1)),
+        pairs: canonical(vec![]),
+    });
+    assert_eq!(
+        hex::encode(crate::codec::canonical_admin_action_bytes(&revoke).expect("encodes")),
+        "81b55365744d617267696e4f6666736574506f6c696379920190"
+    );
+}
