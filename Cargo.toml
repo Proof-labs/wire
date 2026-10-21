@@ -97,6 +97,15 @@ name = "proof-wire"
 # the daemon's LiquidateAccounts only. Bytes that decoded before no longer
 # do -> MAJOR.
 #
+# 3.0.0 -> 4.0.0: the HLP identifiers become PLP (Proof liquidity provider):
+# AdminAction::SetHlpConfig -> SetPlpConfig (inner tag 0x10 unchanged),
+# Event::HlpAbsorbed -> PlpAbsorbed, and Event::HlpConfigUpdated ->
+# PlpConfigUpdated. The derive turns variant names into the ABCI event type
+# strings, so hlp_absorbed and hlp_config_updated become plp_absorbed and
+# plp_config_updated on the event surface, and Rust dependents naming the
+# old variants no longer compile. Action and event tags are unchanged
+# -> MAJOR.
+#
 # 4.0.0 -> 5.0.0: BREAKING wire change. ScheduleUpgrade's protocol_version is
 # replaced by the successor's engine release (major, minor). ScheduleUpgrade
 # bytes of the old shape no longer decode -> MAJOR. Additive in the same
