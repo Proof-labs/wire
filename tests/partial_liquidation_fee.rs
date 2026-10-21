@@ -1,4 +1,4 @@
-//! The `PartialLiquidationFee` and `FullLiquidationFee` receipts: msgpack
+//! The `PartialLiquidationFee` receipt: msgpack
 //! round trip, ABCI attributes and chain-coordinate classification.
 #![allow(clippy::expect_used, clippy::panic)]
 use proof_wire::{abci_event::AbciEventWriter, types::Event};
@@ -35,36 +35,5 @@ fn penalty_receipt_attributes_and_round_trip_are_exact() {
     expected.write_attr_u64("assessed", 5);
     expected.write_attr_u64("collected", 3);
     expected.write_attr_u64("waived", 2);
-    assert_eq!(actual.into_vec(), expected.into_vec());
-}
-
-#[test]
-fn full_close_penalty_receipt_attributes_and_round_trip_are_exact() {
-    let event = Event::FullLiquidationFee {
-        owner: [0xcd; 20],
-        config_sequence: 2,
-        closed_notional: 700,
-        assessed: 7,
-        collected: 4,
-        waived: 3,
-    };
-    let bytes = rmp_serde::to_vec(&event).expect("receipt encodes");
-    let decoded: Event = rmp_serde::from_slice(&bytes).expect("receipt decodes");
-    assert_eq!(
-        rmp_serde::to_vec(&decoded).expect("receipt re-encodes"),
-        bytes
-    );
-    assert!(event.requires_trigger_coordinates());
-
-    let mut actual = AbciEventWriter::new();
-    event.encode_abci(&mut actual);
-    let mut expected = AbciEventWriter::new();
-    expected.begin_event("full_liquidation_fee", 6);
-    expected.write_attr_hex("owner", &[0xcd; 20]);
-    expected.write_attr_u64("config_sequence", 2);
-    expected.write_attr_u64("closed_notional", 700);
-    expected.write_attr_u64("assessed", 7);
-    expected.write_attr_u64("collected", 4);
-    expected.write_attr_u64("waived", 3);
     assert_eq!(actual.into_vec(), expected.into_vec());
 }

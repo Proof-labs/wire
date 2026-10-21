@@ -4319,10 +4319,7 @@ pub enum Event {
         full_close_denominator: u32,
         partial_penalty_bps: u32,
         max_book_orders: u32,
-        max_candidate_prefixes: u32,
         max_committed_fills: u32,
-        max_state_reads: u32,
-        max_state_read_bytes: u32,
         proposal_id: u64,
     },
     /// The partial-liquidation penalty on one book fill that reduced
@@ -4337,22 +4334,6 @@ pub enum Event {
         pool_id: u8,
         fill_id: FillId,
         config_sequence: u64,
-        assessed: u64,
-        collected: u64,
-        waived: u64,
-    },
-    /// The full-liquidation penalty on one completed full close of `owner`,
-    /// charged once when the close ends. `closed_notional` is everything the
-    /// close filled through the book, across blocks and pools; `assessed` is
-    /// the configured penalty rate on it, floored; `collected` is the part
-    /// the owner's eligible equity covered, paid to the pools' insurance
-    /// funds (each credit is its own `InsuranceFundUpdated`); `waived` is the
-    /// rest, which is never owed later. `config_sequence` names the
-    /// liquidation configuration that set the rate.
-    FullLiquidationFee {
-        owner: [u8; 20],
-        config_sequence: u64,
-        closed_notional: u64,
         assessed: u64,
         collected: u64,
         waived: u64,
@@ -4382,7 +4363,6 @@ impl Event {
             self,
             Self::TradeExecuted { .. }
                 | Self::PartialLiquidationFee { .. }
-                | Self::FullLiquidationFee { .. }
                 | Self::LiquidationProgressReported { .. }
                 | Self::PositionTriggersSet { .. }
                 | Self::PositionTriggersCancelled { .. }

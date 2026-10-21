@@ -20,10 +20,7 @@ fn config() -> LiquidationConfig {
         },
         partial_penalty_bps: LiquidationPenaltyBps(100),
         max_book_orders: LiquidationWorkCount(20),
-        max_candidate_prefixes: LiquidationWorkCount(20),
         max_committed_fills: LiquidationWorkCount(10),
-        max_state_reads: LiquidationWorkCount(10_000),
-        max_state_read_bytes: LiquidationReadBytes(1_000_000),
     }
 }
 
@@ -45,16 +42,7 @@ fn set_liquidation_config_bytes_are_positional_and_canonical() {
     let action = AdminAction::SetLiquidationConfig(update(1, 2, config()));
     let bytes = canonical_admin_action_bytes(&action).expect("action encodes");
 
-    let config_fields = (
-        10_500_u32,
-        (2_u32, 3_u32),
-        100_u32,
-        20_u32,
-        20_u32,
-        10_u32,
-        10_000_u32,
-        1_000_000_u32,
-    );
+    let config_fields = (10_500_u32, (2_u32, 3_u32), 100_u32, 20_u32, 10_u32);
     let tagged = BTreeMap::from([("SetLiquidationConfig", (1_u64, 2_u64, config_fields))]);
     assert_eq!(
         bytes,
@@ -65,8 +53,8 @@ fn set_liquidation_config_bytes_are_positional_and_canonical() {
         concat!(
             "81b45365744c69717569646174696f6e436f6e666967", // {"SetLiquidationConfig":
             "930102",                                       // [1, 2,
-            "98cd2904920203641414",                         // [10500, [2, 3], 100, 20, 20,
-            "0acd2710ce000f4240",                           // 10, 10000, 1000000]]}
+            "95cd29049202036414",                           // [10500, [2, 3], 100, 20,
+            "0a",                                           // 10]]}
         )
     );
 
@@ -151,21 +139,11 @@ fn each_bound_refuses_with_the_rule_it_breaks() {
         ),
         (
             LiquidationConfig {
-                max_state_read_bytes: LiquidationReadBytes(0),
+                max_committed_fills: LiquidationWorkCount(0),
                 ..config()
             },
             LiquidationConfigError::ZeroWorkLimit {
-                field: "max_state_read_bytes",
-            },
-        ),
-        (
-            LiquidationConfig {
-                max_committed_fills: LiquidationWorkCount(21),
-                ..config()
-            },
-            LiquidationConfigError::FillsExceedCandidatePrefixes {
-                max_committed_fills: 21,
-                max_candidate_prefixes: 20,
+                field: "max_committed_fills",
             },
         ),
     ];
@@ -193,10 +171,7 @@ fn liquidation_config_set_attributes_are_exact() {
         full_close_denominator: 3,
         partial_penalty_bps: 100,
         max_book_orders: 20,
-        max_candidate_prefixes: 20,
         max_committed_fills: 10,
-        max_state_reads: 10_000,
-        max_state_read_bytes: 1_000_000,
         proposal_id: 7,
     };
     let bytes = rmp_serde::to_vec(&event).expect("event encodes");
@@ -209,17 +184,14 @@ fn liquidation_config_set_attributes_are_exact() {
     let mut actual = AbciEventWriter::new();
     event.encode_abci(&mut actual);
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("liquidation_config_set", 11);
+    expected.begin_event("liquidation_config_set", 8);
     expected.write_attr_u64("sequence", 2);
     expected.write_attr_u64("target_ratio_bps", 10_500);
     expected.write_attr_u64("full_close_numerator", 2);
     expected.write_attr_u64("full_close_denominator", 3);
     expected.write_attr_u64("partial_penalty_bps", 100);
     expected.write_attr_u64("max_book_orders", 20);
-    expected.write_attr_u64("max_candidate_prefixes", 20);
     expected.write_attr_u64("max_committed_fills", 10);
-    expected.write_attr_u64("max_state_reads", 10_000);
-    expected.write_attr_u64("max_state_read_bytes", 1_000_000);
     expected.write_attr_u64("proposal_id", 7);
     assert_eq!(actual.into_vec(), expected.into_vec());
 }

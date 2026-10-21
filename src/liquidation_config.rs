@@ -37,14 +37,10 @@ pub struct FullCloseThreshold {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LiquidationPenaltyBps(pub u32);
 
-/// A bounded count of liquidation work items: book orders visited, candidate
-/// prefixes inspected, fills committed or state reads.
+/// A per-owner, per-block liquidation pacing cap: book orders walked per leg,
+/// or fills committed per owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LiquidationWorkCount(pub u32);
-
-/// A bound on the bytes of state one liquidation attempt may read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct LiquidationReadBytes(pub u32);
 
 /// The liquidation settings shared by every market.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,10 +49,7 @@ pub struct LiquidationConfig {
     pub full_close_threshold: FullCloseThreshold,
     pub partial_penalty_bps: LiquidationPenaltyBps,
     pub max_book_orders: LiquidationWorkCount,
-    pub max_candidate_prefixes: LiquidationWorkCount,
     pub max_committed_fills: LiquidationWorkCount,
-    pub max_state_reads: LiquidationWorkCount,
-    pub max_state_read_bytes: LiquidationReadBytes,
 }
 
 /// The rule a configuration or an update breaks.
@@ -68,13 +61,8 @@ pub enum LiquidationConfigError {
     FullCloseThresholdOutOfRange { numerator: u32, denominator: u32 },
     /// The partial penalty exceeds [`MAX_PARTIAL_PENALTY_BPS`].
     PenaltyAboveMaximum { partial_penalty_bps: u32 },
-    /// A work limit is zero; `field` names the configuration field.
+    /// A pacing cap is zero; `field` names the configuration field.
     ZeroWorkLimit { field: &'static str },
-    /// More fills could commit than candidate prefixes may be inspected.
-    FillsExceedCandidatePrefixes {
-        max_committed_fills: u32,
-        max_candidate_prefixes: u32,
-    },
     /// The update's sequence does not exceed the one it replaces.
     SequenceNotIncreasing {
         predecessor: LiquidationConfigSequence,
@@ -105,13 +93,6 @@ impl core::fmt::Display for LiquidationConfigError {
             Self::ZeroWorkLimit { field } => {
                 write!(f, "work limit {field} must be non-zero")
             }
-            Self::FillsExceedCandidatePrefixes {
-                max_committed_fills,
-                max_candidate_prefixes,
-            } => write!(
-                f,
-                "max committed fills {max_committed_fills} exceeds max candidate prefixes {max_candidate_prefixes}"
-            ),
             Self::SequenceNotIncreasing {
                 predecessor,
                 sequence,
@@ -146,21 +127,12 @@ impl LiquidationConfig {
                 partial_penalty_bps: self.partial_penalty_bps.0,
             });
         }
-        let work_limits = [
+        let limits = [
             ("max_book_orders", self.max_book_orders.0),
-            ("max_candidate_prefixes", self.max_candidate_prefixes.0),
             ("max_committed_fills", self.max_committed_fills.0),
-            ("max_state_reads", self.max_state_reads.0),
-            ("max_state_read_bytes", self.max_state_read_bytes.0),
         ];
-        if let Some((field, _)) = work_limits.iter().find(|(_, limit)| *limit == 0) {
+        if let Some((field, _)) = limits.iter().find(|(_, limit)| *limit == 0) {
             return Err(LiquidationConfigError::ZeroWorkLimit { field });
-        }
-        if self.max_committed_fills > self.max_candidate_prefixes {
-            return Err(LiquidationConfigError::FillsExceedCandidatePrefixes {
-                max_committed_fills: self.max_committed_fills.0,
-                max_candidate_prefixes: self.max_candidate_prefixes.0,
-            });
         }
         Ok(())
     }
