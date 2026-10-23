@@ -168,7 +168,17 @@ name = "proof-wire"
 # liquidation reduced) and Event::LiquidationFailed (with its
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
-version = "7.0.0"
+#
+# 7.0.0 -> 7.1.0: additive wire change (the governed partial-margin offset
+# policy). New AdminAction::SetMarginOffsetPolicy at inner tag 0x1B, the
+# margin_offsets module (MarginOffsetPolicy with a compare-and-set
+# MarginOffsetSequence, MarginOffsetPairs validated into canonical
+# ascending-conditional order on decode, PartialOffsetBps strictly between
+# zero and full netting, OffsetPairIndex, and OffsetResolutionTreatment),
+# and Event::MarginOffsetPolicySet plus Event::MarginOffsetPairConfigured
+# as appended variants. No existing action bytes, event tags or ExecError
+# codes change; pre-existing bytes still decode unchanged -> MINOR.
+version = "7.1.0"
 edition = "2021"
 
 [features]

@@ -15,11 +15,10 @@ use crate::types::{Branch, EventId, MarketId, PositionEpoch, Side};
 /// length-prefixed and TS/JS decoders access by numeric index.
 ///
 /// The enrichment fields are deliberately per-leg anchors, not a decomposed
-/// account-health proof. From schema v9, branch equity applies one debit-only
-/// shock after all firing linear legs are netted by underlying, and CP margin
-/// can be floored at the underlying mark. Therefore clients cannot reconstruct
+/// account-health proof. A conditional marks at its own book, clamped to the
+/// band around the underlying, so clients cannot reconstruct
 /// `AccountInfo.equity`, `total_mm`, or `total_im` by summing PositionBriefs;
-/// those account fields are the canonical scenario/group result.
+/// those account fields are the canonical scenario result.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PositionBrief {
     // ── Raw Position fields (indices 0-5; wire-compatible with Position) ──
@@ -38,21 +37,21 @@ pub struct PositionBrief {
     /// "current mark" — returned as 0 placeholder; use pnl_if_fires /
     /// pnl_if_dies for the full payoff picture.
     pub upnl_now: i64,
-    /// Stand-alone maintenance-margin anchor at the current underlying mark.
-    /// It does not include v9 group netting, the selected branch displacement,
-    /// or the CP `max(branch, U)` scenario floor. For CP/Binary the position
-    /// contributes zero in its non-firing branch. Use `AccountInfo.total_mm`
-    /// for the enforceable account requirement.
+    /// Stand-alone maintenance-margin anchor at the position's own current
+    /// mark. It does not include resting-order reservations or the binding
+    /// account scenario. For CP/Binary the position contributes zero in its
+    /// non-firing branch. Use `AccountInfo.total_mm` for the enforceable
+    /// account requirement.
     pub mm_now: u64,
     /// Stand-alone initial-margin anchor, with the same non-additive contract
-    /// as `mm_now`. Resting orders and scenario/group adjustments live only in
+    /// as `mm_now`. Resting orders and the binding scenario live only in
     /// `AccountInfo.total_im`.
     pub im_now: u64,
     /// V(p, s) when position's branch fires (μ = 1):
     ///     sign(side) × (settle × size − entry × size)
     /// Perp: always fires. CP: fires when event resolves to position's branch.
     /// Binary: fires and settles to BINARY_PRICE_MAX × size. This is a per-leg
-    /// payoff anchor; it excludes the v9 per-underlying debit-only group shock.
+    /// payoff anchor; it excludes resting-order reservations.
     pub pnl_if_fires: i64,
     /// V(p, s) when position's branch does NOT fire (μ = 0). Per-kind:
     ///   * **ConditionalPerp**: 0 (voided side returns IM, no settlement
@@ -83,8 +82,8 @@ pub struct PositionBrief {
     /// lower-IM market rank higher. The account's actual leverage
     /// (notional / equity) does not enter the ranking. `im_now` is this
     /// position's stand-alone current-mark anchor, so this per-position ADL
-    /// heuristic does not encode v9 group margin, branch floors, or the
-    /// binding account scenario.
+    /// heuristic does not encode resting-order reservations or the binding
+    /// account scenario.
     ///
     /// Returned as 0 for losing positions (they're never ADL'd — only
     /// the cascading-counterparty's profitable opposites are at risk).
@@ -155,9 +154,12 @@ pub struct AccountInfo {
     pub volume_30d_micro_usdc: u64,
     /// Mark-to-market account value in microUSDC for portfolio charts.
     ///
-    /// Unlike `equity`, this is not the worst-case resolution-scenario floor.
+    /// Unlike `equity`, this does not select a binding resolution scenario.
     /// It uses oracle marks for perps and child-market marks for event books,
     /// and is intended for "what could I cash out around now?" display surfaces.
+    /// Child marks are raw trade EWMAs, not the clamped scenario marks.
+    /// This display is neither guaranteed execution proceeds nor a
+    /// conservative bound on scenario equity.
     /// Trailing field (index 9); older clients may ignore it.
     #[serde(default)]
     pub cashout_equity: i64,
