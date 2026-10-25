@@ -859,10 +859,50 @@ pub enum AdminAction {
     /// Replaces the global liquidation configuration. Executes only when
     /// `predecessor` names the stored configuration's sequence.
     SetLiquidationConfig(crate::liquidation_config::SetLiquidationConfig),
-    /// Moves eligible cash from the named account into registered insurance pools.
+    /// Transfers cash from the named account to each pool's insurance account.
     FundInsuranceFund(FundInsuranceFund),
-    /// Moves insurance pool cash to the named account without making a pool negative.
+    /// Transfers cash from each pool's insurance account to the named account.
     WithdrawInsuranceFund(WithdrawInsuranceFund),
+    /// Executes one whitelisted action as a pool's insurance account:
+    /// ApproveAgent, RevokeAgent, SetUserMarketLeverage, ClosePosition or a
+    /// cancel.
+    ExecInsuranceFund(ExecInsuranceFund),
+}
+
+/// The canonical MessagePack encoding of one [`crate::codec::Action`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionBlob(#[serde(with = "serde_bytes")] pub Vec<u8>);
+
+/// Payload of [`AdminAction::ExecInsuranceFund`]: an action the admin quorum
+/// executes as the insurance account of `pool_id`, which must be its owner.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ExecInsuranceFund {
+    pub pool_id: InsurancePoolId,
+    pub action: ActionBlob,
+}
+
+/// Why an [`ExecInsuranceFund`] action was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsuranceActionRefusal {
+    /// The bytes do not decode as an action.
+    Undecodable,
+    /// The bytes decode but are not the action's canonical encoding.
+    NotCanonical,
+    /// The action is not one an insurance account may take.
+    NotPermitted,
+    /// The action acts for an account other than the pool's insurance account.
+    WrongOwner,
+}
+
+impl core::fmt::Display for InsuranceActionRefusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Undecodable => "undecodable",
+            Self::NotCanonical => "not canonical",
+            Self::NotPermitted => "not permitted",
+            Self::WrongOwner => "wrong owner",
+        })
+    }
 }
 
 /// One pool's share of a [`FundInsuranceFund`], in microUSDC.
@@ -1215,6 +1255,8 @@ pub enum AdminActionType {
     FundInsuranceFund = 18,
     /// Withdraws pool insurance cash through the admin quorum.
     WithdrawInsuranceFund = 25,
+    /// Executes a whitelisted action as a pool's insurance account.
+    ExecInsuranceFund = 26,
 }
 
 impl AdminAction {
@@ -1237,6 +1279,7 @@ impl AdminAction {
             Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
             Self::FundInsuranceFund(_) => AdminActionType::FundInsuranceFund,
             Self::WithdrawInsuranceFund(_) => AdminActionType::WithdrawInsuranceFund,
+            Self::ExecInsuranceFund(_) => AdminActionType::ExecInsuranceFund,
             Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
@@ -1734,10 +1777,8 @@ pub struct MarketConfig {
     /// other pools. The full waterfall is PLP → per-pool IF → socialized
     /// loss → ADL.
     ///
-    /// Defaults to 0 so existing on-chain MarketConfigs (written before
-    /// per-pool IF existed) all map to the legacy single-IF behavior.
-    /// Pool 0 reads/writes route to the legacy `INSURANCE_FUND` key,
-    /// preserving balance continuity across the upgrade.
+    /// Defaults to 0. Each pool's insurance fund is the account at
+    /// `derive_vault(Vault::Insurance(pool_id))`.
     ///
     /// At launch we run two pools:
     ///   * Pool 0 — BTC/ETH/SOL perps + their conditional perps (the
@@ -3734,17 +3775,13 @@ pub enum Event {
         /// Realized PnL in micro-USDC (negative means a loss).
         realized_pnl: i64,
     },
-    /// Insurance fund balance changed (e.g., from liquidation surplus/deficit).
-    /// Per-pool variant — the legacy event without `pool_id` continues to
-    /// be emitted for pool 0 to preserve consumer compatibility.
+    /// A pool's insurance account balance changed.
     InsuranceFundUpdated {
-        /// Pool the change applied to. 0 for legacy/majors pool (the
-        /// bare `InsuranceFund` state key); 1+ for newer pools keyed
-        /// under `InsuranceFundByPool`. Added 2026-04-25 with the
-        /// four-tier waterfall.
         #[serde(default)]
         pool_id: u8,
-        /// New total balance in micro-USDC (can be negative if fund is depleted).
+        /// The fund after the change in micro-USDC: the insurance account's
+        /// cash less the pool's debt, negative when the pool owes more than
+        /// it holds.
         balance: i64,
         /// Change amount in micro-USDC (positive = inflow, negative = outflow).
         delta: i64,
@@ -4984,6 +5021,16 @@ pub enum ExecError {
     InsuranceAmountExceedsI64 {
         amount: u64,
     },
+    /// A direct withdrawal names a pool's insurance account; its cash leaves
+    /// only through `WithdrawInsuranceFund`.
+    InsuranceAccountWithdrawal {
+        pool_id: InsurancePoolId,
+    },
+    /// An `ExecInsuranceFund` action was refused.
+    InsuranceActionRefused {
+        pool_id: InsurancePoolId,
+        reason: InsuranceActionRefusal,
+    },
     /// The account already holds the maximum number of resting orders.
     AccountOrderCapReached {
         max: u64,
@@ -5126,6 +5173,8 @@ impl ExecError {
             ExecError::InsuranceAmountExceedsI64 { .. } => 110,
             ExecError::LiquidationRefused(_) => 111,
             ExecError::InvalidPlpConfig(_) => 112,
+            ExecError::InsuranceAccountWithdrawal { .. } => 113,
+            ExecError::InsuranceActionRefused { .. } => 114,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5478,6 +5527,12 @@ impl ExecError {
             }
             ExecError::AccountOrderCapReached { .. } => {
                 "Account already holds the maximum number of resting orders; cancel one before placing another."
+            }
+            ExecError::InsuranceAccountWithdrawal { .. } => {
+                "Direct withdrawal names an insurance account; insurance cash leaves only through a governed insurance withdrawal."
+            }
+            ExecError::InsuranceActionRefused { .. } => {
+                "Governed insurance action is undecodable, not canonical, not permitted for an insurance account, or not owned by the pool's insurance account."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -5911,6 +5966,12 @@ impl fmt::Display for ExecError {
             }
             ExecError::LiquidationRefused(refusal) => {
                 write!(f, "liquidation refused: {refusal}")
+            }
+            ExecError::InsuranceAccountWithdrawal { pool_id } => {
+                write!(f, "pool {} insurance account cannot be withdrawn directly", pool_id.0)
+            }
+            ExecError::InsuranceActionRefused { pool_id, reason } => {
+                write!(f, "pool {} insurance action refused: {reason}", pool_id.0)
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }

@@ -1,7 +1,7 @@
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha3::{Digest, Keccak256};
 
-use crate::types::{ExecError, OwnerAddress};
+use crate::types::{ExecError, InsurancePoolId, OwnerAddress};
 
 /// Domain separator for v3 signing messages. Bumped from v2 when the
 /// envelope gained a 32-byte `chain_id` binding: v2 had no chain ID,
@@ -46,6 +46,39 @@ pub fn derive_sub_account(master: &OwnerAddress, sub_account_id: u32) -> OwnerAd
     preimage.extend_from_slice(SUB_ACCOUNT_DERIVATION_DOMAIN);
     preimage.extend_from_slice(master.as_bytes());
     preimage.extend_from_slice(&sub_account_id.to_be_bytes());
+    let hash = Keccak256::digest(&preimage);
+    let mut out = [0u8; 20];
+    out.copy_from_slice(&hash[..20]);
+    OwnerAddress::new(out)
+}
+
+/// Domain separator for protocol vault addresses.
+pub const VAULT_DERIVATION_DOMAIN: &[u8] = b"ProofExchange-vault-v1";
+
+/// A protocol-owned account whose address is derived, not keyed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Vault {
+    Insurance(InsurancePoolId),
+}
+
+impl Vault {
+    fn kind(self) -> u8 {
+        match self {
+            Self::Insurance(_) => 0,
+        }
+    }
+}
+
+/// `Keccak256(VAULT_DERIVATION_DOMAIN || kind(1) || id)[0..20]`, where the
+/// insurance vault's kind is 0 and its id is the pool byte. No key exists for
+/// a vault address, so it can never sign. Frozen like [`derive_sub_account`].
+pub fn derive_vault(vault: Vault) -> OwnerAddress {
+    let mut preimage = Vec::with_capacity(VAULT_DERIVATION_DOMAIN.len().saturating_add(2));
+    preimage.extend_from_slice(VAULT_DERIVATION_DOMAIN);
+    preimage.push(vault.kind());
+    match vault {
+        Vault::Insurance(pool) => preimage.push(pool.0),
+    }
     let hash = Keccak256::digest(&preimage);
     let mut out = [0u8; 20];
     out.copy_from_slice(&hash[..20]);
@@ -313,6 +346,33 @@ mod tests {
                     "domain {domain:?} reproduced a frozen sub-account address"
                 );
             }
+        }
+    }
+
+    /// Regenerate: print `derive_vault` for each pool and paste the hex.
+    #[test]
+    fn derive_vault_golden_vectors_are_frozen() {
+        let vectors: [(u8, &str); 3] = [
+            (0, "f87da77f118cfaead95a77acb4b79ae9b765e425"),
+            (1, "06c04f4a7a58785bbfecc565a4799ad600bb18f4"),
+            (u8::MAX, "950957025e3ad4a58c8f42f0347a7e22a7573219"),
+        ];
+        for (pool, expected) in vectors {
+            let derived = derive_vault(Vault::Insurance(InsurancePoolId(pool)));
+            let hex: String = derived
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(
+                hex, expected,
+                "frozen insurance vault vector changed for pool {pool}"
+            );
+            assert_ne!(
+                derived,
+                derive_sub_account(&OwnerAddress::new([pool; 20]), u32::from(pool)),
+                "vault and sub-account domains collide"
+            );
         }
     }
 

@@ -339,6 +339,26 @@ pub fn admin_proposal_content_hash(
     Ok(h.finalize().into())
 }
 
+impl crate::types::ActionBlob {
+    /// Encode `action` canonically.
+    pub fn encode(action: &Action) -> Result<Self, ExecError> {
+        rmp_serde::to_vec(action)
+            .map(Self)
+            .map_err(|e| ExecError::DecodeError(e.to_string()))
+    }
+
+    /// Decode the action, refusing any encoding but the canonical one.
+    pub fn decode(&self) -> Result<Action, crate::types::InsuranceActionRefusal> {
+        use crate::types::InsuranceActionRefusal;
+        let action: Action =
+            rmp_serde::from_slice(&self.0).map_err(|_| InsuranceActionRefusal::Undecodable)?;
+        match Self::encode(&action) {
+            Ok(canonical) if canonical == *self => Ok(action),
+            _ => Err(InsuranceActionRefusal::NotCanonical),
+        }
+    }
+}
+
 /// Byte buffer that always serializes as msgpack `bin` (0xc4/c5/c6),
 /// never as msgpack `array` (0xdc/0xdd). Used in `WireTxEnvelope` fields
 /// that must match the Go CheckTx parser's wire format.
@@ -2077,6 +2097,58 @@ mod tests {
         assert_eq!(AdminActionType::FundInsuranceFund as u8, 18);
         assert_eq!(AdminActionType::SetOperatorReceiptRegistry as u8, 20);
         assert_eq!(AdminActionType::WithdrawInsuranceFund as u8, 25);
+        assert_eq!(AdminActionType::ExecInsuranceFund as u8, 26);
+    }
+
+    /// Frozen wire vector for a governed insurance action. To regenerate
+    /// after an intended layout change, print
+    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())`.
+    #[test]
+    fn exec_insurance_fund_wire_vector_frozen() {
+        use crate::types::{ActionBlob, ExecInsuranceFund, InsurancePoolId};
+        let inner = Action::CancelAllOrders(CancelAllOrders {
+            owner: [0xAB; 20],
+            market: Some(7),
+        });
+        let action = AdminAction::ExecInsuranceFund(ExecInsuranceFund {
+            pool_id: InsurancePoolId(2),
+            action: ActionBlob::encode(&inner).expect("inner action encodes"),
+        });
+        assert_eq!(action.action_type(), AdminActionType::ExecInsuranceFund);
+        assert_eq!(
+            hex_string(&canonical_admin_action_bytes(&action).expect("encodes canonically")),
+            "81b145786563496e737572616e636546756e649202c43e81af43616e63656c416c6c4f726465727392dc0014ccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccab07",
+            "frozen ExecInsuranceFund wire vector drifted"
+        );
+    }
+
+    #[test]
+    fn action_blob_decodes_only_its_canonical_encoding() {
+        use crate::types::{ActionBlob, InsuranceActionRefusal};
+        let inner = Action::CancelAllOrders(CancelAllOrders {
+            owner: [0xAB; 20],
+            market: None,
+        });
+        let blob = ActionBlob::encode(&inner).expect("inner action encodes");
+        assert!(matches!(
+            blob.decode(),
+            Ok(Action::CancelAllOrders(CancelAllOrders {
+                market: None,
+                ..
+            }))
+        ));
+        assert_eq!(
+            ActionBlob(vec![0xC1]).decode().map(|_| ()),
+            Err(InsuranceActionRefusal::Undecodable)
+        );
+        let mut padded = blob.0.clone();
+        // A trailing byte still decodes the same action but is not canonical.
+        padded.push(0xC0);
+        let padded = ActionBlob(padded);
+        assert!(matches!(
+            padded.decode().map(|_| ()),
+            Err(InsuranceActionRefusal::NotCanonical | InsuranceActionRefusal::Undecodable)
+        ));
     }
 
     #[test]
@@ -2276,7 +2348,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 21] = [
+        const ALL_INNER_TAGS: [AdminActionType; 22] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2298,6 +2370,7 @@ mod tests {
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
             AdminActionType::EnableSubAccounts,
+            AdminActionType::ExecInsuranceFund,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2321,7 +2394,8 @@ mod tests {
                 | AdminActionType::WithdrawInsuranceFund
                 | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry
-                | AdminActionType::EnableSubAccounts => {}
+                | AdminActionType::EnableSubAccounts
+                | AdminActionType::ExecInsuranceFund => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket => {
