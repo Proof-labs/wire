@@ -110,6 +110,7 @@ are not outer transaction action bytes.
 | 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x19 | `WithdrawInsuranceFund`           | quorum-authorized transfer from pool insurance accounts to a named account |
 | 0x1A | `ExecInsuranceFund`               | quorum executes one whitelisted action (agent approve/revoke, leverage, close position, cancels) as a pool's insurance account |
+| 0x1B | `SetMarginOffsetPolicy`            | governed; replaces the explicit partial-margin offset policy (compare-and-set on its sequence) |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:

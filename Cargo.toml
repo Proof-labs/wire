@@ -169,6 +169,16 @@ name = "proof-wire"
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
 #
+# Unreleased: additive wire change (the governed partial-margin offset
+# policy). New AdminAction::SetMarginOffsetPolicy at inner tag 0x1B, the
+# margin_offsets module (MarginOffsetPolicy with a compare-and-set
+# MarginOffsetSequence, MarginOffsetPairs validated into canonical
+# ascending-conditional order on decode, PartialOffsetBps strictly between
+# zero and full netting, OffsetPairIndex, and OffsetResolutionTreatment),
+# and Event::MarginOffsetPolicySet plus Event::MarginOffsetPairConfigured
+# as appended variants. No existing action bytes, event tags or ExecError
+# codes change; pre-existing bytes still decode unchanged -> MINOR.
+#
 # Unreleased: the proposer-injected LiquidateAccounts (0x1D) and
 # ExecuteTriggers (0x2F) carry the height of the block they are proposed
 # for as the envelope seq, so the same batch in two blocks has two

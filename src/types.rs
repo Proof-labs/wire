@@ -18,6 +18,11 @@
 
 use core::fmt;
 
+use crate::margin_offsets::{
+    ConditionalMarket, MarginOffsetPairCount, MarginOffsetSequence, OffsetPairIndex,
+    OffsetResolutionTreatment, PartialOffsetBps, PerpetualMarket, SetMarginOffsetPolicy,
+    SettlementReferenceMarket,
+};
 use proof_wire_derive::AbciEvent;
 use serde::{Deserialize, Serialize};
 
@@ -244,14 +249,14 @@ pub enum MarkSourceMode {
 /// excluded from the median when the top-of-book spread exceeds this.
 pub const DEFAULT_MAX_MARK_SPREAD_BPS: u32 = 100;
 
-/// Built-in clamp for conditional branch shocks used by scenario margin.
+/// Built-in clamp for a conditional's own mark, used by scenario margin.
 ///
-/// Branch shocks are inferred from child CPY/CPN top-of-book mids. Those
-/// books can be thin, so consensus margin must not let one dust quote mark
-/// an underlying to an arbitrary price. The shock remains useful for
-/// resolution-risk margin, but is bounded to ±25% around the current
-/// underlying mark unless a future config field overrides it.
-pub const DEFAULT_BRANCH_SHOCK_CLAMP_BPS: u32 = 2_500;
+/// A conditional marks at its own book, but its book can be thin, so
+/// consensus margin must not let one print move that mark arbitrarily far
+/// from the underlying it settles against. The mark is bounded to ±25%
+/// around the current underlying mark unless a future config field
+/// overrides it.
+pub const DEFAULT_CONDITIONAL_MARK_CLAMP_BPS: u32 = 2_500;
 
 /// Built-in default staleness threshold for the composite-CEX price,
 /// used when `MarketConfig.cex_composite_staleness_ms` is `0`. 30s
@@ -867,6 +872,8 @@ pub enum AdminAction {
     /// ApproveAgent, RevokeAgent, SetUserMarketLeverage, ClosePosition or a
     /// cancel.
     ExecInsuranceFund(ExecInsuranceFund),
+    /// Replace explicit partial-margin offset eligibility and rates.
+    SetMarginOffsetPolicy(SetMarginOffsetPolicy),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1257,6 +1264,8 @@ pub enum AdminActionType {
     WithdrawInsuranceFund = 25,
     /// Executes a whitelisted action as a pool's insurance account.
     ExecInsuranceFund = 26,
+    /// Replaces the explicit partial-margin offset policy.
+    SetMarginOffsetPolicy = 27,
 }
 
 impl AdminAction {
@@ -1284,6 +1293,7 @@ impl AdminAction {
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
             Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
+            Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
         }
     }
 
@@ -1743,32 +1753,17 @@ pub struct MarketConfig {
     /// because their MMs don't re-quote as often.
     #[serde(default)]
     pub default_ttl_ms: u64,
-    /// When true, this market's firing legs participate in net-delta
-    /// margin aggregation: all firing legs within a scenario that share
-    /// the same underlying market are combined into a single net position
-    /// for MM/IM. Charges `|Σ signed_size| × settle × weighted_bps` rather
-    /// than summing bps-on-notional per leg.
+    /// Reserved; grants no margin relief.
     ///
-    /// Scope: only Perp and ConditionalPerp. PredictionBinary legs are
-    /// always charged per-leg (they don't add linear delta to their
-    /// underlying). Flag on a binary's MarketConfig is ignored for
-    /// grouping.
+    /// The launch margin rule charges every firing leg its own mark and
+    /// rate. Cross-instrument relief requires an approved partial-offset
+    /// policy: an explicit eligible pair, a shared settlement reference, a
+    /// partial credit rate, and a resolution treatment. This boolean
+    /// expresses none of those, so it is kept only so existing records and
+    /// admin updates keep their wire shape.
     ///
-    /// Grouping key: the underlying perp market id. For a perp, that's
-    /// the perp itself. For a conditional perp, it's the perp its event
-    /// attachment names as `underlying_market`. Two legs group iff
-    /// they share the same underlying AND both have `net_delta_margin=true`
-    /// AND both fire in the current scenario.
-    ///
-    /// Within a group: `mm = |Σ signed_size| × settle × weighted_mm_bps /
-    /// 10_000`, where `weighted_mm_bps = Σ(|size_i| × mm_bps_i) / Σ|size_i|`.
-    /// Same formula for IM with im_bps. The group charge is floored at the
-    /// margin of its perp legs alone, so a perp hedged by conditionals
-    /// (net_signed = 0) is charged like the perp.
-    ///
-    /// Default: false — legacy per-leg scenario margin behavior.
-    /// `#[serde(default)]` keeps existing on-chain MarketConfig records
-    /// decoding correctly.
+    /// Default: false. `#[serde(default)]` keeps existing on-chain
+    /// MarketConfig records decoding correctly.
     #[serde(default)]
     pub net_delta_margin: bool,
     /// Insurance-fund pool grouping. Markets with the same `pool_id`
@@ -3076,16 +3071,12 @@ pub struct UpdateMarketFees {
     /// book permanently one-sided — see `run_order_expiry` docstring.
     #[serde(default)]
     pub default_ttl_ms: Option<u64>,
-    /// Flip the net-delta portfolio margin flag on this market.
-    /// `None` = leave unchanged. `Some(true)` enables net-delta
-    /// grouping for firing legs on this market's underlying; `Some(false)`
-    /// falls back to per-leg scenario margin.
+    /// Set the reserved net-delta flag on this market.
+    /// `None` = leave unchanged.
     ///
-    /// See `MarketConfig::net_delta_margin` for the semantics. Flipping
-    /// this on a live market changes MM/IM for existing positions
-    /// on the next check — operators should model the impact before
-    /// flipping to `false` (could push accounts under MM) but
-    /// flipping to `true` is always safe (can only relieve MM).
+    /// The flag grants no relief under the launch margin rule; it is kept
+    /// so admin updates retain their wire shape. See
+    /// `MarketConfig::net_delta_margin`.
     #[serde(default)]
     pub net_delta_margin: Option<bool>,
     /// Tick size in micro-USDC. `None` = leave unchanged. Setting to 0
@@ -3152,13 +3143,14 @@ pub struct UpdateMarketFees {
     #[serde(default)]
     pub fee_tiers: Option<Vec<FeeTier>>,
     /// New initial margin ratio in basis points. `None` = leave unchanged.
-    /// Operators use this to tighten live markets after a risk-policy cutover;
-    /// it must be >= the current value and is enforced on the next IM/MM check.
+    /// Governed increases and decreases apply on the next check. The paired
+    /// effective rates must satisfy `0 < mm_bps <= im_bps <= 10_000`.
     #[serde(default)]
     pub im_bps: Option<u32>,
     /// New maintenance margin ratio in basis points. `None` = leave unchanged.
-    /// Must be >= the current value and satisfy `0 < mm_bps <= im_bps` after
-    /// applying any paired IM update.
+    /// Must satisfy `0 < mm_bps <= im_bps` after any paired IM update.
+    /// An unresolved conditional may not fall below its underlying's MM;
+    /// an underlying may not rise above any unresolved attached conditional.
     #[serde(default)]
     pub mm_bps: Option<u32>,
     /// New aggregate open-interest cap in contracts. `None` = leave
@@ -4503,6 +4495,32 @@ pub enum Event {
         code: u32,
         refusal: Option<crate::liquidation_report::LiquidationRefusal>,
     },
+    /// The admin quorum wrote (or replaced) the explicit partial-margin
+    /// offset policy. Emitted once before that policy's pair events, in
+    /// pair order: this summary carries the new sequence and the pair
+    /// count; each pair follows as a `MarginOffsetPairConfigured` with the
+    /// same `sequence`. A `pair_count` of 0 is the legitimate empty policy
+    /// (no offsets) and emits this summary alone.
+    MarginOffsetPolicySet {
+        sequence: MarginOffsetSequence,
+        pair_count: MarginOffsetPairCount,
+        proposal_id: ProposalId,
+    },
+    /// One eligible pair of the offset policy named by the preceding
+    /// `MarginOffsetPolicySet` with the same `sequence`. `rate_bps` is the
+    /// fraction of the matched legs' combined margin charge the offset
+    /// credits; `settlement_reference_market` is the market whose
+    /// engine-certified price both legs settle against; `resolution` is what
+    /// happens to the credit when the conditional resolves.
+    MarginOffsetPairConfigured {
+        sequence: MarginOffsetSequence,
+        index: OffsetPairIndex,
+        conditional_market: ConditionalMarket,
+        perpetual_market: PerpetualMarket,
+        settlement_reference_market: SettlementReferenceMarket,
+        rate_bps: PartialOffsetBps,
+        resolution: OffsetResolutionTreatment,
+    },
 }
 
 impl Event {
@@ -4798,11 +4816,11 @@ pub enum ExecError {
     MarkUnavailable {
         market: MarketId,
     },
-    /// Net-delta margin grouping found legs of the same group with
-    /// disagreeing settle prices — upstream data corruption (different
-    /// markets in the same `underlying_market_id` group should resolve
-    /// to identical settles per scenario). Distinct from `Overflow`,
-    /// which the same path used to return as a placeholder.
+    /// Retained for the stable error-code map; no current producer.
+    ///
+    /// Raised by the removed net-delta grouping when legs of one group
+    /// reported disagreeing settle prices. Cross-instrument relief is not
+    /// part of the launch margin rule, so nothing constructs this now.
     SettlementPriceMismatch {
         market: MarketId,
         expected: u64,
@@ -5465,8 +5483,8 @@ impl ExecError {
                  mark exists."
             }
             ExecError::SettlementPriceMismatch { .. } => {
-                "Net-delta margin grouping found legs with disagreeing settle prices (data corruption \
-                 across same `underlying_market_id`)."
+                "Reserved error code; the net-delta grouping that raised it is not part of the \
+                 launch margin rule."
             }
             ExecError::OracleNotApplicable { .. } => {
                 "OracleUpdate targets an impact-family market (CPY/CPN/EBY), which marks off the book \

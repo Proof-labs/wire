@@ -25,6 +25,8 @@ pub mod liquidation_progress;
 #[cfg(feature = "full")]
 pub mod liquidation_report;
 #[cfg(feature = "full")]
+pub mod margin_offsets;
+#[cfg(feature = "full")]
 pub mod query;
 #[cfg(feature = "full")]
 pub mod triggers;
