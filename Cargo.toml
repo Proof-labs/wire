@@ -160,7 +160,7 @@ name = "proof-wire"
 # enum. No existing action bytes, existing event tags or ExecError codes
 # change; pre-existing bytes still decode unchanged -> MINOR.
 #
-# Unreleased: breaking wire change (deterministic book liquidation).
+# 6.4.0 -> 7.0.0: breaking wire change (deterministic book liquidation).
 # LiquidationConfig, SetLiquidationConfig and Event::LiquidationConfigSet
 # drop max_candidate_prefixes, max_state_reads and max_state_read_bytes, so
 # their 6.4.0 bytes no longer decode; Event::FullLiquidationFee is removed
@@ -169,7 +169,7 @@ name = "proof-wire"
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
 #
-# 7.0.0 -> 7.1.0: additive wire change (the governed partial-margin offset
+# Unreleased: additive wire change (the governed partial-margin offset
 # policy). New AdminAction::SetMarginOffsetPolicy at inner tag 0x1B, the
 # margin_offsets module (MarginOffsetPolicy with a compare-and-set
 # MarginOffsetSequence, MarginOffsetPairs validated into canonical
@@ -178,7 +178,24 @@ name = "proof-wire"
 # and Event::MarginOffsetPolicySet plus Event::MarginOffsetPairConfigured
 # as appended variants. No existing action bytes, event tags or ExecError
 # codes change; pre-existing bytes still decode unchanged -> MINOR.
-version = "7.1.0"
+#
+# Unreleased: the proposer-injected LiquidateAccounts (0x1D) and
+# ExecuteTriggers (0x2F) carry the height of the block they are proposed
+# for as the envelope seq, so the same batch in two blocks has two
+# transaction hashes. encode_liquidate_accounts_tx and
+# encode_execute_triggers_tx take a BlockHeight (never zero), and
+# canonical_action_type refuses the unstamped seq = 0 form; consensus
+# refuses any stamp other than the block's own height. Payloads and envelope
+# layout are unchanged and pre-existing bytes still decode, but the
+# unstamped form is no longer canonical and Rust callers of the two
+# encoders no longer compile -> MAJOR.
+#
+# Unreleased: MarketConfig and UpdateMarketFees drop
+# partial_liquidation_enabled, the per-market partial-liquidation flag; every
+# market liquidates the same way. Both are positional arrays, so their 7.0.0
+# bytes no longer decode and every field after the flag moves up one
+# position -> MAJOR.
+version = "8.0.0"
 edition = "2021"
 
 [features]
@@ -239,6 +256,10 @@ required-features = ["full"]
 
 [[test]]
 name = "liquidation_report"
+required-features = ["full"]
+
+[[test]]
+name = "injected_tx_height"
 required-features = ["full"]
 
 [dev-dependencies]

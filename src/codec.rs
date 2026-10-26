@@ -339,6 +339,26 @@ pub fn admin_proposal_content_hash(
     Ok(h.finalize().into())
 }
 
+impl crate::types::ActionBlob {
+    /// Encode `action` canonically.
+    pub fn encode(action: &Action) -> Result<Self, ExecError> {
+        rmp_serde::to_vec(action)
+            .map(Self)
+            .map_err(|e| ExecError::DecodeError(e.to_string()))
+    }
+
+    /// Decode the action, refusing any encoding but the canonical one.
+    pub fn decode(&self) -> Result<Action, crate::types::InsuranceActionRefusal> {
+        use crate::types::InsuranceActionRefusal;
+        let action: Action =
+            rmp_serde::from_slice(&self.0).map_err(|_| InsuranceActionRefusal::Undecodable)?;
+        match Self::encode(&action) {
+            Ok(canonical) if canonical == *self => Ok(action),
+            _ => Err(InsuranceActionRefusal::NotCanonical),
+        }
+    }
+}
+
 /// Byte buffer that always serializes as msgpack `bin` (0xc4/c5/c6),
 /// never as msgpack `array` (0xdc/0xdd). Used in `WireTxEnvelope` fields
 /// that must match the Go CheckTx parser's wire format.
@@ -386,9 +406,10 @@ pub const SUPPORTED_ENVELOPE_VERSIONS: &[u8] = &[ENVELOPE_VERSION];
 /// Largest canonical unsigned `LiquidateAccounts` transaction admitted by
 /// schema-v9 proposal policy. The payload maximum is 11,012 bytes for 256
 /// owners whose 20 address bytes all require MessagePack `uint8`; the fixed
-/// envelope contributes 107 bytes (fixarray/version/tag/seq, bin16 payload
-/// header, bin8 pubkey, and bin8 signature).
-pub const MAX_LIQUIDATE_ACCOUNTS_TX_BYTES: usize = 11_119;
+/// envelope contributes 115 bytes (fixarray/version/tag, a `uint64` seq
+/// carrying the block height, bin16 payload header, bin8 pubkey, and bin8
+/// signature).
+pub const MAX_LIQUIDATE_ACCOUNTS_TX_BYTES: usize = 11_127;
 
 /// Wire envelope: `[version=2, action_type, seq, payload_bytes, pubkey, signature]`.
 ///
@@ -509,12 +530,28 @@ pub fn encode_signed_tx(
 }
 
 /// Encode the proposer-injected internal `LiquidateAccounts` action in its
-/// canonical unsigned form: zeroed pubkey + signature, `seq = 0`. The only
-/// legitimate producer is the validator's own PrepareProposal hook (via the
-/// FFI candidates export) — CheckTx rejects action type 0x1D so these bytes
-/// can never enter the mempool, and `execute_tx` rejects any non-canonical
-/// (non-zeroed) variant.
-pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, ExecError> {
+/// canonical unsigned form: zeroed pubkey + signature, `seq` = the height of
+/// the block it is proposed for. The only legitimate producer is the
+/// validator's own PrepareProposal hook (via the FFI candidates export) —
+/// CheckTx rejects action type 0x1D so these bytes can never enter the
+/// mempool, and `execute_tx` rejects any non-canonical variant and any
+/// height other than the executing block's.
+pub fn encode_liquidate_accounts_tx(
+    owners: Vec<[u8; 20]>,
+    height: crate::types::BlockHeight,
+) -> Result<Vec<u8>, ExecError> {
+    check_liquidate_accounts_owners(&owners)?;
+    encode_signed_tx(
+        &Action::LiquidateAccounts(crate::types::LiquidateAccounts { owners }),
+        height.get(),
+        &[0u8; 32],
+        &[0u8; 64],
+    )
+}
+
+/// The canonical owner rule of `LiquidateAccounts`: at most
+/// [`crate::types::MAX_LIQUIDATE_ACCOUNTS_OWNERS`], strictly sorted, unique.
+pub fn check_liquidate_accounts_owners(owners: &[[u8; 20]]) -> Result<(), ExecError> {
     if owners.len() > crate::types::MAX_LIQUIDATE_ACCOUNTS_OWNERS {
         return Err(ExecError::DecodeError(format!(
             "LiquidateAccounts owner count {} exceeds maximum {}",
@@ -527,12 +564,7 @@ pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, Ex
             "LiquidateAccounts owners must be strictly sorted and unique".to_string(),
         ));
     }
-    encode_signed_tx(
-        &Action::LiquidateAccounts(crate::types::LiquidateAccounts { owners }),
-        0,
-        &[0u8; 32],
-        &[0u8; 64],
-    )
+    Ok(())
 }
 
 /// Encode the proposer-injected internal `ExecuteTriggers` action in its
@@ -540,7 +572,20 @@ pub fn encode_liquidate_accounts_tx(owners: Vec<[u8; 20]>) -> Result<Vec<u8>, Ex
 /// [`encode_liquidate_accounts_tx`].
 pub fn encode_execute_triggers_tx(
     triggers: Vec<crate::types::TriggerRef>,
+    height: crate::types::BlockHeight,
 ) -> Result<Vec<u8>, ExecError> {
+    check_execute_triggers(&triggers)?;
+    encode_signed_tx(
+        &Action::ExecuteTriggers(crate::types::ExecuteTriggers { triggers }),
+        height.get(),
+        &[0u8; 32],
+        &[0u8; 64],
+    )
+}
+
+/// The canonical batch rule of `ExecuteTriggers`: at most
+/// [`crate::types::MAX_EXECUTE_TRIGGERS`], strictly sorted, unique.
+pub fn check_execute_triggers(triggers: &[crate::types::TriggerRef]) -> Result<(), ExecError> {
     if triggers.len() > crate::types::MAX_EXECUTE_TRIGGERS {
         return Err(ExecError::DecodeError(format!(
             "ExecuteTriggers count {} exceeds maximum {}",
@@ -553,12 +598,7 @@ pub fn encode_execute_triggers_tx(
             "ExecuteTriggers entries must be strictly sorted and unique".to_string(),
         ));
     }
-    encode_signed_tx(
-        &Action::ExecuteTriggers(crate::types::ExecuteTriggers { triggers }),
-        0,
-        &[0u8; 32],
-        &[0u8; 64],
-    )
+    Ok(())
 }
 
 /// Sign an action and encode it as a wire envelope, binding the
@@ -742,13 +782,21 @@ fn read_msgpack_uint_prefix(bytes: &[u8]) -> Option<(u64, usize)> {
 /// envelope and payload this build emits. This closes the gap between the
 /// deliberately lightweight Go proposal parser and serde's acceptance of
 /// alternate MessagePack integer/container encodings.
+///
+/// A proposer-injected action is canonical only with a height stamp
+/// (`seq != 0`). Which height is right depends on the block, so the proposal
+/// validator and execution compare the stamp with the block height.
 pub fn canonical_action_type(bytes: &[u8]) -> Option<ActionType> {
     let raw_action_type = peek_fixarray_action_type(bytes)?;
     let action_type = ActionType::try_from(raw_action_type).ok()?;
     let decoded = decode_tx(bytes).ok()?;
     let canonical = match &decoded.action {
-        Action::LiquidateAccounts(cmd) => encode_liquidate_accounts_tx(cmd.owners.clone()).ok()?,
-        Action::ExecuteTriggers(cmd) => encode_execute_triggers_tx(cmd.triggers.clone()).ok()?,
+        Action::LiquidateAccounts(cmd) => {
+            encode_liquidate_accounts_tx(cmd.owners.clone(), BlockHeight::new(decoded.seq)?).ok()?
+        }
+        Action::ExecuteTriggers(cmd) => {
+            encode_execute_triggers_tx(cmd.triggers.clone(), BlockHeight::new(decoded.seq)?).ok()?
+        }
         _ => encode_signed_tx(
             &decoded.action,
             decoded.seq,
@@ -799,6 +847,10 @@ pub fn peek_seq(bytes: &[u8]) -> Option<u64> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    fn height(height: u64) -> BlockHeight {
+        BlockHeight::new(height).unwrap()
+    }
     use crate::triggers::{
         SetTriggerMarketConfig, TriggerBracketLimit, TriggerConfigVersion, TriggerFutureSkewMs,
         TriggerMarkMaxAgeMs,
@@ -2077,6 +2129,58 @@ mod tests {
         assert_eq!(AdminActionType::FundInsuranceFund as u8, 18);
         assert_eq!(AdminActionType::SetOperatorReceiptRegistry as u8, 20);
         assert_eq!(AdminActionType::WithdrawInsuranceFund as u8, 25);
+        assert_eq!(AdminActionType::ExecInsuranceFund as u8, 26);
+    }
+
+    /// Frozen wire vector for a governed insurance action. To regenerate
+    /// after an intended layout change, print
+    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())`.
+    #[test]
+    fn exec_insurance_fund_wire_vector_frozen() {
+        use crate::types::{ActionBlob, ExecInsuranceFund, InsurancePoolId};
+        let inner = Action::CancelAllOrders(CancelAllOrders {
+            owner: [0xAB; 20],
+            market: Some(7),
+        });
+        let action = AdminAction::ExecInsuranceFund(ExecInsuranceFund {
+            pool_id: InsurancePoolId(2),
+            action: ActionBlob::encode(&inner).expect("inner action encodes"),
+        });
+        assert_eq!(action.action_type(), AdminActionType::ExecInsuranceFund);
+        assert_eq!(
+            hex_string(&canonical_admin_action_bytes(&action).expect("encodes canonically")),
+            "81b145786563496e737572616e636546756e649202c43e81af43616e63656c416c6c4f726465727392dc0014ccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccabccab07",
+            "frozen ExecInsuranceFund wire vector drifted"
+        );
+    }
+
+    #[test]
+    fn action_blob_decodes_only_its_canonical_encoding() {
+        use crate::types::{ActionBlob, InsuranceActionRefusal};
+        let inner = Action::CancelAllOrders(CancelAllOrders {
+            owner: [0xAB; 20],
+            market: None,
+        });
+        let blob = ActionBlob::encode(&inner).expect("inner action encodes");
+        assert!(matches!(
+            blob.decode(),
+            Ok(Action::CancelAllOrders(CancelAllOrders {
+                market: None,
+                ..
+            }))
+        ));
+        assert_eq!(
+            ActionBlob(vec![0xC1]).decode().map(|_| ()),
+            Err(InsuranceActionRefusal::Undecodable)
+        );
+        let mut padded = blob.0.clone();
+        // A trailing byte still decodes the same action but is not canonical.
+        padded.push(0xC0);
+        let padded = ActionBlob(padded);
+        assert!(matches!(
+            padded.decode().map(|_| ()),
+            Err(InsuranceActionRefusal::NotCanonical | InsuranceActionRefusal::Undecodable)
+        ));
     }
 
     #[test]
@@ -2276,7 +2380,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 22] = [
+        const ALL_INNER_TAGS: [AdminActionType; 23] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2298,6 +2402,7 @@ mod tests {
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
             AdminActionType::EnableSubAccounts,
+            AdminActionType::ExecInsuranceFund,
             AdminActionType::SetMarginOffsetPolicy,
         ];
         for tag_type in ALL_INNER_TAGS {
@@ -2323,6 +2428,7 @@ mod tests {
                 | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry
                 | AdminActionType::EnableSubAccounts
+                | AdminActionType::ExecInsuranceFund
                 | AdminActionType::SetMarginOffsetPolicy => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
@@ -3041,16 +3147,11 @@ mod tests {
             );
         }
 
-        // Repeat both directions for UpdateMarketFees: the released v1 shape
-        // already carried the IM/MM tails (20 fields); v2 appends only max OI.
+        // UpdateMarketFees: a frozen 20-field decoder rejects the current
+        // shape. The backward direction no longer holds since the per-market
+        // partial-liquidation flag left the action (see
+        // `release_7_update_market_fees_bytes_no_longer_decode`).
         let old_update = pre_oi_update_market_fees();
-        let old_update_bytes = rmp_serde::to_vec(&old_update).unwrap();
-        let decoded: UpdateMarketFees = rmp_serde::from_slice(&old_update_bytes).unwrap();
-        assert_eq!(decoded.market, old_update.market);
-        assert_eq!(decoded.tick_size, old_update.tick_size);
-        assert_eq!(decoded.im_bps, old_update.im_bps);
-        assert_eq!(decoded.mm_bps, old_update.mm_bps);
-        assert_eq!(decoded.max_open_interest, None);
 
         let new_update = UpdateMarketFees {
             market: old_update.market,
@@ -3069,19 +3170,81 @@ mod tests {
             mark_source_mode: old_update.mark_source_mode,
             max_mark_spread_bps: old_update.max_mark_spread_bps,
             cex_composite_staleness_ms: old_update.cex_composite_staleness_ms,
-            partial_liquidation_enabled: old_update.partial_liquidation_enabled,
             fee_tiers: old_update.fee_tiers.clone(),
             im_bps: old_update.im_bps,
             mm_bps: old_update.mm_bps,
             max_open_interest: Some(99),
         };
-        let error = rmp_serde::from_slice::<PreOiUpdateMarketFees>(
+        // Same length since the flag left, so the frozen decoder refuses on
+        // the first shifted field rather than on the array length.
+        assert!(rmp_serde::from_slice::<PreOiUpdateMarketFees>(
             &rmp_serde::to_vec(&new_update).unwrap(),
         )
-        .unwrap_err();
+        .is_err());
+    }
+
+    /// `UpdateMarketFees` as wire 7.0.0 encodes it: the per-market
+    /// partial-liquidation flag sits between the composite staleness and the
+    /// fee tiers.
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Release7UpdateMarketFees {
+        market: u32,
+        signer: [u8; 20],
+        taker_fee_bps: Option<u32>,
+        maker_fee_bps: Option<u32>,
+        max_funding_rate_bps: Option<u32>,
+        funding_interval_ms: Option<u64>,
+        max_position_size: Option<u64>,
+        default_ttl_ms: Option<u64>,
+        net_delta_margin: Option<bool>,
+        tick_size: Option<u64>,
+        lot_size: Option<u64>,
+        primary_oracle_signer: Option<[u8; 20]>,
+        oracle_staleness_ms: Option<u64>,
+        mark_source_mode: Option<MarkSourceMode>,
+        max_mark_spread_bps: Option<u32>,
+        cex_composite_staleness_ms: Option<u64>,
+        partial_liquidation_enabled: Option<bool>,
+        fee_tiers: Option<Vec<FeeTier>>,
+        im_bps: Option<u32>,
+        mm_bps: Option<u32>,
+        max_open_interest: Option<u64>,
+    }
+
+    #[test]
+    fn release_7_update_market_fees_bytes_no_longer_decode() {
+        let old = Release7UpdateMarketFees {
+            market: 91,
+            signer: [0x91; 20],
+            taker_fee_bps: Some(5),
+            maker_fee_bps: None,
+            max_funding_rate_bps: None,
+            funding_interval_ms: None,
+            max_position_size: None,
+            default_ttl_ms: None,
+            net_delta_margin: None,
+            tick_size: None,
+            lot_size: None,
+            primary_oracle_signer: None,
+            oracle_staleness_ms: None,
+            mark_source_mode: None,
+            max_mark_spread_bps: None,
+            cex_composite_staleness_ms: None,
+            partial_liquidation_enabled: None,
+            fee_tiers: None,
+            im_bps: None,
+            mm_bps: None,
+            max_open_interest: None,
+        };
+        let bytes = rmp_serde::to_vec(&old).unwrap();
+        assert_eq!(
+            bytes[0], 0xdc,
+            "wire 7.0.0 UpdateMarketFees is a 21-element array"
+        );
+        let error = rmp_serde::from_slice::<UpdateMarketFees>(&bytes).unwrap_err();
         assert!(
             error.to_string().contains("length") || error.to_string().contains("LengthMismatch"),
-            "unexpected frozen UpdateMarketFees decoder error: {error}"
+            "unexpected UpdateMarketFees decoder error: {error}"
         );
     }
 
@@ -3422,20 +3585,30 @@ mod tests {
         assert!(decode_tx(&array16).is_ok());
         assert_eq!(canonical_tier2_action_type(&array16), None);
 
-        let nonzero_liquidation = encode_signed_tx(
+        // Without a height stamp: the form earlier protocol releases ran.
+        let unstamped_liquidation = encode_signed_tx(
             &Action::LiquidateAccounts(LiquidateAccounts { owners: vec![] }),
-            1,
+            0,
             &[0; 32],
             &[0; 64],
         )
         .unwrap();
-        assert_eq!(canonical_tier2_action_type(&nonzero_liquidation), None);
+        assert_eq!(canonical_tier2_action_type(&unstamped_liquidation), None);
+
+        let signed_liquidation = encode_signed_tx(
+            &Action::LiquidateAccounts(LiquidateAccounts { owners: vec![] }),
+            1,
+            &[1; 32],
+            &[0; 64],
+        )
+        .unwrap();
+        assert_eq!(canonical_tier2_action_type(&signed_liquidation), None);
 
         let unsorted_liquidation = encode_signed_tx(
             &Action::LiquidateAccounts(LiquidateAccounts {
                 owners: vec![[2; 20], [1; 20]],
             }),
-            0,
+            1,
             &[0; 32],
             &[0; 64],
         )
@@ -3493,7 +3666,7 @@ mod tests {
                 "{expected:?} must count against the block-work budget"
             );
         }
-        let liquidate = encode_liquidate_accounts_tx(vec![[1; 20]]).unwrap();
+        let liquidate = encode_liquidate_accounts_tx(vec![[1; 20]], height(1)).unwrap();
         assert_eq!(
             canonical_tier2_action_type(&liquidate),
             Some(ActionType::LiquidateAccounts)
@@ -3527,7 +3700,8 @@ mod tests {
                 owner
             })
             .collect();
-        let tx = encode_liquidate_accounts_tx(owners).unwrap();
+        // The largest height takes the widest MessagePack integer.
+        let tx = encode_liquidate_accounts_tx(owners, height(u64::MAX)).unwrap();
         assert_eq!(tx.len(), MAX_LIQUIDATE_ACCOUNTS_TX_BYTES);
         assert_eq!(
             canonical_tier2_action_type(&tx),
@@ -3636,8 +3810,8 @@ mod tests {
 
     #[test]
     fn liquidation_encoder_rejects_noncanonical_or_oversized_owner_vectors() {
-        assert!(encode_liquidate_accounts_tx(vec![[2; 20], [1; 20]]).is_err());
-        assert!(encode_liquidate_accounts_tx(vec![[1; 20], [1; 20]]).is_err());
+        assert!(encode_liquidate_accounts_tx(vec![[2; 20], [1; 20]], height(1)).is_err());
+        assert!(encode_liquidate_accounts_tx(vec![[1; 20], [1; 20]], height(1)).is_err());
 
         let owners = (0..=crate::types::MAX_LIQUIDATE_ACCOUNTS_OWNERS)
             .map(|i| {
@@ -3646,7 +3820,7 @@ mod tests {
                 owner
             })
             .collect();
-        assert!(encode_liquidate_accounts_tx(owners).is_err());
+        assert!(encode_liquidate_accounts_tx(owners, height(1)).is_err());
     }
 
     #[test]
@@ -4272,10 +4446,13 @@ mod tests {
     #[test]
     fn execute_triggers_wire_vector_is_pinned() {
         // exchange-node/execute_triggers_test.go pins the same bytes.
-        let tx = encode_execute_triggers_tx(vec![crate::types::TriggerRef {
-            owner: crate::types::OwnerAddress::new([0x01; 20]),
-            market: 7,
-        }])
+        let tx = encode_execute_triggers_tx(
+            vec![crate::types::TriggerRef {
+                owner: crate::types::OwnerAddress::new([0x01; 20]),
+                market: 7,
+            }],
+            height(7),
+        )
         .unwrap();
         assert_eq!(
             canonical_action_type(&tx),
@@ -4283,13 +4460,13 @@ mod tests {
         );
         assert_eq!(
             hex::encode(&tx),
-            "96022f00c41b919192dc0014010101010101010101010101010101010101010107c4200000000000000000000000000000000000000000000000000000000000000000c44000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            "96022f07c41b919192dc0014010101010101010101010101010101010101010107c4200000000000000000000000000000000000000000000000000000000000000000c44000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
         );
     }
 
     #[test]
     fn liquidate_accounts_payload_wire_shape_is_canonical_owner_arrays() {
-        let tx = encode_liquidate_accounts_tx(vec![[0x01; 20], [0x80; 20]]).unwrap();
+        let tx = encode_liquidate_accounts_tx(vec![[0x01; 20], [0x80; 20]], height(1)).unwrap();
         let decoded = decode_tx(&tx).unwrap();
 
         let mut expected = vec![0x91, 0x92, 0xdc, 0x00, 0x14];

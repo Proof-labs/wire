@@ -101,15 +101,15 @@ are not outer transaction action bytes.
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
 | 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
 | 0x11 | `SetLiquidationConfig`            | governed; replaces the global liquidation configuration (compare-and-set on its sequence) |
-| 0x12 | `FundInsuranceFund`               | quorum-authorized named-account transfer into pools with registered markets |
+| 0x12 | `FundInsuranceFund`               | quorum-authorized transfer from a named account to the insurance accounts of pools with registered markets |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
 | 0x15 | `EnableSubAccounts`                | governed; authorizes the sub-account actions (SA-1), one-way |
 | 0x16 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x17 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
-| 0x19 | `WithdrawInsuranceFund`           | quorum-authorized pool withdrawal to a named account; pool remains nonnegative |
-| 0x1A | `ExecInsuranceFund`               | reserved for the insurance-account change |
+| 0x19 | `WithdrawInsuranceFund`           | quorum-authorized transfer from pool insurance accounts to a named account |
+| 0x1A | `ExecInsuranceFund`               | quorum executes one whitelisted action (agent approve/revoke, leverage, close position, cancels) as a pool's insurance account |
 | 0x1B | `SetMarginOffsetPolicy`            | governed; replaces the explicit partial-margin offset policy (compare-and-set on its sequence) |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
