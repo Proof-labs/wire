@@ -3039,16 +3039,11 @@ mod tests {
             );
         }
 
-        // Repeat both directions for UpdateMarketFees: the released v1 shape
-        // already carried the IM/MM tails (20 fields); v2 appends only max OI.
+        // UpdateMarketFees: a frozen 20-field decoder rejects the current
+        // shape. The backward direction no longer holds since the per-market
+        // partial-liquidation flag left the action (see
+        // `release_7_update_market_fees_bytes_no_longer_decode`).
         let old_update = pre_oi_update_market_fees();
-        let old_update_bytes = rmp_serde::to_vec(&old_update).unwrap();
-        let decoded: UpdateMarketFees = rmp_serde::from_slice(&old_update_bytes).unwrap();
-        assert_eq!(decoded.market, old_update.market);
-        assert_eq!(decoded.tick_size, old_update.tick_size);
-        assert_eq!(decoded.im_bps, old_update.im_bps);
-        assert_eq!(decoded.mm_bps, old_update.mm_bps);
-        assert_eq!(decoded.max_open_interest, None);
 
         let new_update = UpdateMarketFees {
             market: old_update.market,
@@ -3067,19 +3062,81 @@ mod tests {
             mark_source_mode: old_update.mark_source_mode,
             max_mark_spread_bps: old_update.max_mark_spread_bps,
             cex_composite_staleness_ms: old_update.cex_composite_staleness_ms,
-            partial_liquidation_enabled: old_update.partial_liquidation_enabled,
             fee_tiers: old_update.fee_tiers.clone(),
             im_bps: old_update.im_bps,
             mm_bps: old_update.mm_bps,
             max_open_interest: Some(99),
         };
-        let error = rmp_serde::from_slice::<PreOiUpdateMarketFees>(
+        // Same length since the flag left, so the frozen decoder refuses on
+        // the first shifted field rather than on the array length.
+        assert!(rmp_serde::from_slice::<PreOiUpdateMarketFees>(
             &rmp_serde::to_vec(&new_update).unwrap(),
         )
-        .unwrap_err();
+        .is_err());
+    }
+
+    /// `UpdateMarketFees` as wire 7.0.0 encodes it: the per-market
+    /// partial-liquidation flag sits between the composite staleness and the
+    /// fee tiers.
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Release7UpdateMarketFees {
+        market: u32,
+        signer: [u8; 20],
+        taker_fee_bps: Option<u32>,
+        maker_fee_bps: Option<u32>,
+        max_funding_rate_bps: Option<u32>,
+        funding_interval_ms: Option<u64>,
+        max_position_size: Option<u64>,
+        default_ttl_ms: Option<u64>,
+        net_delta_margin: Option<bool>,
+        tick_size: Option<u64>,
+        lot_size: Option<u64>,
+        primary_oracle_signer: Option<[u8; 20]>,
+        oracle_staleness_ms: Option<u64>,
+        mark_source_mode: Option<MarkSourceMode>,
+        max_mark_spread_bps: Option<u32>,
+        cex_composite_staleness_ms: Option<u64>,
+        partial_liquidation_enabled: Option<bool>,
+        fee_tiers: Option<Vec<FeeTier>>,
+        im_bps: Option<u32>,
+        mm_bps: Option<u32>,
+        max_open_interest: Option<u64>,
+    }
+
+    #[test]
+    fn release_7_update_market_fees_bytes_no_longer_decode() {
+        let old = Release7UpdateMarketFees {
+            market: 91,
+            signer: [0x91; 20],
+            taker_fee_bps: Some(5),
+            maker_fee_bps: None,
+            max_funding_rate_bps: None,
+            funding_interval_ms: None,
+            max_position_size: None,
+            default_ttl_ms: None,
+            net_delta_margin: None,
+            tick_size: None,
+            lot_size: None,
+            primary_oracle_signer: None,
+            oracle_staleness_ms: None,
+            mark_source_mode: None,
+            max_mark_spread_bps: None,
+            cex_composite_staleness_ms: None,
+            partial_liquidation_enabled: None,
+            fee_tiers: None,
+            im_bps: None,
+            mm_bps: None,
+            max_open_interest: None,
+        };
+        let bytes = rmp_serde::to_vec(&old).unwrap();
+        assert_eq!(
+            bytes[0], 0xdc,
+            "wire 7.0.0 UpdateMarketFees is a 21-element array"
+        );
+        let error = rmp_serde::from_slice::<UpdateMarketFees>(&bytes).unwrap_err();
         assert!(
             error.to_string().contains("length") || error.to_string().contains("LengthMismatch"),
-            "unexpected frozen UpdateMarketFees decoder error: {error}"
+            "unexpected UpdateMarketFees decoder error: {error}"
         );
     }
 
