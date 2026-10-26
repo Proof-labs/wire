@@ -179,6 +179,12 @@ name = "proof-wire"
 # layout are unchanged and pre-existing bytes still decode, but the
 # unstamped form is no longer canonical and Rust callers of the two
 # encoders no longer compile -> MAJOR.
+#
+# Unreleased: MarketConfig and UpdateMarketFees drop
+# partial_liquidation_enabled, the per-market partial-liquidation flag; every
+# market liquidates the same way. Both are positional arrays, so their 7.0.0
+# bytes no longer decode and every field after the flag moves up one
+# position -> MAJOR.
 version = "7.0.0"
 edition = "2021"
 

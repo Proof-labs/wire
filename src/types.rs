@@ -1897,18 +1897,6 @@ pub struct MarketConfig {
     /// `Median`.
     #[serde(default)]
     pub cex_composite_staleness_ms: u64,
-    /// Enable partial liquidation for this market. When true,
-    /// the liquidation engine closes positions one at a time and
-    /// rechecks maintenance margin after each close. If MM holds after
-    /// closing a single market's position, the account is considered
-    /// healthy and the remaining positions are not closed.
-    ///
-    /// When false (default, backward-compatible with existing
-    /// `MarketConfig` records), the legacy all-or-nothing liquidation
-    /// runs: every position in the owner's portfolio closes when any
-    /// market is under MM.
-    #[serde(default)]
-    pub partial_liquidation_enabled: bool,
     /// Published size scale: `quantity` is in units of `10^-sz_decimals`
     /// base asset. The engine DOES read this for every market kind: each
     /// `price × size` notional/PnL/margin product is divided by `10^sz_decimals`
@@ -1934,7 +1922,7 @@ pub struct MarketConfig {
     /// positions on the market. Enforced before a fill mutates positions.
     /// At schema v9+, if governance tightens the cap below current OI, fills
     /// may preserve or reduce the pre-fill aggregate but may not increase it;
-    /// this lets the market unwind until it is back within the configured
+    /// this lets positions in the market shrink until it is back within the configured
     /// limit. Earlier schemas preserve the strict legacy verdict. `0` disables
     /// the cap for backward compatibility.
     ///
@@ -3157,11 +3145,6 @@ pub struct UpdateMarketFees {
     /// one composite update.
     #[serde(default)]
     pub cex_composite_staleness_ms: Option<u64>,
-    /// Enable partial liquidation for this market. `None` =
-    /// leave unchanged. See `MarketConfig::partial_liquidation_enabled`
-    /// for semantics. Safe to flip on at any time.
-    #[serde(default)]
-    pub partial_liquidation_enabled: Option<bool>,
     /// Replace the rolling-volume fee-tier table. `None` = leave
     /// unchanged. `Some([])` clears the table and returns the market to
     /// flat `taker_fee_bps` / `maker_fee_bps` pricing. Non-empty tables
