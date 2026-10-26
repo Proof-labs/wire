@@ -2114,6 +2114,28 @@ pub struct LiquidateAccounts {
     pub owners: Vec<[u8; 20]>,
 }
 
+/// The height of the block a proposer-injected action ([`LiquidateAccounts`],
+/// [`ExecuteTriggers`]) is proposed for. Its canonical envelope carries the
+/// height as `seq`, so the same batch in two blocks has two hashes. Never
+/// zero: chain heights start at one, and `seq = 0` is the unstamped form
+/// earlier protocol releases executed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BlockHeight(std::num::NonZeroU64);
+
+impl BlockHeight {
+    /// `None` for zero, which is not a block height.
+    pub const fn new(height: u64) -> Option<Self> {
+        match std::num::NonZeroU64::new(height) {
+            Some(height) => Some(Self(height)),
+            None => None,
+        }
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0.get()
+    }
+}
+
 pub const MAX_EXECUTE_TRIGGERS: usize = 256;
 
 /// One position bracket, addressed by its position.
