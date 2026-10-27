@@ -195,6 +195,19 @@ name = "proof-wire"
 # market liquidates the same way. Both are positional arrays, so their 7.0.0
 # bytes no longer decode and every field after the flag moves up one
 # position -> MAJOR.
+#
+# Unreleased: additive wire change (the insurance-fund takeover).
+# LiquidationConfig and Event::LiquidationConfigSet gain a trailing
+# defaulted takeover_discount_bps, refused above 100 bps by the new
+# LiquidationConfigError::TakeoverDiscountAboveMaximum. Position gains
+# entry_remainder, omitted when zero. Event::TradeExecuted gains a defaulted
+# reason (the new TradeReason), Event::BinaryIssuedFromMTM a defaulted
+# value_dropped, Event::LiquidationProgressReported defaulted
+# remainder_code and remainder_refusal, and Event::PositionLiquidated
+# defaulted fund_charged, fund_binaries, fund_reserve, fund_realized and
+# fund_absorbed. LiquidationRefusal appends NetDeltaGrows, and ExecError
+# appends LiquidationBatchTooManyOwners (115) and LiquidationBatchOverBudget
+# (116). Pre-existing bytes still decode -> MINOR.
 version = "7.0.0"
 edition = "2021"
 
@@ -260,6 +273,10 @@ required-features = ["full"]
 
 [[test]]
 name = "injected_tx_height"
+required-features = ["full"]
+
+[[test]]
+name = "truncation_events"
 required-features = ["full"]
 
 [dev-dependencies]

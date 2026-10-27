@@ -26,18 +26,17 @@ pub enum LiquidationProgress {
     /// Below the full-close threshold, cancelling the owner's
     /// exposure-adding orders restored maintenance.
     FullCloseRestoredByCancellation,
-    /// Below the full-close threshold, no fill was made.
+    /// Still decodes; never emitted, as a full close always leaves no position.
     FullCloseNoFill,
-    /// Below the full-close threshold, fills were made and some perpetual
-    /// exposure is still open.
+    /// Still decodes; never emitted, as a full close always leaves no position.
     FullClosePartlyClosed,
     /// Below the full-close threshold, every perpetual leg was closed.
     FullCloseClosed,
     /// Negative equity in some outcome: closed at mark through the
     /// insurance-fund and auto-deleveraging waterfall.
     Insolvent,
-    /// Not served: the batch's position budget was spent on owners ahead
-    /// of it in the serving order.
+    /// Never emitted: a batch over its position budget is refused whole.
+    /// Kept so stored history decodes.
     Deferred,
     /// The attempt failed and none of its writes were kept.
     Failed,

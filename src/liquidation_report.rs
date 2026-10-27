@@ -74,14 +74,17 @@ pub enum LiquidationRefusal {
     InvalidMaker,
     /// A reference price the attempt needs was unavailable.
     ReferenceUnavailable,
+    /// Some outcome's absolute net delta on an underlying would have grown.
+    NetDeltaGrows,
 }
 
 impl LiquidationRefusal {
     /// Every variant, in encoding order.
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 4] = [
         Self::PositionMismatch,
         Self::InvalidMaker,
         Self::ReferenceUnavailable,
+        Self::NetDeltaGrows,
     ];
 
     /// The ABCI attribute value.
@@ -90,6 +93,7 @@ impl LiquidationRefusal {
             Self::PositionMismatch => "position_mismatch",
             Self::InvalidMaker => "invalid_maker",
             Self::ReferenceUnavailable => "reference_unavailable",
+            Self::NetDeltaGrows => "net_delta_grows",
         }
     }
 }

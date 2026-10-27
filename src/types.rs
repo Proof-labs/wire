@@ -1635,12 +1635,42 @@ pub struct Position {
     pub owner: [u8; 20],
     pub market: MarketId,
     pub side: Side,
-    /// Weighted-average entry price (in quote units, same scale as order prices).
+    /// Average entry price, rounded down (in quote units, same scale as order prices).
     pub entry_price: u64,
     /// Absolute size (always > 0 while position exists).
     pub size: u64,
     /// Cumulative funding index at the time the position was last settled.
     pub last_funding_index: i64,
+    /// What the total cost exceeds `entry_price × size` by; always below `size`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub entry_remainder: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+impl Position {
+    /// The total cost, `entry_price × size + entry_remainder`, in price × size units.
+    pub fn cost(&self) -> u128 {
+        // Cannot saturate: (2^64 - 1)^2 + (2^64 - 1) < 2^128.
+        u128::from(self.entry_price)
+            .saturating_mul(u128::from(self.size))
+            .saturating_add(u128::from(self.entry_remainder))
+    }
+
+    /// Set the size and the exact total cost; `None` when the average entry overflows.
+    pub fn set_cost(&mut self, size: u64, cost: u128) -> Option<()> {
+        let size_wide = u128::from(size);
+        let (entry, remainder) = match size_wide {
+            0 => (0, 0),
+            _ => (cost.checked_div(size_wide)?, cost.checked_rem(size_wide)?),
+        };
+        self.entry_price = u64::try_from(entry).ok()?;
+        self.entry_remainder = u64::try_from(remainder).ok()?;
+        self.size = size;
+        Some(())
+    }
 }
 
 /// Signed open interest for one market, tracked as two unsigned running sums.
@@ -3325,6 +3355,26 @@ pub struct WithdrawalPolicy {
 // Events
 // ---------------------------------------------------------------------------
 
+/// Why a trade happened. MessagePack encodes a variant by its name, so a
+/// variant is never renamed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TradeReason {
+    /// The taker's own order.
+    #[default]
+    Order,
+    /// Liquidation closed the taker's position.
+    Liquidation,
+}
+
+impl fmt::Display for TradeReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Order => "order",
+            Self::Liquidation => "liquidation",
+        })
+    }
+}
+
 /// Why an order was cancelled. Serialised as a string in ABCI events.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CancelReason {
@@ -3552,6 +3602,9 @@ pub enum Event {
         /// Stored oracle price at the fill; not freshness-gated.
         #[serde(default)]
         oracle_price: Option<u64>,
+        /// Why the taker traded.
+        #[serde(default)]
+        reason: TradeReason,
     },
     FeesCollected {
         market: MarketId,
@@ -3621,6 +3674,9 @@ pub enum Event {
         /// Cash debit/credit from netting against an existing opposite-side
         /// binary position. Zero in the common case.
         cash_pnl_realized: i64,
+        /// Conditional value in micro-USDC below one binary unit, not issued.
+        #[serde(default)]
+        value_dropped: i64,
     },
     MarketCreated {
         market: MarketId,
@@ -3761,7 +3817,8 @@ pub enum Event {
         /// Signed cash delta applied to owner balance (micro-USDC).
         cash_delta: i64,
     },
-    /// Position forcibly closed by a `LiquidateAccounts` batch.
+    /// No longer emitted: `PositionLiquidated` reports every liquidated
+    /// position. Kept so stored history decodes.
     AccountLiquidated {
         owner: [u8; 20],
         market: MarketId,
@@ -3824,45 +3881,21 @@ pub enum Event {
         /// Number of open positions debited inline.
         affected_count: u32,
     },
-    /// Tier 3 of the bad-debt waterfall. A profitable counterparty was
-    /// auto-deleveraged (force-closed at the bankruptcy price of the
-    /// counterparty being liquidated) because all prior tiers were
-    /// exhausted. The ADL queue ranks positions by
-    /// `unrealized_pnl × leverage_used` descending; this event is
-    /// emitted once per ADL'd position.
+    /// A pool's fund closed a position against this opposite holder to
+    /// relieve its negative equity. Not emitted while fund auto-deleveraging
+    /// is off.
     PositionAutoDeleveraged {
-        /// Owner whose position was force-closed.
+        /// The holder closed.
         owner: [u8; 20],
         market: MarketId,
         side: Side,
-        /// Number of contracts force-closed in this leg. May be less
-        /// than the ADL'd account's full position when the deficit is
-        /// covered by a partial close;
-        /// the remainder of the position keeps its original entry.
+        /// Contracts closed; the rest keeps its entry.
         size: u64,
-        /// Price the position was actually closed at — the **liquidated
-        /// trader's bankruptcy price** `bp = entry − σ × balance / size`
-        /// (one `bp` per liquidation event, threaded through to every
-        /// ADL leg in the same waterfall call). Equals `close_price_spec`
-        /// today; the two fields are retained
-        /// separately for forward compatibility with future settlement-
-        /// price experimentation.
+        /// Price of the close.
         close_price: u64,
-        /// Bankruptcy price the spec says the position should be closed
-        /// at. Currently equal
-        /// to `close_price`; tracked separately so any future deviation
-        /// (e.g., adding a "max haircut per ADL leg" cap that would
-        /// re-introduce a spec gap) can be audited via this field.
+        /// The price the fund's lack alone would set; differs from `close_price` when capped.
         close_price_spec: u64,
-        /// Realized PnL credited to the ADL'd counterparty at
-        /// `close_price` for the closed `size`. Includes any rounding
-        /// surplus credited back when ceil-div over-extracted (so the
-        /// counterparty's net surrender equals exactly the residual
-        /// covered by this leg, not residual + rounding overshoot).
-        /// May be negative if `bp` would imply a realized loss for the
-        /// counterparty — note that for the alpha-deferred deviation,
-        /// we cap credit at 0 rather than driving the counterparty into
-        /// negative balance.
+        /// The holder's realized PnL on the close.
         realized_pnl: i64,
     },
     WithdrawRequested {
@@ -4430,6 +4463,8 @@ pub enum Event {
         max_book_orders: u32,
         max_committed_fills: u32,
         proposal_id: u64,
+        #[serde(default)]
+        takeover_discount_bps: u32,
     },
     /// The partial-liquidation penalty on one book fill that reduced
     /// `owner`'s position. `assessed` is the fill's notional times the
@@ -4448,14 +4483,21 @@ pub enum Event {
         waived: u64,
     },
     /// How one owner named in a `LiquidateAccounts` batch ended this block:
-    /// one per named owner, after that owner's other events. A deferred
-    /// owner was not attempted; a failed owner's attempt kept no writes.
-    /// `config_sequence` names the liquidation configuration the batch ran
-    /// under.
+    /// one per named owner, after that owner's other events. A failed
+    /// owner's attempt kept no writes. `config_sequence` names the
+    /// liquidation configuration the batch ran under.
     LiquidationProgressReported {
         owner: [u8; 20],
         outcome: crate::liquidation_progress::LiquidationProgress,
         config_sequence: u64,
+        /// The `ExecError` code that refused a full close's remainder after
+        /// book fills that stand; absent otherwise.
+        #[serde(default)]
+        remainder_code: Option<u32>,
+        /// Why that remainder was refused, when it was refused rather than
+        /// erroring.
+        #[serde(default)]
+        remainder_refusal: Option<crate::liquidation_report::LiquidationRefusal>,
     },
     /// A profitable position left out of the deficit's candidate set.
     AdlCounterpartySkipped {
@@ -4466,10 +4508,10 @@ pub enum Event {
         reason: AdlSkipReason,
     },
     /// One position an owner's liquidation reduced, once per position per
-    /// attempt. `size_before` is the size before the attempt's first step
-    /// and `size_closed` the total its steps closed. The penalty is the sum
-    /// of the per-fill penalties charged on this position, partial or full
-    /// close alike; a close at mark charges none. `equity`, `maintenance`
+    /// attempt. `size_before` is the size before the attempt and
+    /// `size_closed` the total it closed. The penalty is the sum of the
+    /// per-fill penalties charged on this position's book fills plus the
+    /// discount its insurance fund takeover gave the fund. `equity`, `maintenance`
     /// and `binding_outcome` are the owner's binding outcome, with pending
     /// funding, when the attempt was decided.
     PositionLiquidated {
@@ -4486,6 +4528,24 @@ pub enum Event {
         maintenance: u64,
         binding_outcome: crate::liquidation_report::BindingOutcome,
         config_sequence: u64,
+        /// The part of the position's loss neither the owner nor its
+        /// auto-deleveraging counterparties paid, charged to the market
+        /// pool's insurance fund: cash and what it took in kind, gross.
+        #[serde(default)]
+        fund_charged: u64,
+        /// Binary contracts the fund took from the owner.
+        #[serde(default)]
+        fund_binaries: u64,
+        /// The owner's cash that reserved binaries the fund took, moved with them.
+        #[serde(default)]
+        fund_reserve: u64,
+        /// Cash the fund realized taking binaries: netting them against its own
+        /// position and settling what its blended entry changed, signed.
+        #[serde(default)]
+        fund_realized: i64,
+        /// The part of `fund_charged` the fund took in kind with the position.
+        #[serde(default)]
+        fund_absorbed: u64,
     },
     /// An owner's liquidation attempt failed and kept none of its writes.
     /// `code` is its `ExecError` code; `refusal` names why when the attempt
@@ -5073,6 +5133,17 @@ pub enum ExecError {
         /// entry frees its own amount at its own expiry.
         oldest_expires_at_ms: u64,
     },
+    /// A `LiquidateAccounts` batch names more owners than one batch may.
+    LiquidationBatchTooManyOwners {
+        owners: u64,
+        max: u64,
+    },
+    /// The owners a `LiquidateAccounts` batch names hold more positions
+    /// together than one batch may close.
+    LiquidationBatchOverBudget {
+        positions: u64,
+        budget: u64,
+    },
 }
 
 impl ExecError {
@@ -5198,6 +5269,8 @@ impl ExecError {
             ExecError::InvalidPlpConfig(_) => 112,
             ExecError::InsuranceAccountWithdrawal { .. } => 113,
             ExecError::InsuranceActionRefused { .. } => 114,
+            ExecError::LiquidationBatchTooManyOwners { .. } => 115,
+            ExecError::LiquidationBatchOverBudget { .. } => 116,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5556,6 +5629,12 @@ impl ExecError {
             }
             ExecError::InsuranceActionRefused { .. } => {
                 "Governed insurance action is undecodable, not canonical, not permitted for an insurance account, or not owned by the pool's insurance account."
+            }
+            ExecError::LiquidationBatchTooManyOwners { .. } => {
+                "LiquidateAccounts names more owners than one batch may; split the owners across batches."
+            }
+            ExecError::LiquidationBatchOverBudget { .. } => {
+                "The owners a LiquidateAccounts batch names hold more positions together than its position budget; the batch is refused whole, so name fewer owners."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -5995,6 +6074,12 @@ impl fmt::Display for ExecError {
             }
             ExecError::InsuranceActionRefused { pool_id, reason } => {
                 write!(f, "pool {} insurance action refused: {reason}", pool_id.0)
+            }
+            ExecError::LiquidationBatchTooManyOwners { owners, max } => {
+                write!(f, "LiquidateAccounts owner count {owners} exceeds maximum {max}")
+            }
+            ExecError::LiquidationBatchOverBudget { positions, budget } => {
+                write!(f, "LiquidateAccounts owners hold {positions} positions, over the budget of {budget}")
             }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }

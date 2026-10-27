@@ -37,8 +37,27 @@ pub struct FullCloseThreshold {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LiquidationPenaltyBps(pub u32);
 
-/// A per-owner, per-block liquidation pacing cap: book orders walked per leg,
-/// or fills committed per owner.
+/// Most of the takeover discount beyond the maintenance rate, in basis
+/// points.
+pub const MAX_TAKEOVER_DISCOUNT_BPS: u32 = 100;
+
+/// Discount beyond the maintenance rate at which a pool's insurance fund
+/// takes over an insolvent position (DEC-264). At most
+/// [`MAX_TAKEOVER_DISCOUNT_BPS`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct TakeoverDiscountBps(pub u32);
+
+impl TakeoverDiscountBps {
+    /// The discount a configuration written before the field existed takes.
+    pub const INITIAL: Self = Self(50);
+
+    fn initial() -> Self {
+        Self::INITIAL
+    }
+}
+
+/// A retired per-owner, per-block liquidation work count, kept so stored
+/// records decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LiquidationWorkCount(pub u32);
 
@@ -48,8 +67,12 @@ pub struct LiquidationConfig {
     pub target_ratio_bps: TargetRatioBps,
     pub full_close_threshold: FullCloseThreshold,
     pub partial_penalty_bps: LiquidationPenaltyBps,
+    /// Unused: liquidation has no per-block cap. Kept so records decode.
     pub max_book_orders: LiquidationWorkCount,
+    /// Unused: liquidation has no per-block cap. Kept so records decode.
     pub max_committed_fills: LiquidationWorkCount,
+    #[serde(default = "TakeoverDiscountBps::initial")]
+    pub takeover_discount_bps: TakeoverDiscountBps,
 }
 
 /// The rule a configuration or an update breaks.
@@ -63,6 +86,8 @@ pub enum LiquidationConfigError {
     PenaltyAboveMaximum { partial_penalty_bps: u32 },
     /// A pacing cap is zero; `field` names the configuration field.
     ZeroWorkLimit { field: &'static str },
+    /// The takeover discount exceeds [`MAX_TAKEOVER_DISCOUNT_BPS`].
+    TakeoverDiscountAboveMaximum { takeover_discount_bps: u32 },
     /// The update's sequence does not exceed the one it replaces.
     SequenceNotIncreasing {
         predecessor: LiquidationConfigSequence,
@@ -93,6 +118,12 @@ impl core::fmt::Display for LiquidationConfigError {
             Self::ZeroWorkLimit { field } => {
                 write!(f, "work limit {field} must be non-zero")
             }
+            Self::TakeoverDiscountAboveMaximum {
+                takeover_discount_bps,
+            } => write!(
+                f,
+                "takeover discount {takeover_discount_bps} bps exceeds {MAX_TAKEOVER_DISCOUNT_BPS} bps"
+            ),
             Self::SequenceNotIncreasing {
                 predecessor,
                 sequence,
@@ -133,6 +164,11 @@ impl LiquidationConfig {
         ];
         if let Some((field, _)) = limits.iter().find(|(_, limit)| *limit == 0) {
             return Err(LiquidationConfigError::ZeroWorkLimit { field });
+        }
+        if self.takeover_discount_bps.0 > MAX_TAKEOVER_DISCOUNT_BPS {
+            return Err(LiquidationConfigError::TakeoverDiscountAboveMaximum {
+                takeover_discount_bps: self.takeover_discount_bps.0,
+            });
         }
         Ok(())
     }

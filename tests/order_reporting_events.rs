@@ -1,4 +1,4 @@
-//! `TradeExecuted` gains the mark and oracle price at the fill, and
+//! `TradeExecuted` gains the mark and oracle price at the fill and its reason, and
 //! `MarketOrderProcessed` gains a time in force, limit price and unfilled
 //! reason. Bytes written
 //! before the fields existed decode with them absent, and the existing ABCI
@@ -7,7 +7,7 @@
 #![allow(clippy::expect_used, clippy::panic)]
 
 use proof_wire::abci_event::AbciEventWriter;
-use proof_wire::types::{Event, Side, TimeInForce, UnfilledReason};
+use proof_wire::types::{Event, Side, TimeInForce, TradeReason, UnfilledReason};
 use serde::Serialize;
 
 const OWNER: [u8; 20] = [0xB1; 20];
@@ -66,12 +66,18 @@ fn legacy_trade_decodes_without_prices() {
     let Event::TradeExecuted {
         mark_price,
         oracle_price,
+        reason,
         ..
     } = decoded
     else {
         panic!("expected TradeExecuted, got {decoded:?}");
     };
     assert_eq!((mark_price, oracle_price), (None, None));
+    assert_eq!(
+        reason,
+        TradeReason::Order,
+        "a fill without a reason is an order's"
+    );
 }
 
 #[test]
@@ -117,12 +123,13 @@ fn trade_executed_appends_its_new_attributes() {
         maker_fee: -1,
         mark_price: Some(1_234),
         oracle_price: None,
+        reason: TradeReason::Liquidation,
     };
     let mut rendered = AbciEventWriter::new();
     event.encode_abci(&mut rendered);
 
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("trade_executed", 15);
+    expected.begin_event("trade_executed", 16);
     expected.write_attr_u64("fill_id", 1);
     expected.write_attr_u64("market", 7);
     expected.write_attr_u64("price", 100);
@@ -138,6 +145,7 @@ fn trade_executed_appends_its_new_attributes() {
     expected.write_attr_display("maker_fee", &-1_i64);
     expected.write_attr_display("mark_price", &1_234_u64);
     expected.write_attr("oracle_price", "");
+    expected.write_attr_display("reason", &TradeReason::Liquidation);
     assert_eq!(rendered.into_vec(), expected.into_vec());
 }
 

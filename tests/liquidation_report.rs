@@ -45,13 +45,18 @@ fn position_liquidated_attributes_and_round_trip_are_exact() {
             },
         ]),
         config_sequence: 2,
+        fund_charged: 4,
+        fund_binaries: 6,
+        fund_reserve: 8,
+        fund_realized: -2,
+        fund_absorbed: 3,
     };
     round_trips(&event);
 
     let mut actual = AbciEventWriter::new();
     event.encode_abci(&mut actual);
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("position_liquidated", 13);
+    expected.begin_event("position_liquidated", 18);
     expected.write_attr_hex("owner", &[0xab; 20]);
     expected.write_attr_u64("market", 7);
     expected.write_attr("side", "sell");
@@ -65,6 +70,11 @@ fn position_liquidated_attributes_and_round_trip_are_exact() {
     expected.write_attr_u64("maintenance", 500);
     expected.write_attr("binding_outcome", "4:yes,9:no");
     expected.write_attr_u64("config_sequence", 2);
+    expected.write_attr_u64("fund_charged", 4);
+    expected.write_attr_u64("fund_binaries", 6);
+    expected.write_attr_u64("fund_reserve", 8);
+    expected.write_attr("fund_realized", "-2");
+    expected.write_attr_u64("fund_absorbed", 3);
     assert_eq!(actual.into_vec(), expected.into_vec());
 }
 

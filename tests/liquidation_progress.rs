@@ -4,7 +4,8 @@
 use std::collections::BTreeSet;
 
 use proof_wire::{
-    abci_event::AbciEventWriter, liquidation_progress::LiquidationProgress, types::Event,
+    abci_event::AbciEventWriter, liquidation_progress::LiquidationProgress,
+    liquidation_report::LiquidationRefusal, types::Event,
 };
 
 #[test]
@@ -13,6 +14,8 @@ fn progress_receipt_attributes_and_round_trip_are_exact() {
         owner: [0xab; 20],
         outcome: LiquidationProgress::MaintenanceRestoredBelowTarget,
         config_sequence: 4,
+        remainder_code: Some(111),
+        remainder_refusal: Some(LiquidationRefusal::NetDeltaGrows),
     };
     let bytes = rmp_serde::to_vec(&event).expect("receipt encodes");
     let decoded: Event = rmp_serde::from_slice(&bytes).expect("receipt decodes");
@@ -25,10 +28,12 @@ fn progress_receipt_attributes_and_round_trip_are_exact() {
     let mut actual = AbciEventWriter::new();
     event.encode_abci(&mut actual);
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("liquidation_progress_reported", 3);
+    expected.begin_event("liquidation_progress_reported", 5);
     expected.write_attr_hex("owner", &[0xab; 20]);
     expected.write_attr("outcome", "maintenance_restored_below_target");
     expected.write_attr_u64("config_sequence", 4);
+    expected.write_attr_display("remainder_code", &111_u32);
+    expected.write_attr("remainder_refusal", "net_delta_grows");
     assert_eq!(actual.into_vec(), expected.into_vec());
 }
 
