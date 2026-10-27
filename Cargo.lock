@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "proof-wire"
-version = "7.0.0"
+version = "8.0.0"
 dependencies = [
  "borsh",
  "derive_more",

@@ -208,7 +208,7 @@ name = "proof-wire"
 # fund_absorbed. LiquidationRefusal appends NetDeltaGrows, and ExecError
 # appends LiquidationBatchTooManyOwners (115) and LiquidationBatchOverBudget
 # (116). Pre-existing bytes still decode -> MINOR.
-version = "7.0.0"
+version = "8.0.0"
 edition = "2021"
 
 [features]
