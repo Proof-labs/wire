@@ -1937,25 +1937,13 @@ mod tests {
         }
     }
 
-    /// Payload bytes of the tag-16 `SetPlpConfig` vectors below, after the
-    /// variant name: a 4-element array of the 20-byte address `[0xAA; 20]`,
-    /// bootstrap balance, floor and enabled flag. To regenerate after an
-    /// intended layout change, print
-    /// `hex_string(&canonical_admin_action_bytes(&action).unwrap())` and drop
-    /// the map and variant-name header.
-    const SET_PLP_CONFIG_PAYLOADS: [(u64, u64, bool, &str); 2] = [
-        (
-            12_500_000_000,
-            5_000_000_000,
-            true,
-            "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
-        ),
-        (
-            0,
-            0,
-            false,
-            "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaa0000c2",
-        ),
+    /// Payload bytes of the retired tag-16 `SetPlpConfig` action as proof-wire
+    /// 4.x froze them, after the variant name: a 4-element array of the
+    /// 20-byte address `[0xAA; 20]`, bootstrap balance, floor and enabled
+    /// flag. Frozen history: no current type produces them.
+    const RETIRED_SET_PLP_CONFIG_PAYLOADS: [&str; 2] = [
+        "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
+        "94dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaa0000c2",
     ];
 
     /// MessagePack of an externally tagged variant: a one-entry map header
@@ -1966,74 +1954,24 @@ mod tests {
         format!("81{:02x}{}", 0xa0 | len, hex_string(name.as_bytes()))
     }
 
-    fn set_plp_config(
-        bootstrap_balance: u64,
-        min_balance_floor: u64,
-        enabled: bool,
-    ) -> AdminAction {
-        use crate::types::{AccountAddress, SetPlpConfig};
-        AdminAction::SetPlpConfig(SetPlpConfig {
-            address: AccountAddress([0xAA; 20]),
-            bootstrap_balance,
-            min_balance_floor,
-            enabled,
-        })
-    }
-
-    /// Frozen wire vectors for the tag-16 `SetPlpConfig` inner action, enabled
-    /// and disabled. The proposal content hash commits these bytes.
+    /// `SetPlpConfig` (tag 16) is retired with the engine's liquidity-provider
+    /// backstop: its frozen bytes, under the current name and the former
+    /// `SetHlpConfig`, fail closed at decode instead of mapping onto any other
+    /// action.
     #[test]
-    fn set_plp_config_wire_vectors_frozen() {
-        for (bootstrap_balance, min_balance_floor, enabled, payload) in SET_PLP_CONFIG_PAYLOADS {
-            let action = set_plp_config(bootstrap_balance, min_balance_floor, enabled);
-            let canonical =
-                canonical_admin_action_bytes(&action).expect("SetPlpConfig encodes canonically");
-            assert_eq!(
-                hex_string(&canonical),
-                format!("{}{payload}", variant_header("SetPlpConfig")),
-                "frozen SetPlpConfig wire vector drifted"
-            );
-            let (decoded, re_encoded) =
-                canonicalize_admin_action(&canonical).expect("frozen bytes decode");
-            assert_eq!(
-                re_encoded, canonical,
-                "canonical encoding must be a fixed point"
-            );
-            assert_eq!(decoded.action_tag(), AdminActionType::SetPlpConfig as u8);
-        }
-    }
-
-    /// Bytes written under the former variant name `SetHlpConfig` still decode
-    /// to the same action, but canonicalize to the new name. A proposal stored
-    /// with the old bytes therefore no longer matches its own canonical
-    /// encoding; see the upgrade-boundary rule in `docs/release.md`.
-    #[test]
-    fn set_hlp_config_old_bytes_decode_but_canonicalize_to_the_new_name() {
-        // The enabled vector exactly as it was frozen under the former name.
-        assert_eq!(
-            format!("{}{}", variant_header("SetHlpConfig"), SET_PLP_CONFIG_PAYLOADS[0].3),
-            "81ac536574486c70436f6e66696794dc0014ccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaaccaacf00000002e90edd00cf000000012a05f200c3",
-        );
-        for (bootstrap_balance, min_balance_floor, enabled, payload) in SET_PLP_CONFIG_PAYLOADS {
-            let old_hex = format!("{}{payload}", variant_header("SetHlpConfig"));
-            let old_bytes = hex::decode(&old_hex).expect("old vector is valid hex");
-            let (decoded, re_encoded) =
-                canonicalize_admin_action(&old_bytes).expect("old spelling still decodes");
-            assert_eq!(decoded.action_tag(), AdminActionType::SetPlpConfig as u8);
-            assert_eq!(
-                re_encoded,
-                canonical_admin_action_bytes(&set_plp_config(
-                    bootstrap_balance,
-                    min_balance_floor,
-                    enabled
-                ))
-                .expect("new spelling encodes"),
-                "old bytes decode to the same action"
-            );
-            assert_ne!(
-                re_encoded, old_bytes,
-                "old bytes are not canonical any more"
-            );
+    fn retired_set_plp_config_bytes_fail_closed() {
+        for name in ["SetPlpConfig", "SetHlpConfig"] {
+            for payload in RETIRED_SET_PLP_CONFIG_PAYLOADS {
+                let hex = format!("{}{payload}", variant_header(name));
+                let bytes = hex::decode(&hex).expect("frozen vector is valid hex");
+                assert!(
+                    matches!(
+                        canonicalize_admin_action(&bytes),
+                        Err(ExecError::DecodeError(_))
+                    ),
+                    "retired {name} bytes must not decode"
+                );
+            }
         }
     }
 
@@ -2380,7 +2318,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 23] = [
+        const ALL_INNER_TAGS: [AdminActionType; 22] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2395,7 +2333,6 @@ mod tests {
             AdminActionType::SetOracleGuards,
             AdminActionType::ScheduleUpgrade,
             AdminActionType::CancelUpgrade,
-            AdminActionType::SetPlpConfig,
             AdminActionType::SetLiquidationConfig,
             AdminActionType::FundInsuranceFund,
             AdminActionType::WithdrawInsuranceFund,
@@ -2421,7 +2358,6 @@ mod tests {
                 | AdminActionType::SetOracleGuards
                 | AdminActionType::ScheduleUpgrade
                 | AdminActionType::CancelUpgrade
-                | AdminActionType::SetPlpConfig
                 | AdminActionType::SetLiquidationConfig
                 | AdminActionType::FundInsuranceFund
                 | AdminActionType::WithdrawInsuranceFund
@@ -2432,7 +2368,7 @@ mod tests {
                 | AdminActionType::SetMarginOffsetPolicy => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
-                AdminActionType::CreateImpactMarket => {
+                AdminActionType::CreateImpactMarket | AdminActionType::SetPlpConfig => {
                     panic!("a retired tag must not be listed as assigned")
                 }
             }

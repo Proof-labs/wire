@@ -839,11 +839,6 @@ pub enum AdminAction {
     /// and `max_oracle_deviation_bps`) on one standalone perpetual through
     /// the admin quorum.
     SetOracleGuards(SetOracleGuards),
-    /// Writes (or replaces) the global PLP backstop configuration: the
-    /// PLP account address, bootstrap equity, floor, and the enabled flag.
-    /// Bytes carrying the former name `SetHlpConfig` still decode.
-    #[serde(alias = "SetHlpConfig")]
-    SetPlpConfig(SetPlpConfig),
     /// Writes (or replaces) the per-account rolling withdrawal limit
     /// (CU-06, S39): a cap of 0 disables the limit; `window_secs` is the
     /// rolling-window length in seconds. Enforcement charges every outflow
@@ -1025,90 +1020,6 @@ pub struct WithdrawalOutflow {
 /// above `4096 * min_withdrawal` inside a single window.
 pub const MAX_WITHDRAWAL_WINDOW_ENTRIES: usize = 4096;
 
-/// Payload of [`AdminAction::SetPlpConfig`]: the complete backstop
-/// configuration. Executing it replaces the stored [`PlpConfig`] record.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SetPlpConfig {
-    /// Trading account that absorbs deficits at Tier 0. Must be non-zero.
-    pub address: AccountAddress,
-    /// Backstop equity at registration, in microUSDC. Non-zero when
-    /// `enabled`.
-    pub bootstrap_balance: u64,
-    /// Balance the backstop keeps, in microUSDC; Tier 0 draws only above it.
-    /// At most `bootstrap_balance`.
-    pub min_balance_floor: u64,
-    /// Whether Tier 0 draws from the backstop.
-    pub enabled: bool,
-}
-
-impl SetPlpConfig {
-    /// Check the shape rules, returning the payload unchanged when all hold
-    /// and the first violated rule otherwise.
-    pub fn validate(self) -> Result<Self, PlpConfigError> {
-        if self.address.0 == [0u8; 20] {
-            return Err(PlpConfigError::ZeroAddress);
-        }
-        if self.enabled && self.bootstrap_balance == 0 {
-            return Err(PlpConfigError::ZeroBootstrapWhileEnabled {
-                min_balance_floor: self.min_balance_floor,
-            });
-        }
-        if self.min_balance_floor > self.bootstrap_balance {
-            return Err(PlpConfigError::FloorAboveBootstrap {
-                min_balance_floor: self.min_balance_floor,
-                bootstrap_balance: self.bootstrap_balance,
-            });
-        }
-        Ok(self)
-    }
-}
-
-/// A [`SetPlpConfig`] payload that breaks one shape rule, carried by
-/// [`ExecError::InvalidPlpConfig`] (code 112).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlpConfigError {
-    /// `address` is the all-zero account.
-    ZeroAddress,
-    /// `enabled` is set with a zero `bootstrap_balance`.
-    ZeroBootstrapWhileEnabled { min_balance_floor: u64 },
-    /// `min_balance_floor` exceeds `bootstrap_balance`.
-    FloorAboveBootstrap {
-        min_balance_floor: u64,
-        bootstrap_balance: u64,
-    },
-}
-
-impl fmt::Display for PlpConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PlpConfigError::ZeroAddress => write!(f, "PLP address must be non-zero"),
-            PlpConfigError::ZeroBootstrapWhileEnabled { min_balance_floor } => write!(
-                f,
-                "bootstrap_balance must be positive when enabled \
-                 (bootstrap_balance 0, min_balance_floor {min_balance_floor})"
-            ),
-            PlpConfigError::FloorAboveBootstrap {
-                min_balance_floor,
-                bootstrap_balance,
-            } => write!(
-                f,
-                "min_balance_floor {min_balance_floor} exceeds bootstrap_balance {bootstrap_balance}"
-            ),
-        }
-    }
-}
-
-impl From<SetPlpConfig> for PlpConfig {
-    fn from(cmd: SetPlpConfig) -> Self {
-        Self {
-            address: cmd.address.0,
-            bootstrap_balance: cmd.bootstrap_balance,
-            min_balance_floor: cmd.min_balance_floor,
-            enabled: cmd.enabled,
-        }
-    }
-}
-
 /// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
 /// values to write. `None` leaves a field untouched; at least one field must
 /// be `Some`, and a supplied value must be non-zero, because zero is the
@@ -1208,7 +1119,7 @@ pub enum AdminBatchItem {
 /// action: the discriminant stays in [`AdminActionType`] marked deprecated,
 /// no `AdminAction` arm carries it, and the byte ledger keeps its row as
 /// `retired`.
-pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03];
+pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03, 0x10];
 
 /// Stable discriminant for the closed [`AdminAction`] namespace.
 ///
@@ -1245,7 +1156,9 @@ pub enum AdminActionType {
     /// Cancels the pending protocol upgrade plan. Must commit before the
     /// plan's target height to have effect.
     CancelUpgrade = 15,
-    /// Writes or replaces the global PLP backstop configuration.
+    #[deprecated(
+        note = "retired with the engine's liquidity-provider backstop; no AdminAction arm, never reassigned"
+    )]
     SetPlpConfig = 16,
     /// Replaces the global liquidation configuration.
     SetLiquidationConfig = 17,
@@ -1285,7 +1198,6 @@ impl AdminAction {
             Self::SetOracleGuards(_) => AdminActionType::SetOracleGuards,
             Self::ScheduleUpgrade(_) => AdminActionType::ScheduleUpgrade,
             Self::CancelUpgrade(_) => AdminActionType::CancelUpgrade,
-            Self::SetPlpConfig(_) => AdminActionType::SetPlpConfig,
             Self::FundInsuranceFund(_) => AdminActionType::FundInsuranceFund,
             Self::WithdrawInsuranceFund(_) => AdminActionType::WithdrawInsuranceFund,
             Self::ExecInsuranceFund(_) => AdminActionType::ExecInsuranceFund,
@@ -1799,8 +1711,7 @@ pub struct MarketConfig {
     /// Insurance-fund pool grouping. Markets with the same `pool_id`
     /// share an insurance fund — a JELLY-style blowout in one pool can
     /// drain its own IF to zero without touching the IF that backs
-    /// other pools. The full waterfall is PLP → per-pool IF → socialized
-    /// loss → ADL.
+    /// other pools. A deficit draws on the pool's IF first, then ADL.
     ///
     /// Defaults to 0. Each pool's insurance fund is the account at
     /// `derive_vault(Vault::Insurance(pool_id))`.
@@ -1994,34 +1905,6 @@ pub struct FeeTier {
     /// Taker fee in tenth-basis-points. The configured alpha tiers keep
     /// this non-negative so the protocol never pays takers.
     pub taker_fee_tenth_bps: i16,
-}
-
-/// Configuration for the Proof liquidity provider (PLP) — the
-/// protocol-owned MM that absorbs bankruptcy losses at Tier 0 of the
-/// bad-debt waterfall.
-///
-/// Stored under `keys::PLP_CONFIG` (single global record). The PLP's
-/// trading account lives at `address`; the engine treats it like any
-/// other account for matching purposes but consults `min_balance_floor`
-/// when settling deficits — once PLP equity drops below the floor it
-/// stops absorbing and further deficits route to the per-pool IF.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct PlpConfig {
-    /// 20-byte address of the PLP account (matches the address
-    /// derived from the PLP's signing key).
-    #[serde(with = "crate::wire_bytes")]
-    pub address: [u8; 20],
-    /// Bootstrap equity (microUSDC) as of the last `SetPlpConfig`. Only
-    /// that action writes it, so drawdowns and trading never move it.
-    pub bootstrap_balance: u64,
-    /// Minimum balance PLP must retain. Below this, Tier 0 stops
-    /// absorbing. Default: 60% of bootstrap (`0.6 × bootstrap_balance`).
-    /// Stored absolute so the value at config-write time is durable
-    /// across bootstrap_balance migrations.
-    pub min_balance_floor: u64,
-    /// True iff Tier 0 is enabled. When false (initial state — no PLP
-    /// configured) the waterfall starts at Tier 1 (per-pool IF).
-    pub enabled: bool,
 }
 
 /// Tier-2 haircut already applied for one pool in one consensus block.
@@ -3840,22 +3723,6 @@ pub enum Event {
         /// Change amount in micro-USDC (positive = inflow, negative = outflow).
         delta: i64,
     },
-    /// Tier 0 of the bad-debt waterfall. PLP absorbed `amount` of
-    /// liquidation deficit, leaving PLP balance at `plp_balance_after`.
-    /// Emitted only when PLP is enabled AND its balance was above the
-    /// floor at draw time. Once PLP hits the floor, further deficits
-    /// route to Tier 1 (per-pool IF) and this event stops firing.
-    #[serde(alias = "HlpAbsorbed")]
-    PlpAbsorbed {
-        /// Pool the liquidation came from (informational — PLP is
-        /// pool-agnostic at Tier 0).
-        pool_id: u8,
-        /// Microusdc absorbed by PLP this draw.
-        amount: u64,
-        /// PLP balance after the draw.
-        #[serde(alias = "hlp_balance_after")]
-        plp_balance_after: i64,
-    },
     /// Tier 2 of the bad-debt waterfall. The pool's IF was insufficient
     /// to fully absorb a liquidation deficit, so the residual was
     /// distributed pro-rata across eligible open positions in the pool. At
@@ -4333,17 +4200,6 @@ pub enum Event {
         order_id: u64,
         reason: PendingTriggerDiscardReason,
     },
-    /// The admin quorum wrote (or replaced) the global PLP backstop
-    /// configuration. Carries the full post-write state.
-    #[serde(alias = "HlpConfigUpdated")]
-    PlpConfigUpdated {
-        #[serde(with = "crate::wire_bytes")]
-        address: [u8; 20],
-        bootstrap_balance: u64,
-        min_balance_floor: u64,
-        enabled: bool,
-        proposal_id: u64,
-    },
     /// A `FundInsuranceFund` debited `amount` (the sum of its allocations)
     /// from the quorum-authorized named source, leaving `balance_after`.
     InsuranceSourceDebited {
@@ -4706,9 +4562,6 @@ pub enum ExecError {
     /// its arm is not admitted (unknown/disallowed arm, non-zero inner
     /// signer, bounds).
     InvalidAdminAction(String),
-    /// A `SetPlpConfig` payload breaks one of its shape rules; the payload
-    /// names which rule and the values that broke it.
-    InvalidPlpConfig(PlpConfigError),
     /// Canonical inner action bytes exceed `MAX_ADMIN_ACTION_BYTES`.
     AdminActionTooLarge {
         max: u32,
@@ -5266,7 +5119,8 @@ impl ExecError {
             ExecError::InsuranceAllocationZeroAmount { .. } => 109,
             ExecError::InsuranceAmountExceedsI64 { .. } => 110,
             ExecError::LiquidationRefused(_) => 111,
-            ExecError::InvalidPlpConfig(_) => 112,
+            // 112 was InvalidPlpConfig, retired with the engine's
+            // liquidity-provider backstop; never reassigned.
             ExecError::InsuranceAccountWithdrawal { .. } => 113,
             ExecError::InsuranceActionRefused { .. } => 114,
             ExecError::LiquidationBatchTooManyOwners { .. } => 115,
@@ -5590,9 +5444,6 @@ impl ExecError {
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
-            }
-            ExecError::InvalidPlpConfig(_) => {
-                "SetPlpConfig payload breaks a shape rule: zero address, zero bootstrap_balance while enabled, or min_balance_floor above bootstrap_balance."
             }
             ExecError::InsuranceFundingReplayed { .. } => {
                 "Insurance-fund funding id has already executed; each funding id executes at most once."
@@ -6035,7 +5886,6 @@ impl fmt::Display for ExecError {
             ExecError::TriggerOrderIncompatible => {
                 write!(f, "order cannot carry attached SL/TP limbs")
             }
-            ExecError::InvalidPlpConfig(error) => write!(f, "invalid PLP config: {error}"),
             ExecError::InsuranceFundingReplayed { funding_id } => {
                 write!(f, "insurance funding id {} already executed", funding_id.0)
             }
@@ -6611,39 +6461,6 @@ mod tests {
             "order cannot carry attached SL/TP limbs",
             "display rendering is part of the operator contract"
         );
-    }
-
-    /// Every `SetPlpConfig` shape fault shares code 112 and is told apart by
-    /// its typed payload, which the display names with the offending values.
-    #[test]
-    fn invalid_plp_config_is_code_112_and_names_the_rule() {
-        for (fault, rendered) in [
-            (
-                PlpConfigError::ZeroAddress,
-                "invalid PLP config: PLP address must be non-zero",
-            ),
-            (
-                PlpConfigError::ZeroBootstrapWhileEnabled {
-                    min_balance_floor: 0,
-                },
-                "invalid PLP config: bootstrap_balance must be positive when enabled \
-                 (bootstrap_balance 0, min_balance_floor 0)",
-            ),
-            (
-                PlpConfigError::FloorAboveBootstrap {
-                    min_balance_floor: 1_001,
-                    bootstrap_balance: 1_000,
-                },
-                "invalid PLP config: min_balance_floor 1001 exceeds bootstrap_balance 1000",
-            ),
-        ] {
-            let err = ExecError::InvalidPlpConfig(fault);
-            assert_eq!(err.code(), 112, "code 112 is assigned to PLP shape faults");
-            assert!(err
-                .meaning()
-                .starts_with("SetPlpConfig payload breaks a shape rule"));
-            assert_eq!(err.to_string(), rendered);
-        }
     }
 
     /// The skip reason renders as its snake-case literal, next to the owner.

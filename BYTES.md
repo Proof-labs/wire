@@ -99,7 +99,7 @@ are not outer transaction action bytes.
 | 0x0D | `SetOracleGuards`                 | dormant behind `UPGRADE_HEIGHT_ORACLE_GUARDS_CONFIG` |
 | 0x0E | `ScheduleUpgrade`                 | governed; schedules the pending protocol-upgrade plan |
 | 0x0F | `CancelUpgrade`                   | governed; cancels the pending plan (before H) |
-| 0x10 | `SetPlpConfig`                    | governed; writes the global Proof liquidity provider (PLP) backstop config |
+| 0x10 | `SetPlpConfig`                    | retired  |
 | 0x11 | `SetLiquidationConfig`            | governed; replaces the global liquidation configuration (compare-and-set on its sequence) |
 | 0x12 | `FundInsuranceFund`               | quorum-authorized transfer from a named account to the insurance accounts of pools with registered markets |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
@@ -134,7 +134,8 @@ release-tag time), but the tag is ASSIGNED from this commit on. The content
 hash commits it, so it can never be repurposed regardless of when it
 activates. Tag `0x03` was `CreateImpactMarket`, retired with the conditional
 family in 2.0.0; historical proposal hashes commit it, so it is never
-reassigned.
+reassigned. Tag `0x10` was `SetPlpConfig`, retired with the engine's
+liquidity-provider backstop; it is never reassigned either.
 
 Tag `0x11` (`SetLiquidationConfig`) claims the RT-01 reservation. Its one
 record lives under state prefix `0x68`; genesis and the upgrade that introduces
