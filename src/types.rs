@@ -3517,6 +3517,10 @@ pub enum Event {
         side: Side,
         entry_price: u64,
         size: u64,
+        /// PnL this update booked to cash without a fill: a gain realized in
+        /// place to pay a resolution deficit. Zero for every other update.
+        #[serde(default)]
+        realized_pnl: i64,
     },
     PositionClosed {
         owner: [u8; 20],
