@@ -3557,7 +3557,8 @@ pub enum Event {
         /// Cash debit/credit from netting against an existing opposite-side
         /// binary position. Zero in the common case.
         cash_pnl_realized: i64,
-        /// Conditional value in micro-USDC below one binary unit, not issued.
+        /// Conditional value in micro-USDC the account gave up to whole binary
+        /// units: a gain's part under one unit, or what a loss was rounded up by.
         #[serde(default)]
         value_dropped: i64,
     },
