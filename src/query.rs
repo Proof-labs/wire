@@ -156,7 +156,8 @@ pub struct AccountInfo {
     ///
     /// Unlike `equity`, this does not select a binding resolution scenario.
     /// It uses oracle marks for perps and child-market marks for event books,
-    /// and is intended for "what could I cash out around now?" display surfaces.
+    /// nets the perps' unsettled funding, and is intended for "what could I
+    /// cash out around now?" display surfaces.
     /// Child marks are raw trade EWMAs, not the clamped scenario marks.
     /// This display is neither guaranteed execution proceeds nor a
     /// conservative bound on scenario equity.
