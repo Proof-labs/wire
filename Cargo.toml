@@ -29,9 +29,9 @@ name = "proof-wire"
 # Pre-existing bytes still decode unchanged -> MINOR.
 #
 # 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
-# resolves a standalone event; the legacy event-plus-conditional resolution at 0x0F is renamed
-# ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
-# unchanged -> MINOR.
+# resolves a standalone event; the legacy event-plus-conditional resolution
+# at 0x0F is renamed ResolveImpactMarket with an unchanged payload.
+# Pre-existing bytes still decode unchanged -> MINOR.
 #
 # 1.6.0 -> 1.7.0: additive wire changes. New outer action
 # SubmitOracleObservation at 0x2D, new inner admin ConfigureOraclePolicy at
@@ -56,7 +56,8 @@ name = "proof-wire"
 # ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
 # decode unchanged -> MINOR.
 #
-# 1.10.0 -> 2.0.0: BREAKING wire change. The legacy event-plus-conditional record is removed:
+# 1.10.0 -> 2.0.0: BREAKING wire change. The legacy event-plus-conditional
+# record is removed:
 # outer actions CreateImpactMarket
 # (0x0E) and ResolveImpactMarket (0x0F), inner admin tag 3, ImpactMarketId /
 # ImpactMarketInfo / ImpactMarketStatus, the family events and ExecError codes
@@ -208,6 +209,15 @@ name = "proof-wire"
 # fund_absorbed. LiquidationRefusal appends NetDeltaGrows, and ExecError
 # appends LiquidationBatchTooManyOwners (115) and LiquidationBatchOverBudget
 # (116). Pre-existing bytes still decode -> MINOR.
+#
+# Unreleased: the branch outcome events take the canonical vocabulary's names
+# (rule N5): Event::ConditionalSettled -> ConditionMet and
+# Event::ConditionalVoided -> ConditionNotMet. The derive turns variant names
+# into the ABCI event type strings, so conditional_settled and
+# conditional_voided become condition_met and condition_not_met on the event
+# surface, and Rust dependents naming the old variants no longer compile.
+# Bytes under the former names still decode, through serde aliases. Event
+# tags are unchanged -> MAJOR.
 version = "8.0.0"
 edition = "2021"
 
@@ -248,7 +258,7 @@ name = "decode_tx"
 required-features = ["full"]
 
 [[test]]
-name = "conditional_settled_conversion"
+name = "condition_met_conversion"
 required-features = ["full"]
 
 [[test]]

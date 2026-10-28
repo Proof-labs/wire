@@ -3642,15 +3642,15 @@ pub enum Event {
     },
     /// An event resolved to Yes or No, never Void. The event itself has no
     /// settlement price; each attached conditional's is carried by its
-    /// [`Event::ConditionalSettled`] events.
+    /// [`Event::ConditionMet`] events.
     EventResolved {
         event_id: EventId,
         outcome: Outcome,
         timestamp_ms: u64,
         signer: Option<[u8; 20]>,
     },
-    /// A conditional-perp position settled because its branch won the
-    /// resolution. `settlement_price` is the underlying's oracle price,
+    /// Condition met: a conditional-perp position settled because its branch
+    /// won the resolution. `settlement_price` is the underlying's oracle price,
     /// published at or after the event's settlement time; `realized_pnl` is
     /// the profit or loss between `entry_price` and `settlement_price`, paid
     /// to the owner's balance.
@@ -3659,8 +3659,11 @@ pub enum Event {
     /// the underlying at `settlement_price` (the whole `size`, or zero), and
     /// `fallback_reason` says why a winner that did not convert was paid in
     /// cash only. Both decode as `0` and `None` from bytes written before
-    /// conversion existed, when every winner was paid in cash only.
-    ConditionalSettled {
+    /// conversion existed, when every winner was paid in cash only. Bytes
+    /// written under the former name `ConditionalSettled` decode to this
+    /// variant.
+    #[serde(alias = "ConditionalSettled")] // vocabulary-lint: allow
+    ConditionMet {
         event_id: EventId,
         market: MarketId,
         owner: [u8; 20],
@@ -3674,11 +3677,14 @@ pub enum Event {
         #[serde(default)]
         fallback_reason: Option<ConversionFallbackReason>,
     },
-    /// A conditional-perp position was voided because its branch lost. The
-    /// position holder's reserved IM is released (effectively: position deleted,
-    /// no balance change, as IM is equity-based not locked collateral). An
-    /// event never resolves to Void, so a lost branch is the only reason.
-    ConditionalVoided {
+    /// Condition not met: a conditional-perp position was removed because its
+    /// branch lost. The position holder's reserved IM is released (effectively:
+    /// position deleted, no balance change, as IM is equity-based not locked
+    /// collateral). An event never resolves to Void, so a lost branch is the
+    /// only reason. Bytes written under the former name `ConditionalVoided`
+    /// decode to this variant.
+    #[serde(alias = "ConditionalVoided")] // vocabulary-lint: allow
+    ConditionNotMet {
         event_id: EventId,
         market: MarketId,
         owner: [u8; 20],
