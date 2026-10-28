@@ -229,7 +229,7 @@ name = "proof-wire"
 # defaulted realized_pnl, the PnL an update booked to cash without a fill.
 # Pre-existing bytes still decode, but a decoder built before it rejects the
 # longer array (LengthMismatch) -> MAJOR (rides the pending MAJOR above).
-version = "8.0.0"
+version = "9.0.0"
 edition = "2021"
 
 [features]
