@@ -65,7 +65,7 @@ fn render(event: &Event) -> Vec<u8> {
 /// The eight attributes a cash-only settlement rendered before conversion,
 /// preceded by the event header with `attr_count` attributes.
 fn legacy_attributes(writer: &mut AbciEventWriter, attr_count: u16) {
-    writer.begin_event("conditional_settled", attr_count);
+    writer.begin_event("conditional_settled", attr_count); // vocabulary-lint: allow
     writer.write_attr_u64("event_id", 42);
     writer.write_attr_u64("market", 100);
     writer.write_attr_hex("owner", &OWNER);

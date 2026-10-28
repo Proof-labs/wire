@@ -29,7 +29,7 @@ name = "proof-wire"
 # Pre-existing bytes still decode unchanged -> MINOR.
 #
 # 1.5.0 -> 1.6.0: additive wire change. New outer action ResolveEvent at 0x27
-# resolves a standalone event; the impact-market resolution at 0x0F is renamed
+# resolves a standalone event; the legacy event-plus-conditional resolution at 0x0F is renamed
 # ResolveImpactMarket with an unchanged payload. Pre-existing bytes still decode
 # unchanged -> MINOR.
 #
@@ -56,7 +56,7 @@ name = "proof-wire"
 # ExecError::WithdrawalPayoutLeaseActive (code 91). Pre-existing bytes still
 # decode unchanged -> MINOR.
 #
-# 1.10.0 -> 2.0.0: BREAKING wire change. The impact-market family is removed:
+# 1.10.0 -> 2.0.0: BREAKING wire change. The legacy event-plus-conditional record is removed:
 # outer actions CreateImpactMarket
 # (0x0E) and ResolveImpactMarket (0x0F), inner admin tag 3, ImpactMarketId /
 # ImpactMarketInfo / ImpactMarketStatus, the family events and ExecError codes
@@ -97,7 +97,7 @@ name = "proof-wire"
 # the daemon's LiquidateAccounts only. Bytes that decoded before no longer
 # do -> MAJOR.
 #
-# 3.0.0 -> 4.0.0: the HLP identifiers become PLP (Proof liquidity provider):
+# 3.0.0 -> 4.0.0: the HLP identifiers become PLP (Proof liquidity provider): vocabulary-lint: allow
 # AdminAction::SetHlpConfig -> SetPlpConfig (inner tag 0x10 unchanged),
 # Event::HlpAbsorbed -> PlpAbsorbed, and Event::HlpConfigUpdated ->
 # PlpConfigUpdated. The derive turns variant names into the ABCI event type

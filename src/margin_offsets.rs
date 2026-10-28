@@ -265,7 +265,7 @@ pub struct MarginOffsetPair {
 /// The only way to build one is [`TryFrom<Vec<MarginOffsetPair>>`], which
 /// enforces the bound and the order: conditionals strictly ascend and never
 /// repeat, and every pair names its own perpetual as the settlement
-/// reference. Ascending conditional market id is the allocation priority when
+/// reference. Ascending conditional id is the allocation priority when
 /// several pairs could match, so the order is part of the contract and a
 /// decoded list that is not canonical is refused.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -316,7 +316,7 @@ impl<'de> Deserialize<'de> for MarginOffsetPairs {
 }
 
 impl MarginOffsetPairs {
-    /// The pairs in canonical order, ascending by conditional market.
+    /// The pairs in canonical order, ascending by conditional id.
     pub fn iter(&self) -> core::slice::Iter<'_, MarginOffsetPair> {
         self.0.iter()
     }
@@ -440,7 +440,7 @@ impl core::fmt::Display for MarginOffsetPolicyError {
                 write!(f, "margin offset pair count {actual} exceeds {max}")
             }
             Self::DuplicateConditional { at, market } => {
-                write!(f, "pair {at} repeats conditional market {}", market.0)
+                write!(f, "pair {at} repeats conditional {}", market.0)
             }
             Self::OutOfOrderConditional {
                 at,
@@ -448,7 +448,7 @@ impl core::fmt::Display for MarginOffsetPolicyError {
                 market,
             } => write!(
                 f,
-                "pair {at} conditional market {} must exceed the previous conditional market {}",
+                "pair {at} conditional {} must exceed the previous conditional {}",
                 market.0, previous.0
             ),
             Self::SameMarket { at, market } => write!(
