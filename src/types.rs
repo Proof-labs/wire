@@ -3350,6 +3350,8 @@ pub enum UnfilledReason {
     SelfTrade = 2,
     /// The book had no more depth within the limit.
     NoLiquidity = 3,
+    /// The account could afford no more of the order.
+    MarginCap = 4,
 }
 
 impl fmt::Display for UnfilledReason {
@@ -3358,6 +3360,7 @@ impl fmt::Display for UnfilledReason {
             UnfilledReason::ReduceOnlyCap => f.write_str("reduce_only_cap"),
             UnfilledReason::SelfTrade => f.write_str("self_trade"),
             UnfilledReason::NoLiquidity => f.write_str("no_liquidity"),
+            UnfilledReason::MarginCap => f.write_str("margin_cap"),
         }
     }
 }

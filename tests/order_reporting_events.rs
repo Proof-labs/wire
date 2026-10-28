@@ -187,6 +187,7 @@ fn unfilled_reason_literals_stay_stable() {
         (UnfilledReason::ReduceOnlyCap, "reduce_only_cap"),
         (UnfilledReason::SelfTrade, "self_trade"),
         (UnfilledReason::NoLiquidity, "no_liquidity"),
+        (UnfilledReason::MarginCap, "margin_cap"),
     ] {
         assert_eq!(reason.to_string(), literal);
     }

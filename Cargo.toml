@@ -218,6 +218,11 @@ name = "proof-wire"
 # surface, and Rust dependents naming the old variants no longer compile.
 # Bytes under the former names still decode, through serde aliases. Event
 # tags are unchanged -> MAJOR.
+#
+# Unreleased: UnfilledReason appends MarginCap, reported when a market order
+# or a close stopped at what the account could afford. Pre-existing bytes
+# still decode, but a decoder built before it cannot read the new value ->
+# MAJOR (rides the pending MAJOR above).
 version = "8.0.0"
 edition = "2021"
 
