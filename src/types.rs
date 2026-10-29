@@ -869,6 +869,11 @@ pub enum AdminAction {
     ExecInsuranceFund(ExecInsuranceFund),
     /// Replace explicit partial-margin offset eligibility and rates.
     SetMarginOffsetPolicy(SetMarginOffsetPolicy),
+    /// Writes (or replaces) the deposit limits on `ConfirmDeposit` and
+    /// `Deposit`: a per-deposit maximum and a protocol-wide
+    /// rolling-window cap. Either cap at 0 is off; absent configuration is
+    /// both off.
+    SetDepositLimit(SetDepositLimit),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1019,6 +1024,23 @@ pub struct WithdrawalOutflow {
 /// below-minimum withdrawal floor, so reaching this needs a governance cap
 /// above `4096 * min_withdrawal` inside a single window.
 pub const MAX_WITHDRAWAL_WINDOW_ENTRIES: usize = 4096;
+
+/// Payload of [`AdminAction::SetDepositLimit`]: bounds on what
+/// `ConfirmDeposit` and `Deposit` may credit. Executing it
+/// replaces the stored configuration. Each cap is independent and 0 turns it off, so a
+/// chain that never executes this action credits exactly as before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetDepositLimit {
+    /// Largest amount one `ConfirmDeposit` or `Deposit` may credit, in
+    /// microUSDC. 0 disables the per-deposit maximum.
+    pub per_deposit_max_micro_usdc: u64,
+    /// Most that all `ConfirmDeposit` and `Deposit` credits together may add
+    /// inside any rolling span of `window_secs`, in microUSDC, across every
+    /// account. 0 disables the window cap.
+    pub window_cap_micro_usdc: u64,
+    /// Rolling-window length in seconds. Must be >= 1.
+    pub window_secs: u32,
+}
 
 /// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
 /// values to write. `None` leaves a field untouched; at least one field must
@@ -1179,6 +1201,9 @@ pub enum AdminActionType {
     ExecInsuranceFund = 26,
     /// Replaces the explicit partial-margin offset policy.
     SetMarginOffsetPolicy = 27,
+    /// Writes (or replaces) the `ConfirmDeposit` / `Deposit` per-deposit
+    /// maximum and rolling-window cap. Both default off.
+    SetDepositLimit = 28,
 }
 
 impl AdminAction {
@@ -1206,6 +1231,7 @@ impl AdminAction {
             Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
             Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
             Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
+            Self::SetDepositLimit(_) => AdminActionType::SetDepositLimit,
         }
     }
 
@@ -4451,6 +4477,15 @@ pub enum Event {
         rate_bps: PartialOffsetBps,
         resolution: OffsetResolutionTreatment,
     },
+    /// The admin quorum wrote (or replaced) the deposit limits.
+    /// Carries the full post-write configuration; a cap of
+    /// 0 is off.
+    DepositLimitSet {
+        per_deposit_max_micro_usdc: u64,
+        window_cap_micro_usdc: u64,
+        window_secs: u32,
+        proposal_id: u64,
+    },
 }
 
 impl Event {
@@ -5011,6 +5046,19 @@ pub enum ExecError {
         positions: u64,
         budget: u64,
     },
+    /// A `ConfirmDeposit` or `Deposit` would credit more than
+    /// the governance-set deposit limits allow.
+    DepositLimitExceeded {
+        /// The amount the deposit would have credited.
+        attempted: u64,
+        /// The cap that refused it: the per-deposit maximum, or the
+        /// window cap when `window_frees_at_ms` is set.
+        cap: u64,
+        /// `None` when the per-deposit maximum refused the deposit. For the
+        /// rolling-window cap, the unix ms at which the oldest in-window
+        /// credit ages out, the first moment any capacity returns.
+        window_frees_at_ms: Option<u64>,
+    },
 }
 
 impl ExecError {
@@ -5139,6 +5187,8 @@ impl ExecError {
             ExecError::InsuranceActionRefused { .. } => 114,
             ExecError::LiquidationBatchTooManyOwners { .. } => 115,
             ExecError::LiquidationBatchOverBudget { .. } => 116,
+            // 117-122 are claimed by open exchange#1184; not assigned here.
+            ExecError::DepositLimitExceeded { .. } => 123,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5303,6 +5353,12 @@ impl ExecError {
                  configured per-account cap (CU-06 withdrawal limit). The attempted debit, the \
                  cap, and the moment the oldest in-window outflow expires are on the error's \
                  Display and log; capacity returns gradually as in-window outflows age out."
+            }
+            ExecError::DepositLimitExceeded { .. } => {
+                "The ConfirmDeposit or Deposit would credit more than the governance-set deposit \
+                 limits allow: either the per-deposit maximum, or the protocol-wide cap on deposits \
+                 credited inside the rolling window. The amount, the cap, and (for the window cap) the \
+                 moment the oldest in-window credit ages out are on the error's Display and log."
             }
             ExecError::WithdrawalTerminalGated(_) => {
                 "A retired legacy relayer withdrawal terminal (ConfirmWithdrawal / FailWithdrawal) \
@@ -5864,6 +5920,24 @@ impl fmt::Display for ExecError {
                 "withdrawal limit exceeded: {attempted} microUSDC would pass the rolling-window \
                  per-account cap of {cap}; the oldest in-window outflow expires at unix ms \
                  {oldest_expires_at_ms}"
+            ),
+            ExecError::DepositLimitExceeded {
+                attempted,
+                cap,
+                window_frees_at_ms: None,
+            } => write!(
+                f,
+                "deposit limit exceeded: {attempted} microUSDC is above the per-deposit maximum \
+                 of {cap}"
+            ),
+            ExecError::DepositLimitExceeded {
+                attempted,
+                cap,
+                window_frees_at_ms: Some(frees_at),
+            } => write!(
+                f,
+                "deposit limit exceeded: {attempted} microUSDC would pass the rolling-window \
+                 deposit cap of {cap}; the oldest in-window credit ages out at unix ms {frees_at}"
             ),
             ExecError::BridgeReceiptRegistryInactive => {
                 write!(f, "bridge receipt registry inactive: operator custody phase not configured")
