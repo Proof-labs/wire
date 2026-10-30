@@ -1,11 +1,18 @@
-//! Node read-model (response) DTOs — the client's decode view of `/v1/account`
-//! and market queries. These are plain positional-MessagePack structs over the
-//! shared wire types; trailing `#[serde(default)]` fields keep older node blobs
-//! decodable. (Client representation lives in the SDK, per the wire-crate split.)
+//! Node query responses: every type a node query serializes for clients.
+//! Define new response types here, never in exchange-core, so the engine,
+//! SDK and gateway share one definition.
+//!
+//! Positional MessagePack. Append new fields at the end with
+//! `#[serde(default)]` so new readers decode old bytes; older typed readers
+//! still refuse the longer array.
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Branch, EventId, MarketId, PositionEpoch, Side};
+use crate::types::{
+    AdminAction, Branch, EmergencyActionRecord, EmergencyId, EventId, EventInfo, FeeTier,
+    MarketConfig, MarketId, Position, PositionEpoch, ProposalId, ProposalStatus, RegistryVersion,
+    Side, SignatureThreshold, SignerAddress,
+};
 
 /// Position with response-only enrichment fields computed inline by
 /// `query_account`. The first six fields match the on-state `Position`
@@ -164,6 +171,224 @@ pub struct AccountInfo {
     /// Trailing field (index 9); older clients may ignore it.
     #[serde(default)]
     pub cashout_equity: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FinalizedHeight(pub u64);
+
+#[derive(Serialize, Deserialize)]
+pub struct LevelSummary {
+    pub price: u64,
+    pub total_quantity: u64,
+    pub order_count: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OrderbookSnapshot {
+    pub bids: Vec<LevelSummary>,
+    pub asks: Vec<LevelSummary>,
+}
+
+/// Fee schedule read model for one market.
+///
+/// This intentionally includes both the flat fallback fees and the
+/// volume-tier table. MM integrators can tell the difference between a
+/// market with no volume tiers and one whose first tier starts at zero
+/// without decoding the full `MarketConfig` registry.
+#[derive(Serialize, Deserialize)]
+pub struct FeeTierInfo {
+    pub market: MarketId,
+    pub taker_fee_bps: u32,
+    pub maker_fee_bps: u32,
+    pub fee_tiers: Vec<FeeTier>,
+}
+
+/// Raw finalized ledger facts only. No mark, funding accrual, equity, margin,
+/// withdrawal capacity, or trading authorization is implied by this response.
+#[derive(Serialize, Deserialize)]
+pub struct AccountStateInfo {
+    pub owner: SignerAddress,
+    pub finalized_height: FinalizedHeight,
+    pub balance: u64,
+    pub positions: Vec<Position>,
+}
+
+/// The operator-authorization sets as concatenated addresses (#422 / #318):
+/// the three genesis presence sets plus the three capability sets. Read-only
+/// audit surface — until now the allowlists could only be membership-tested,
+/// never enumerated.
+#[derive(Serialize, Deserialize)]
+pub struct AuthoritiesSnapshot {
+    pub relayer: Vec<SignerAddress>,
+    pub oracle: Vec<SignerAddress>,
+    pub cex_composite: Vec<SignerAddress>,
+    pub custody: Vec<SignerAddress>,
+    pub market_params: Vec<SignerAddress>,
+    pub scheduled_ops: Vec<SignerAddress>,
+}
+
+/// Funding info response for a single market.
+#[derive(Serialize, Deserialize)]
+pub struct FundingInfo {
+    pub market: MarketId,
+    /// Current funding rate in basis points (signed). 0 if no funding has run.
+    pub funding_rate_bps: i64,
+    /// Cumulative funding index (sum of all funding rates × prices).
+    pub cumulative_funding: i64,
+    /// Last funding timestamp in milliseconds. 0 if never funded.
+    pub last_funding_time_ms: u64,
+    /// EWMA mark price. 0 if no trades yet.
+    pub mark_price_ewma: u64,
+    /// Oracle price. 0 if not set.
+    pub oracle_price: u64,
+    /// Funding interval from market config.
+    pub funding_interval_ms: u64,
+    /// Max funding rate from market config.
+    pub max_funding_rate_bps: u32,
+}
+
+/// One row of the ADL queue response — a profitable position on a
+/// specific market, sorted by `adl_score` desc.
+///
+/// The 6-tuple wire shape mirrors the documented `AdlQueueEntry` SDK
+/// type; appending fields is supported via `#[serde(default)]` in the
+/// SDK decoder.
+#[derive(Serialize, Deserialize)]
+pub struct AdlQueueEntry {
+    pub owner: [u8; 20],
+    pub market: MarketId,
+    pub side: Side,
+    pub size: u64,
+    /// Unrealized PnL at the current mark, signed.
+    pub upnl_now: i64,
+    /// `max(0, upnl_now) × leverage_bps` — same formula as
+    /// PositionBrief.adl_score so per-account UI rendering and the
+    /// fleet-wide ADL queue use a single ranking definition.
+    pub adl_score: i64,
+}
+
+/// The installed admin signer registry, as stored.
+#[derive(Serialize, Deserialize)]
+pub struct AdminSignerRegistryRoster {
+    pub version: RegistryVersion,
+    pub threshold: SignatureThreshold,
+    pub members: Vec<SignerAddress>,
+}
+
+/// Signer-registry read. `None` = no registry installed, meaning
+/// multisig administration is disabled.
+#[derive(Serialize, Deserialize)]
+pub struct AdminSignerRegistryInfo {
+    pub registry: Option<AdminSignerRegistryRoster>,
+}
+
+/// One proposal, shaped for display and offline verification. The
+/// context fields plus `action_canonical_bytes` are exactly what the
+/// offline signer needs to rebuild an `ApproveAdminAction` without
+/// trusting anything the Web Admin rendered.
+#[derive(Serialize, Deserialize)]
+pub struct ProposalDisplayInfo {
+    pub proposal_id: ProposalId,
+    /// Status as written by the handlers.
+    pub status_stored: ProposalStatus,
+    /// One published rule, applied engine-side: a stored `Pending`
+    /// past its `expiry_ms` (relative to the last committed block
+    /// time) reads as `Expired { Ttl }`. The `status` filter matches
+    /// THIS field, so a status-filtered page is never wrong by
+    /// staleness, and no two readers can disagree by applying
+    /// different client-side rules.
+    pub status_effective: ProposalStatus,
+    pub registry_version: RegistryVersion,
+    pub threshold: SignatureThreshold,
+    pub proposer: SignerAddress,
+    pub approvals: Vec<SignerAddress>,
+    pub rejections: Vec<SignerAddress>,
+    pub created_height: u64,
+    pub created_ms: u64,
+    pub expiry_ms: u64,
+    pub action_tag: u8,
+    /// Typed decode of the stored action, for display. `None` when the stored
+    /// bytes predate a breaking change to that action's wire shape; they stay
+    /// in `action_canonical_bytes`.
+    pub action: Option<AdminAction>,
+    /// The EXACT stored engine-canonical bytes the content hash covers.
+    pub action_canonical_bytes: Vec<u8>,
+    pub content_hash: [u8; 32],
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ProposalPage {
+    pub items: Vec<ProposalDisplayInfo>,
+    /// Last-seen proposal id; resubmit as `cursor` for the next page.
+    pub next_cursor: Option<ProposalId>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct EmergencyActionPage {
+    pub items: Vec<EmergencyActionRecord>,
+    /// Last-seen emergency id; resubmit as `cursor` for the next page.
+    pub next_cursor: Option<EmergencyId>,
+}
+
+/// Atomic same-height read for the markets read-model poller: one
+/// committed state view yields the chain id, the height, both market
+/// registries and per-market open interest in a single response — nothing
+/// to bracket, no torn snapshot possible.
+#[derive(Serialize, Deserialize)]
+pub struct MarketsSnapshot {
+    pub chain_id: [u8; 32],
+    pub height: u64,
+    pub markets: Vec<MarketConfig>,
+    pub events: Vec<EventInfo>,
+    /// One entry per market that has had positions, ascending market id; an
+    /// absent market has none.
+    #[serde(default)]
+    pub open_interest: Vec<MarketOpenInterest>,
+}
+
+/// One market's open interest, in base-asset units per side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketOpenInterest {
+    pub market: MarketId,
+    pub long: u64,
+    pub short: u64,
+}
+
+/// The pending protocol-upgrade plan, shaped for display.
+#[derive(Serialize, Deserialize)]
+pub struct PendingUpgradePlanInfo {
+    pub target_height: u64,
+    pub major: u32,
+    pub minor: u32,
+    pub successor_sha256: [u8; 32],
+    pub scheduled_height: u64,
+}
+
+/// One executed upgrade from the append-only activation ledger.
+#[derive(Serialize, Deserialize)]
+pub struct ExecutedUpgradeInfo {
+    pub activated_height: u64,
+    pub major: u32,
+    pub minor: u32,
+}
+
+/// Upgrade-plan read: the one pending plan (state source, written by a
+/// governed `ScheduleUpgrade`) and the executed-activation ledger.
+#[derive(Serialize, Deserialize)]
+pub struct UpgradesInfo {
+    pub plan: Option<PendingUpgradePlanInfo>,
+    pub executed: Vec<ExecutedUpgradeInfo>,
+}
+
+/// Per-market oracle status: the last accepted publish timestamp.
+/// Used by the node's Prometheus exporter to surface oracle freshness without
+/// going through the indexer. Only `publish_time_ms` is needed for the gauge;
+/// `oracle_price` is not read, halving the per-market state reads on the
+/// consensus Commit path.
+#[derive(Serialize, Deserialize)]
+pub struct OracleStatusEntry {
+    pub market: MarketId,
+    pub publish_time_ms: Option<u64>,
 }
 
 #[cfg(test)]

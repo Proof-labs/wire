@@ -241,6 +241,11 @@ name = "proof-wire"
 # defaulted realized_pnl, the PnL an update booked to cash without a fill.
 # Pre-existing bytes still decode, but a decoder built before it rejects the
 # longer array (LengthMismatch) -> MAJOR (rides the pending MAJOR above).
+#
+# Unreleased: the node read-model response types move into proof_wire::query
+# (the order book, fee tiers, raw account state, authorities, funding, ADL
+# queue, admin governance, markets snapshot, upgrades and oracle status
+# reads, plus FinalizedHeight). No bytes change -> MINOR.
 version = "9.0.0"
 edition = "2021"
 
