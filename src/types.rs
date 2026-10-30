@@ -468,13 +468,17 @@ pub struct EmergencyId(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RegistryVersion(pub u64);
 
+/// A governance roster member. Encoded like every other address byte field
+/// ([`crate::wire_bytes`]): bytes in the binding formats, the bare `[u8; 20]`
+/// tuple in MessagePack.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct SignerAddress(pub [u8; 20]);
+pub struct SignerAddress(#[serde(with = "crate::wire_bytes")] pub [u8; 20]);
 
 /// Trading account an admin action targets. Distinct from [`SignerAddress`]
 /// (a governance roster member) so the two cannot be swapped at a call site.
+/// Encoded like [`SignerAddress`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct AccountAddress(pub [u8; 20]);
+pub struct AccountAddress(#[serde(with = "crate::wire_bytes")] pub [u8; 20]);
 
 /// The owner of a trading account: an account address. A sub-account's master
 /// and its derived children are both owner addresses. Distinct from

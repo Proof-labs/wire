@@ -322,12 +322,17 @@ name = "position_updated_realized"
 required-features = ["full"]
 
 [[test]]
+name = "governance_address_encoding"
+required-features = ["full"]
+
+[[test]]
 name = "event_kind"
 required-features = ["full"]
 
 [dev-dependencies]
 hex = "0.4"
 serde_json = "1"
+serde_test = "1"
 
 # Inherited from exchange-core: the wire layer holds these guarantees wherever
 # it is compiled (consensus-critical bytes). Enforced under cargo clippy.
