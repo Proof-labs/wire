@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 
 /// Derive macro that generates legacy `encode_abci` plus an optional
@@ -17,6 +17,9 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields, Type};
 ///   - anything else with Display → `.to_string()`
 ///
 /// Fields named with a leading underscore are skipped.
+///
+/// Also generates `<Name>Kind`, a fieldless enum of the event types with
+/// `as_str`/`FromStr`/`ALL`, and `<Name>::kind` (as `io::Error::kind`).
 #[proc_macro_derive(AbciEvent)]
 pub fn derive_abci_event(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -108,8 +111,82 @@ pub fn derive_abci_event(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let kind = format_ident!("{}Kind", name);
+    let unknown_kind = format_ident!("Unknown{}Kind", name);
+    let kind_variants: Vec<_> = variants.iter().map(|v| &v.ident).collect();
+    let kind_names: Vec<_> = variants
+        .iter()
+        .map(|v| to_snake_case(&v.ident.to_string()))
+        .collect();
+    let kind_doc =
+        format!("The type of a [`{name}`], one per variant, named as on the ABCI event surface.");
+    let unknown_doc = format!("A string that names no [`{kind}`].");
+
     let expanded = quote! {
+        #[doc = #kind_doc]
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        pub enum #kind {
+            #(
+                #[doc = #kind_names]
+                #kind_variants,
+            )*
+        }
+
+        impl #kind {
+            /// Every kind, in declaration order.
+            pub const ALL: &'static [#kind] = &[#(#kind::#kind_variants),*];
+
+            /// The ABCI event type string.
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    #(#kind::#kind_variants => #kind_names,)*
+                }
+            }
+        }
+
+        impl ::core::fmt::Display for #kind {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str(self.as_str())
+            }
+        }
+
+        #[doc = #unknown_doc]
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct #unknown_kind;
+
+        impl ::core::fmt::Display for #unknown_kind {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                f.write_str("unknown event type")
+            }
+        }
+
+        impl ::std::error::Error for #unknown_kind {}
+
+        impl ::core::str::FromStr for #kind {
+            type Err = #unknown_kind;
+
+            fn from_str(s: &str) -> ::core::result::Result<Self, Self::Err> {
+                match s {
+                    #(#kind_names => Ok(#kind::#kind_variants),)*
+                    _ => Err(#unknown_kind),
+                }
+            }
+        }
+
+        impl ::core::convert::From<&#name> for #kind {
+            fn from(event: &#name) -> Self {
+                event.kind()
+            }
+        }
+
         impl #name {
+            /// This event's kind.
+            pub fn kind(&self) -> #kind {
+                match self {
+                    #(#name::#kind_variants { .. } => #kind::#kind_variants,)*
+                }
+            }
+
             pub fn encode_abci(&self, w: &mut crate::abci_event::AbciEventWriter) {
                 self.encode_abci_with_coordinates(w, None);
             }

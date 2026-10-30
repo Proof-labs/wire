@@ -197,6 +197,10 @@ name = "proof-wire"
 # bytes no longer decode and every field after the flag moves up one
 # position -> MAJOR.
 #
+# Unreleased: types::EventKind, one fieldless variant per Event named as on
+# the ABCI surface (as_str, FromStr, ALL), and Event::kind (rendered by
+# proof-wire-derive 1.3). No bytes change -> MINOR.
+#
 # Unreleased: additive wire change (the deposit limits, exchange#425).
 # New AdminAction::SetDepositLimit at inner tag 0x1C with its SetDepositLimit
 # payload (per-deposit maximum, protocol-wide rolling-window cap, window
@@ -264,7 +268,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 derive_more = { version = "1", features = ["from", "display"], optional = true }
 serde_bytes = { version = "0.11", optional = true }
 rmp-serde = { version = "1", optional = true }
-proof-wire-derive = { path = "derive", version = "1.2", optional = true }
+proof-wire-derive = { path = "derive", version = "1.3", optional = true }
 # No rand_core feature: the wire layer only verifies and deterministically
 # signs (SigningKey::from_bytes + sign) — nothing generates keys, so nothing
 # pulls getrandom, which would fail to build on wasm32-unknown-unknown.
@@ -310,6 +314,10 @@ required-features = ["full"]
 
 [[test]]
 name = "position_updated_realized"
+required-features = ["full"]
+
+[[test]]
+name = "event_kind"
 required-features = ["full"]
 
 [dev-dependencies]
