@@ -2092,6 +2092,41 @@ mod tests {
         );
     }
 
+    /// Frozen wire vectors for the tag-19 `SetWithdrawalLimit` inner action:
+    /// an enabled cap and the disabled cap of 0. The proposal content hash
+    /// commits these bytes.
+    #[test]
+    fn set_withdrawal_limit_wire_vectors_frozen() {
+        use crate::types::SetWithdrawalLimit;
+        for (cap, expected) in [
+            (
+                10_000_000_000u64,
+                "81b25365745769746864726177616c4c696d697492cf00000002540be400ce00015180",
+            ),
+            (0, "81b25365745769746864726177616c4c696d69749200ce00015180"),
+        ] {
+            let action = AdminAction::SetWithdrawalLimit(SetWithdrawalLimit {
+                per_account_cap_micro_usdc: cap,
+                window_secs: 86_400,
+            });
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(
+                hex_string(&canonical),
+                expected,
+                "frozen SetWithdrawalLimit wire vector drifted"
+            );
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(
+                re_encoded, canonical,
+                "canonical encoding must be a fixed point"
+            );
+            assert_eq!(
+                decoded.action_tag(),
+                AdminActionType::SetWithdrawalLimit as u8
+            );
+        }
+    }
+
     #[test]
     fn action_blob_decodes_only_its_canonical_encoding() {
         use crate::types::{ActionBlob, InsuranceActionRefusal};

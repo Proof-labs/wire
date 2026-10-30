@@ -322,6 +322,10 @@ name = "position_updated_realized"
 required-features = ["full"]
 
 [[test]]
+name = "frozen_read_vectors"
+required-features = ["full"]
+
+[[test]]
 name = "governance_address_encoding"
 required-features = ["full"]
 

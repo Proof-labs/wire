@@ -42,10 +42,45 @@ assigned byte is missing from the table.
 
 ## Golden vectors
 
-[`vectors/*.hex`](vectors/) are the frozen cross-language vectors (PlaceOrder,
-CancelOrder, OracleUpdate, the three withdrawal-receipt terminals). They are
-the input to the engine's integration tests and the SDK's conformance suite,
-and ship as the contract artifact attached to engine releases.
+Every file under [`vectors/`](vectors/) is one frozen MessagePack value as a
+single line of lowercase hex. The directory says how to decode it:
+
+| Path | Holds | Named by |
+|---|---|---|
+| `vectors/*.hex` | a signed transaction envelope, or a bare action payload | the action |
+| `vectors/events/<event type>.hex` | one `types::Event` variant | the ABCI event type it renders as (`trade_executed.hex` is `Event::TradeExecuted`) |
+| `vectors/responses/<wire type>.hex` | one read-model response | the Rust type in snake case (`account_info.hex` is `query::AccountInfo`) |
+
+The response set is `account_info` and `position_brief` (`/v1/account`),
+`market_config` (one row of `/v1/markets`) and `event_info` (one row of the
+event queries). The event set is every variant the indexer folds into a
+derived table. Each value is built from a fixture in
+[`tests/frozen_read_vectors.rs`](tests/frozen_read_vectors.rs) (events and
+responses) or `src/codec.rs` (transactions), which checks that the fixture
+encodes to the file and that the file decodes and re-encodes to the same bytes.
+Optional fields carry a value in the fixtures, so the vectors pin their
+payload encoding and not only `nil`.
+
+Before a release, CI decodes every vector of the last wire release that has
+since changed or gone with the current crate, by kind
+(`examples/decode_tx.rs`); one that no longer decodes makes the change MAJOR.
+
+### Fetching the set as a consumer
+
+Fetch the vectors of the wire version your dependency pins, from the public
+mirror at its tag, and decode each with your own decoder:
+
+```sh
+git clone --depth 1 --branch v<MAJOR.MINOR.PATCH> https://github.com/Proof-labs/wire.git
+# or a single file:
+curl -fsSL https://raw.githubusercontent.com/Proof-labs/wire/v<MAJOR.MINOR.PATCH>/vectors/responses/account_info.hex
+```
+
+Decode every file in the directories you consume and fail on any error, so a
+new file is covered without a code change. The same set ships as
+`golden-vectors.tgz` on each engine release. To see drift before it is
+released, also decode the mirror's `dev` branch: a failure there is a change
+your decoder will need when you next move the pin.
 
 ## Invariants CI enforces
 
