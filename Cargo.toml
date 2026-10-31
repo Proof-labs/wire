@@ -246,7 +246,7 @@ name = "proof-wire"
 # (the order book, fee tiers, raw account state, authorities, funding, ADL
 # queue, admin governance, markets snapshot, upgrades and oracle status
 # reads, plus FinalizedHeight). No bytes change -> MINOR.
-version = "9.0.0"
+version = "9.1.0"
 edition = "2021"
 
 [features]
