@@ -29,6 +29,8 @@ pub mod margin_offsets;
 #[cfg(feature = "full")]
 pub mod query;
 #[cfg(feature = "full")]
+pub mod query_v2;
+#[cfg(feature = "full")]
 pub mod ticker;
 #[cfg(feature = "full")]
 pub mod triggers;

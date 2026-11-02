@@ -250,6 +250,9 @@ name = "proof-wire"
 # (A-Z, 0-9 and '-', starting with a letter, 1 to MAX_TICKER_LEN bytes) that
 # CreateMarket enforces and clients call before signing (#1351). A new
 # function; no bytes change -> MINOR.
+#
+# Unreleased: additive. New query_v2 module of version 2 read views, encoded
+# as MessagePack maps. No existing bytes change -> MINOR.
 version = "9.1.0"
 edition = "2021"
 
