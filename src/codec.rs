@@ -198,6 +198,9 @@ define_actions! {
     // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
     ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
+    // Bridge custody: the lease holder's report of the Solana signature it
+    // broadcast, stored as the withdrawal's payout record for peer checks.
+    RecordWithdrawalPayout => 48, // 0x30 — record the broadcast payout signature on a Pending withdrawal
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -233,11 +236,15 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         // Confirm/FailWithdrawal and take the same credit-band phase.
         // The payout claim pairs with them: a lease must be acquirable in
         // the same band the bridge custody actions run in, before any
-        // terminal can settle the withdrawal.
+        // terminal can settle the withdrawal. The payout record rides the
+        // same band: the report follows the claim's broadcast immediately,
+        // and shedding it behind trading txs would leave peer watchers
+        // blind longest exactly when a payout just moved.
         | ActionType::ConfirmWithdrawalReceipt
         | ActionType::FailWithdrawalReceipt
         | ActionType::AuthorizeWithdrawal
-        | ActionType::ClaimWithdrawalPayout => BlockPhase::PriceCreditPrefix,
+        | ActionType::ClaimWithdrawalPayout
+        | ActionType::RecordWithdrawalPayout => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
         ActionType::CancelOrder
@@ -1624,6 +1631,51 @@ mod tests {
         assert!(matches!(
             ActionType::try_from(0x2Eu8),
             Ok(ActionType::ClaimWithdrawalPayout)
+        ));
+    }
+
+    // -- payout record -------------------------------------------------------
+
+    /// Golden wire vector for the NEW action_type 0x30 plus a determinism +
+    /// round-trip check — same recipe as the payout claim: payload-only hex
+    /// so the vector does not depend on a signing key, and an explicit byte
+    /// assertion so a renumber cannot slip through silently.
+    #[test]
+    fn payout_record_golden_vector() {
+        let report = Action::RecordWithdrawalPayout(RecordWithdrawalPayout {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+            solana_signature: vec![0x07; 64],
+        });
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x30);
+
+        const RECORD_PAYLOAD_HEX: &str = include_str!("../vectors/record_withdrawal_payout.hex");
+        let payload = hex_string(&report.encode_action().unwrap().payload.0);
+        assert_eq!(payload, RECORD_PAYLOAD_HEX.trim(), "golden vector mismatch");
+
+        assert_round_trip(&report, 9);
+        let encoded = encode_tx(&report, 9).unwrap();
+        assert_eq!(encode_tx(&report, 9).unwrap(), encoded, "deterministic");
+        assert_eq!(peek_action_type(&encoded), Some(0x30));
+        assert!(matches!(
+            decode_tx(&encoded).unwrap().action,
+            Action::RecordWithdrawalPayout(_)
+        ));
+    }
+
+    /// Decode-compat for the record wave: 0x30 is the first free byte after
+    /// 0x2F and must not disturb any pre-existing discriminant.
+    #[test]
+    fn payout_record_leaves_neighbouring_bytes_untouched() {
+        assert_eq!(ExecuteTriggers::ACTION_TYPE, 0x2F);
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x30);
+        assert!(matches!(
+            ActionType::try_from(0x2Fu8),
+            Ok(ActionType::ExecuteTriggers)
+        ));
+        assert!(matches!(
+            ActionType::try_from(0x30u8),
+            Ok(ActionType::RecordWithdrawalPayout)
         ));
     }
 
@@ -3735,6 +3787,10 @@ mod tests {
             ),
             (
                 ActionType::ClaimWithdrawalPayout,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::RecordWithdrawalPayout,
                 BlockPhase::PriceCreditPrefix,
             ),
             (
