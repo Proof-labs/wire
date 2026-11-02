@@ -3559,11 +3559,11 @@ pub enum Event {
         market: MarketId,
         realized_pnl: i64,
     },
-    /// Per-trade MTM event for an impact-family ConditionalPerp close
-    /// (no-oracle MTM redesign, 2026-04-26). Issues `signed_delta` units of
-    /// the corresponding prediction binary (B+ for CPY closes, B- for CPN
-    /// closes) at entry $0 to the closing party, decomposing their
-    /// conditional PnL into a fungible binary token.
+    /// Per-trade MTM event for a conditional close. Issues `signed_delta`
+    /// units on the event's one prediction-binary book to the closing party,
+    /// decomposing their conditional PnL into a fungible binary position: a
+    /// Yes-branch close as a Yes position at entry $0, a No-branch close as
+    /// a No position (a short Yes at entry $1).
     ///
     /// `signed_delta` is in conditional dollars (the size of the issued
     /// binary). Positive = long binary issued (closing party gained on the
@@ -3584,7 +3584,7 @@ pub enum Event {
         owner: [u8; 20],
         /// CP market that triggered the MTM (closed via fill).
         cp_market: MarketId,
-        /// Target binary market (B+ for CPY closes, B- for CPN closes).
+        /// The event's prediction-binary book, for either branch's close.
         binary_market: MarketId,
         /// Signed quantity of binary issued. + = long, - = short.
         signed_delta: i64,
@@ -5481,8 +5481,8 @@ impl ExecError {
                  leg before opening another."
             }
             ExecError::MarkUnavailable { .. } => {
-                "No mark price is available for the market: an impact-family book has no \
-                 recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
+                "No mark price is available for the market: a conditional or prediction-binary book \
+                 has no recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
                  mark exists."
             }
             ExecError::SettlementPriceMismatch { .. } => {
@@ -5490,8 +5490,8 @@ impl ExecError {
                  launch margin rule."
             }
             ExecError::OracleNotApplicable { .. } => {
-                "OracleUpdate targets an impact-family market (CPY/CPN/EBY), which marks off the book \
-                 and has no oracle layer."
+                "OracleUpdate targets a conditional or prediction-binary book, which marks off its own \
+                 trades and has no oracle layer."
             }
             ExecError::PostOnlyWouldCross => {
                 "PlaceOrder with post_only=true would have crossed the book. Rejected so makers retain \
