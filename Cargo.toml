@@ -246,6 +246,10 @@ name = "proof-wire"
 # (the order book, fee tiers, raw account state, authorities, funding, ADL
 # queue, admin governance, markets snapshot, upgrades and oracle status
 # reads, plus FinalizedHeight). No bytes change -> MINOR.
+# Unreleased: proof_wire::ticker::validate_ticker, the market ticker rule
+# (A-Z, 0-9 and '-', starting with a letter, 1 to MAX_TICKER_LEN bytes) that
+# CreateMarket enforces and clients call before signing (#1351). A new
+# function; no bytes change -> MINOR.
 version = "9.1.0"
 edition = "2021"
 

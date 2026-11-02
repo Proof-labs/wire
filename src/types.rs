@@ -1668,7 +1668,8 @@ pub struct TriggerSlippageBps(pub u32);
 /// Maximum byte length of a `MarketConfig::ticker` / `CreateMarket::ticker`.
 /// Bounds state size and keeps the metadata field predictable. Derived impact
 /// child tickers (`<underlying>-<id>-<leg>`) also stay within this for any
-/// reasonable underlying ticker.
+/// reasonable underlying ticker. The full rule for a created market's ticker
+/// is [`crate::ticker::validate_ticker`].
 pub const MAX_TICKER_LEN: usize = 24;
 
 /// Per-market risk parameters. Stored on-chain via `CreateMarket` admin action.
@@ -2489,8 +2490,9 @@ pub struct CreateMarket {
     pub sz_decimals: u8,
     /// Human-readable ticker / short symbol (e.g. `BTC`). Display/metadata
     /// only — the engine never reads it. Mandatory like `sz_decimals` (NO
-    /// `serde(default)`, so an omitting payload is rejected at decode), but an
-    /// empty string is accepted; length is capped at `MAX_TICKER_LEN`.
+    /// `serde(default)`, so an omitting payload is rejected at decode), and it
+    /// must pass [`crate::ticker::validate_ticker`]: 1 to `MAX_TICKER_LEN`
+    /// bytes of `A`–`Z`, `0`–`9` and `-`, starting with a letter.
     pub ticker: String,
     /// Aggregate market open-interest cap in contracts. `0` disables the cap.
     ///
