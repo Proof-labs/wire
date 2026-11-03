@@ -2222,27 +2222,6 @@ mod tests {
         assert_eq!(AdminAction::UnpauseBridge.action_tag(), 0x06);
     }
 
-    /// The tag-21 `EnableSubAccounts` inner action. It carries no payload, so
-    /// its canonical bytes are the externally-tagged variant name alone — the
-    /// encoding is derived here from that name rather than typed in, and the
-    /// round-trip must be a fixed point because the content hash commits it.
-    #[test]
-    fn enable_sub_accounts_is_a_payload_free_wire_arm() {
-        let canonical = canonical_admin_action_bytes(&AdminAction::EnableSubAccounts).unwrap();
-        assert_eq!(
-            canonical,
-            rmp_serde::to_vec("EnableSubAccounts").unwrap(),
-            "the arm carries no payload: its canonical bytes are the variant name"
-        );
-        let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
-        assert!(matches!(decoded, AdminAction::EnableSubAccounts));
-        assert_eq!(
-            re_encoded, canonical,
-            "canonical encoding must be a fixed point"
-        );
-        assert_eq!(AdminAction::EnableSubAccounts.action_tag(), 0x15);
-    }
-
     #[test]
     fn byte_ledger_covers_every_assigned_outer_action() {
         let ledger = include_str!("../BYTES.md");
@@ -2353,7 +2332,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 23] = [
+        const ALL_INNER_TAGS: [AdminActionType; 22] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2373,7 +2352,6 @@ mod tests {
             AdminActionType::WithdrawInsuranceFund,
             AdminActionType::SetWithdrawalLimit,
             AdminActionType::SetOperatorReceiptRegistry,
-            AdminActionType::EnableSubAccounts,
             AdminActionType::ExecInsuranceFund,
             AdminActionType::SetMarginOffsetPolicy,
             AdminActionType::SetDepositLimit,
@@ -2399,13 +2377,14 @@ mod tests {
                 | AdminActionType::WithdrawInsuranceFund
                 | AdminActionType::SetWithdrawalLimit
                 | AdminActionType::SetOperatorReceiptRegistry
-                | AdminActionType::EnableSubAccounts
                 | AdminActionType::ExecInsuranceFund
                 | AdminActionType::SetMarginOffsetPolicy
                 | AdminActionType::SetDepositLimit => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
-                AdminActionType::CreateImpactMarket | AdminActionType::SetPlpConfig => {
+                AdminActionType::CreateImpactMarket
+                | AdminActionType::SetPlpConfig
+                | AdminActionType::EnableSubAccounts => {
                     panic!("a retired tag must not be listed as assigned")
                 }
             }

@@ -66,8 +66,8 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | shipped  |
-| 0x28 | `CreateSubAccount`                  | refused with code 90 until the governed `EnableSubAccounts` action executes |
-| 0x29 | `SubAccountTransfer`                | refused with code 90 until the governed `EnableSubAccounts` action executes |
+| 0x28 | `CreateSubAccount`                  | shipped  |
+| 0x29 | `SubAccountTransfer`                | shipped  |
 | 0x2A | `ReservedRt01`                      | reserved |
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
@@ -104,7 +104,7 @@ are not outer transaction action bytes.
 | 0x12 | `FundInsuranceFund`               | quorum-authorized transfer from a named account to the insurance accounts of pools with registered markets |
 | 0x13 | `SetWithdrawalLimit`              | governed; writes the per-account rolling withdrawal limit (CU-06) |
 | 0x14 | `SetOperatorReceiptRegistry`       | governed; writes the operator receipt registry (rotation, DEC-112) |
-| 0x15 | `EnableSubAccounts`                | governed; authorizes the sub-account actions (SA-1), one-way |
+| 0x15 | `EnableSubAccounts`                | retired  |
 | 0x16 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x17 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
@@ -136,7 +136,8 @@ hash commits it, so it can never be repurposed regardless of when it
 activates. Tag `0x03` was `CreateImpactMarket`, retired with the conditional
 family in 2.0.0; historical proposal hashes commit it, so it is never
 reassigned. Tag `0x10` was `SetPlpConfig`, retired with the engine's
-liquidity-provider backstop; it is never reassigned either.
+liquidity-provider backstop, and tag `0x15` was `EnableSubAccounts`, retired
+when sub-accounts became always on; neither is ever reassigned.
 
 Tag `0x11` (`SetLiquidationConfig`) claims the RT-01 reservation. Its one
 record lives under state prefix `0x68`; genesis and the upgrade that introduces

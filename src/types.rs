@@ -854,12 +854,6 @@ pub enum AdminAction {
     /// rewrite. The genesis parse seeds the first registry; this action is
     /// the live-rotation path.
     SetOperatorReceiptRegistry(SetOperatorReceiptRegistry),
-    /// Governance authorization to create and fund master-owned sub-accounts
-    /// (`CreateSubAccount`, `SubAccountTransfer`). Carries no payload: the
-    /// quorum-executed proposal is itself the authorization. One-way — there
-    /// is no disable arm, because a registry that stops admitting transfers
-    /// would strand capital in a child whose only mover is its master.
-    EnableSubAccounts,
     /// Replaces the global liquidation configuration. Executes only when
     /// `predecessor` names the stored configuration's sequence.
     SetLiquidationConfig(crate::liquidation_config::SetLiquidationConfig),
@@ -1145,7 +1139,7 @@ pub enum AdminBatchItem {
 /// action: the discriminant stays in [`AdminActionType`] marked deprecated,
 /// no `AdminAction` arm carries it, and the byte ledger keeps its row as
 /// `retired`.
-pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03, 0x10];
+pub const RETIRED_ADMIN_TAGS: &[u8] = &[0x03, 0x10, 0x15];
 
 /// Stable discriminant for the closed [`AdminAction`] namespace.
 ///
@@ -1194,8 +1188,9 @@ pub enum AdminActionType {
     SetWithdrawalLimit = 19,
     /// Writes (or replaces) the operator receipt registry (W28-20, DEC-112).
     SetOperatorReceiptRegistry = 20,
-    /// Authorizes the sub-account actions (SA-1). Governed like
-    /// `UnpauseBridge`: no payload, the quorum execution is the effect.
+    #[deprecated(
+        note = "retired with the sub-account switch; no AdminAction arm, never reassigned"
+    )]
     EnableSubAccounts = 21,
     /// Debits the quorum-authorized named account into insurance pools.
     FundInsuranceFund = 18,
@@ -1232,7 +1227,6 @@ impl AdminAction {
             Self::ExecInsuranceFund(_) => AdminActionType::ExecInsuranceFund,
             Self::SetWithdrawalLimit(_) => AdminActionType::SetWithdrawalLimit,
             Self::SetOperatorReceiptRegistry(_) => AdminActionType::SetOperatorReceiptRegistry,
-            Self::EnableSubAccounts => AdminActionType::EnableSubAccounts,
             Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
             Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
             Self::SetDepositLimit(_) => AdminActionType::SetDepositLimit,
@@ -4340,10 +4334,6 @@ pub enum Event {
         size: u64,
         cash_delta: i64,
     },
-    /// The admin quorum authorized the sub-account actions (SA-1): every
-    /// block from this one admits `CreateSubAccount` and
-    /// `SubAccountTransfer`.
-    SubAccountsEnabled { proposal_id: u64 },
     /// The engine refused an order for a trading reason (margin, limits,
     /// liquidity, market state); `code` is its `ExecError` code. Not emitted
     /// when the transaction itself is rejected (signature, nonce,
@@ -4961,10 +4951,6 @@ pub enum ExecError {
     SubAccountIdZero,
     /// Transfer rejected: the amount must be greater than zero.
     SubAccountTransferZeroAmount,
-    /// Sub-account actions are decoded by this wire version but the chain has
-    /// not authorized them: the governed `EnableSubAccounts` proposal has not
-    /// executed, so submissions reject closed and write nothing.
-    SubAccountsInactive,
     /// A live Solana payout lease on this withdrawal is held by a different
     /// watcher, so this `ClaimWithdrawalPayout` is rejected. Fail-closed:
     /// the rejected claimer must not sign a payout.
@@ -5166,7 +5152,8 @@ impl ExecError {
             ExecError::SubAccountTransferInsufficientBalance => 87,
             ExecError::SubAccountIdZero => 88,
             ExecError::SubAccountTransferZeroAmount => 89,
-            ExecError::SubAccountsInactive => 90,
+            // 90 was SubAccountsInactive, retired with the sub-account
+            // switch; never reassigned.
             ExecError::WithdrawalPayoutLeaseActive => 91,
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
@@ -5392,9 +5379,6 @@ impl ExecError {
             }
             ExecError::SubAccountTransferZeroAmount => {
                 "Sub-account transfer amount must be greater than zero."
-            }
-            ExecError::SubAccountsInactive => {
-                "Sub-account actions are not enabled on this chain; the governed EnableSubAccounts action admits them."
             }
             ExecError::InternalError(_) => {
                 "Catch-all for unexpected runtime failures (panics caught by the FFI boundary, etc.). \
@@ -5973,9 +5957,6 @@ impl fmt::Display for ExecError {
             }
             ExecError::SubAccountTransferZeroAmount => {
                 write!(f, "sub-account transfer amount must be greater than zero")
-            }
-            ExecError::SubAccountsInactive => {
-                write!(f, "sub-account actions are not enabled on this chain")
             }
             ExecError::TriggerOrderIncompatible => {
                 write!(f, "order cannot carry attached SL/TP limbs")
