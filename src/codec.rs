@@ -1390,6 +1390,8 @@ mod tests {
                 sz_decimals: 0,
                 ticker: String::new(),
                 max_open_interest: 0,
+                tick_size: 1,
+                lot_size: 1,
             }),
             Action::WithdrawRequest(WithdrawRequest {
                 owner: [0x33; 20],
@@ -1801,7 +1803,7 @@ mod tests {
             (
                 "ProposeAdminAction",
                 propose,
-                "93dc0014cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca10181ac4372656174654d61726b65749c00cd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a000",
+                "93dc0014cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca1cca10181ac4372656174654d61726b65749e00cd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a0000101",
             ),
             (
                 "ApproveAdminAction",
@@ -2497,7 +2499,7 @@ mod tests {
             ),
             (
                 &batch,
-                "c099245946aaded3b995198f5ff0592d771729ab314fcf5736036ffb6f559fcd",
+                "66a35d72765b3554acc039d0747f177680c1a1b08247ece47daa4a3492b9d0f7",
             ),
         ] {
             let h = admin_proposal_content_hash(
@@ -2644,7 +2646,7 @@ mod tests {
         assert_eq!(batch.action_tag(), 4);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&batch).expect("batch encodes")),
-            "81a542617463689281ac4372656174654d61726b65749c0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a00081b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
+            "81a542617463689281ac4372656174654d61726b65749e0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a000010181b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
         );
     }
 
@@ -2795,6 +2797,8 @@ mod tests {
             sz_decimals: u8::MAX,
             ticker: "T".repeat(24),
             max_open_interest: u64::MAX,
+            tick_size: u64::MAX,
+            lot_size: u64::MAX,
         });
         let AdminAction::CreateMarket(worst_create_cmd) = worst_create else {
             unreachable!()
@@ -2832,7 +2836,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex_string(&h1),
-            "6cdd8d6843bb4026d396b9e80c9599530b0ac4f14862af0204794219f8f8cbea"
+            "a4de11bbe373974cae0de8f1116681cd7f08ecab07b007bea1067cbd0f19fb4f"
         );
 
         // One-field sensitivity: registry_version 3 → 4 changes the hash.
@@ -2850,7 +2854,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             hex_string(&h2),
-            "5fe2dd718a4aea63492a5ab95eee27588cc861c504643bf68ce3fdd2c45dab99"
+            "da916970c56796acd6cc8a67bfba8430598c94dafaf5b1eb54f40479a380be9c"
         );
         assert_ne!(h1, h2);
 
@@ -3062,7 +3066,7 @@ mod tests {
         assert_eq!(decoded.max_open_interest, 0);
 
         // The v2 serializer is LENGTH-STABLE: a zero cap and a non-zero cap
-        // both encode as a 12-element array, differing only in the tail value.
+        // both encode as a 14-element array, differing only in the tail value.
         // This is the property to defend. A serializer that dropped the zero
         // tail would buy byte-identity with v1 at the cost of making the array
         // length depend on the field's value — and in a positional layout that
@@ -3082,6 +3086,8 @@ mod tests {
             sz_decimals: old_create.sz_decimals,
             ticker: old_create.ticker.clone(),
             max_open_interest,
+            tick_size: 0,
+            lot_size: 0,
         };
         let uncapped_bytes = rmp_serde::to_vec(&with_cap(0)).unwrap();
         let capped_bytes = rmp_serde::to_vec(&with_cap(77)).unwrap();
@@ -3090,20 +3096,34 @@ mod tests {
             "frozen v1 CreateMarket must be an 11-element array"
         );
         assert_eq!(
-            uncapped_bytes[0], 0x9c,
-            "v2 zero-cap CreateMarket must still be a 12-element array"
+            uncapped_bytes[0], 0x9e,
+            "zero-cap CreateMarket must still be a 14-element array"
         );
         assert_eq!(
-            capped_bytes[0], 0x9c,
-            "v2 capped CreateMarket must be a 12-element array"
+            capped_bytes[0], 0x9e,
+            "capped CreateMarket must be a 14-element array"
         );
 
-        // The v2 uncapped body is the frozen v1 body plus an explicit `0` tail
-        // (msgpack positive fixint 0x00) — a pure append, which is what keeps
-        // legacy payloads decodable while the length stays value-independent.
+        // The uncapped body is the frozen v1 body plus explicit `0` cap, tick
+        // and lot tails (msgpack positive fixint 0x00) — a pure append, which is
+        // what keeps legacy payloads decodable while the length stays
+        // value-independent.
         assert_eq!(
             uncapped_bytes[1..].to_vec(),
-            [&old_create_bytes[1..], &[0x00u8][..]].concat()
+            [&old_create_bytes[1..], &[0x00u8, 0x00, 0x00][..]].concat()
+        );
+
+        // A 12-element payload from before the tick and lot tails decodes ungated.
+        let pre_tick = [&[0x9cu8][..], &capped_bytes[1..capped_bytes.len() - 2]].concat();
+        let decoded: CreateMarket =
+            rmp_serde::from_slice(&pre_tick).expect("a 12-element CreateMarket still decodes");
+        assert_eq!(
+            (
+                decoded.max_open_interest,
+                decoded.tick_size,
+                decoded.lot_size
+            ),
+            (77, 0, 0)
         );
 
         // A frozen 11-field decoder rejects BOTH v2 sequences — capped and
@@ -3278,6 +3298,8 @@ mod tests {
                 sz_decimals: 0,
                 ticker: String::new(),
                 max_open_interest: 0,
+                tick_size: 1,
+                lot_size: 1,
             }),
             Action::WithdrawRequest(WithdrawRequest {
                 owner: [0xFF; 20],
@@ -3372,6 +3394,8 @@ mod tests {
                 sz_decimals: 0,
                 ticker: String::new(),
                 max_open_interest: 0,
+                tick_size: 1,
+                lot_size: 1,
             }),
             Action::WithdrawRequest(WithdrawRequest {
                 owner: [0u8; 20],
@@ -3485,6 +3509,8 @@ mod tests {
                     sz_decimals: 0,
                     ticker: String::new(),
                     max_open_interest: 0,
+                    tick_size: 1,
+                    lot_size: 1,
                 }),
                 Action::WithdrawRequest(WithdrawRequest {
                     owner,
@@ -3912,6 +3938,8 @@ mod tests {
                 sz_decimals: 0,
                 ticker: String::new(),
                 max_open_interest: 0,
+                tick_size: 1,
+                lot_size: 1,
             }),
             Action::WithdrawRequest(WithdrawRequest {
                 owner: [0; 20],
@@ -4244,6 +4272,8 @@ mod tests {
                         sz_decimals: 0,
                         ticker: String::new(),
                         max_open_interest: 0,
+                        tick_size: 1,
+                        lot_size: 1,
                     }),
                     7 => Action::WithdrawRequest(WithdrawRequest {
                         owner,

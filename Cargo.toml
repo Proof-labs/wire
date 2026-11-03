@@ -246,6 +246,7 @@ name = "proof-wire"
 # (the order book, fee tiers, raw account state, authorities, funding, ADL
 # queue, admin governance, markets snapshot, upgrades and oracle status
 # reads, plus FinalizedHeight). No bytes change -> MINOR.
+#
 # Unreleased: proof_wire::ticker::validate_ticker, the market ticker rule
 # (A-Z, 0-9 and '-', starting with a letter, 1 to MAX_TICKER_LEN bytes) that
 # CreateMarket enforces and clients call before signing (#1351). A new
@@ -253,6 +254,15 @@ name = "proof-wire"
 #
 # Unreleased: additive. New query_v2 module of version 2 read views, encoded
 # as MessagePack maps. No existing bytes change -> MINOR.
+#
+# Unreleased: CreateMarket gains trailing defaulted tick_size and lot_size,
+# always encoded, so the action is a 14-element array and governance creates a
+# market with a usable grid; creation refuses a zero of either. 12-element
+# bytes still decode with both 0 (and are then refused at creation), but a
+# decoder built before it rejects the longer array -> MAJOR. Approval
+# re-encodes a proposal's stored action, so drain or re-propose pending
+# CreateMarket proposals (and batches holding one) before rollout. ExecError
+# appends EventPoolMismatch (124) and ConditionalLotOffUnderlyingGrid (125).
 version = "9.1.0"
 edition = "2021"
 
