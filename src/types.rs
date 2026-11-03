@@ -2760,6 +2760,11 @@ pub struct RecordWithdrawalPayout {
     /// byte-exact; no length or content validation.
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
+    /// The last Solana block height at which the reported transfer could
+    /// still be included. Peer watchers bound their absence checks with it:
+    /// a signature unconfirmed past this height can never land, so absence
+    /// becomes evidence. `None` when the reporter cannot bound it.
+    pub last_valid_block_height: Option<u64>,
 }
 
 /// Engine operator receipt registry: the epoch-pinned named
@@ -3286,6 +3291,11 @@ pub struct WithdrawalPayoutRecord {
     /// Solana transaction signature, stored byte-exact as reported.
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
+    /// The reported transfer's last valid block height, as in
+    /// [`RecordWithdrawalPayout::last_valid_block_height`]. `None` when the
+    /// reporter could not bound it; peers then treat an unconfirmed
+    /// signature as pending, never as absent.
+    pub last_valid_block_height: Option<u64>,
 }
 
 /// Protocol withdrawal policy: the flat fee and the minimum net withdrawal.
@@ -5224,7 +5234,7 @@ impl ExecError {
             ExecError::SubAccountTransferZeroAmount => 89,
             ExecError::SubAccountsInactive => 90,
             ExecError::WithdrawalPayoutLeaseActive => 91,
-            ExecError::WithdrawalPayoutLeaseNotHeld => 124,
+            ExecError::WithdrawalPayoutLeaseNotHeld => 126,
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
             ExecError::UnderlyingAlreadyAttached { .. } => 94,

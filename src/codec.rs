@@ -200,7 +200,7 @@ define_actions! {
     ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
     // Bridge custody: the lease holder's report of the Solana signature it
     // broadcast, stored as the withdrawal's payout record for peer checks.
-    RecordWithdrawalPayout => 48, // 0x30 — record the broadcast payout signature on a Pending withdrawal
+    RecordWithdrawalPayout => 49, // 0x31 — record the broadcast payout signature on a Pending withdrawal
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -1636,7 +1636,7 @@ mod tests {
 
     // -- payout record -------------------------------------------------------
 
-    /// Golden wire vector for the NEW action_type 0x30 plus a determinism +
+    /// Golden wire vector for the NEW action_type 0x31 plus a determinism +
     /// round-trip check — same recipe as the payout claim: payload-only hex
     /// so the vector does not depend on a signing key, and an explicit byte
     /// assertion so a renumber cannot slip through silently.
@@ -1646,8 +1646,9 @@ mod tests {
             withdrawal_id: 777,
             holder: [0x05; 20],
             solana_signature: vec![0x07; 64],
+            last_valid_block_height: Some(500),
         });
-        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x30);
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
 
         const RECORD_PAYLOAD_HEX: &str = include_str!("../vectors/record_withdrawal_payout.hex");
         let payload = hex_string(&report.encode_action().unwrap().payload.0);
@@ -1656,27 +1657,32 @@ mod tests {
         assert_round_trip(&report, 9);
         let encoded = encode_tx(&report, 9).unwrap();
         assert_eq!(encode_tx(&report, 9).unwrap(), encoded, "deterministic");
-        assert_eq!(peek_action_type(&encoded), Some(0x30));
+        assert_eq!(peek_action_type(&encoded), Some(0x31));
         assert!(matches!(
             decode_tx(&encoded).unwrap().action,
             Action::RecordWithdrawalPayout(_)
         ));
     }
 
-    /// Decode-compat for the record wave: 0x30 is the first free byte after
-    /// 0x2F and must not disturb any pre-existing discriminant.
+    /// Decode-compat for the record wave: 0x31 keeps 0x30 free for
+    /// exchange#1298's ConfirmDepositReceipt and must not disturb any
+    /// pre-existing discriminant.
     #[test]
     fn payout_record_leaves_neighbouring_bytes_untouched() {
         assert_eq!(ExecuteTriggers::ACTION_TYPE, 0x2F);
-        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x30);
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
         assert!(matches!(
             ActionType::try_from(0x2Fu8),
             Ok(ActionType::ExecuteTriggers)
         ));
         assert!(matches!(
-            ActionType::try_from(0x30u8),
+            ActionType::try_from(0x31u8),
             Ok(ActionType::RecordWithdrawalPayout)
         ));
+        assert!(
+            ActionType::try_from(0x30u8).is_err(),
+            "0x30 is exchange#1298's to claim; this train must not take it"
+        );
     }
 
     // -- deposit locator ----------------------------------------------------
