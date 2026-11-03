@@ -1788,15 +1788,15 @@ pub struct MarketConfig {
     #[serde(default)]
     pub fee_tiers: Vec<FeeTier>,
     /// Tick size in micro-USDC. Order prices must be exact multiples
-    /// of `tick_size`. Zero (default) disables the check, preserving
-    /// legacy behavior. Recommended: $0.01 = 10_000 µUSDC for
+    /// of `tick_size`. Zero disables the check; only legacy markets store it,
+    /// since `CreateMarket` refuses 0. Recommended: $0.01 = 10_000 µUSDC for
     /// crypto perps; $0.001 = 1_000 µUSDC for high-precision impact
     /// market child books.
     #[serde(default)]
     pub tick_size: u64,
     /// Lot size in contracts. Order quantities must be exact multiples
-    /// of `lot_size`. Zero (default) disables the check, preserving
-    /// legacy behavior. Recommended: 1 for whole-contract markets
+    /// of `lot_size`. Zero disables the check; only legacy markets store it,
+    /// since `CreateMarket` refuses 0. Recommended: 1 for whole-contract markets
     /// (BTC perps), 100 for high-volume markets where round lots
     /// improve readability.
     #[serde(default)]
@@ -2490,9 +2490,9 @@ pub struct CreateMarket {
     pub ticker: String,
     /// Aggregate market open-interest cap in contracts. `0` disables the cap.
     ///
-    /// Always serialized, exactly like `pool_id` above: the v2 encoding of
-    /// `CreateMarket` is a 12-element array whatever the cap's value. The
-    /// `serde(default)` keeps released 11-element payloads decodable as
+    /// Always serialized, exactly like `pool_id` above: `CreateMarket` is a
+    /// 14-element array (with `tick_size` and `lot_size`) whatever the cap's
+    /// value. The `serde(default)` keeps released 11-element payloads decodable as
     /// uncapped, which is what makes this a decode-compatible tail; but a
     /// serializer must never make the array's *length* depend on the field's
     /// *value*. In a positional MessagePack layout that would make the wire
@@ -2501,6 +2501,13 @@ pub struct CreateMarket {
     /// One value, one encoding.
     #[serde(default)]
     pub max_open_interest: u64,
+    /// Price grid in micro-USDC; creation refuses 0. Always serialized, like
+    /// `max_open_interest`, so the array has 14 elements.
+    #[serde(default)]
+    pub tick_size: u64,
+    /// Quantity grid in contracts; creation refuses 0. Always serialized.
+    #[serde(default)]
+    pub lot_size: u64,
 }
 
 impl Default for CreateMarket {
@@ -2523,6 +2530,8 @@ impl Default for CreateMarket {
             sz_decimals: 0,
             ticker: String::new(),
             max_open_interest: 0,
+            tick_size: 1,
+            lot_size: 1,
         }
     }
 }
@@ -5051,6 +5060,22 @@ pub enum ExecError {
         /// credit ages out, the first moment any capacity returns.
         window_frees_at_ms: Option<u64>,
     },
+    /// `AttachConditional` names an underlying in another insurance pool than
+    /// the event's binaries; an event and its conditionals share one pool.
+    EventPoolMismatch {
+        event_id: EventId,
+        event_pool: InsurancePoolId,
+        underlying_market: MarketId,
+        underlying_pool: InsurancePoolId,
+    },
+    /// A lot-size change would leave a conditional's lot off its underlying
+    /// perpetual's lot grid.
+    ConditionalLotOffUnderlyingGrid {
+        conditional: MarketId,
+        conditional_lot: u64,
+        underlying: MarketId,
+        underlying_lot: u64,
+    },
 }
 
 impl ExecError {
@@ -5182,6 +5207,8 @@ impl ExecError {
             ExecError::LiquidationBatchOverBudget { .. } => 116,
             // 117-122 are claimed by open exchange#1184; not assigned here.
             ExecError::DepositLimitExceeded { .. } => 123,
+            ExecError::EventPoolMismatch { .. } => 124,
+            ExecError::ConditionalLotOffUnderlyingGrid { .. } => 125,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5546,6 +5573,12 @@ impl ExecError {
             }
             ExecError::LiquidationBatchOverBudget { .. } => {
                 "The owners a LiquidateAccounts batch names hold more positions together than its position budget; the batch is refused whole, so name fewer owners."
+            }
+            ExecError::EventPoolMismatch { .. } => {
+                "AttachConditional names an underlying whose insurance pool differs from the event's; an event and its conditionals share one pool."
+            }
+            ExecError::ConditionalLotOffUnderlyingGrid { .. } => {
+                "A lot_size change would leave an unresolved event's conditional lot not a multiple of its underlying perpetual's lot."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -6006,6 +6039,25 @@ impl fmt::Display for ExecError {
             ExecError::LiquidationBatchOverBudget { positions, budget } => {
                 write!(f, "LiquidateAccounts owners hold {positions} positions, over the budget of {budget}")
             }
+            ExecError::EventPoolMismatch {
+                event_id,
+                event_pool,
+                underlying_market,
+                underlying_pool,
+            } => write!(
+                f,
+                "event {event_id} is in pool {}, underlying {underlying_market} in pool {}",
+                event_pool.0, underlying_pool.0
+            ),
+            ExecError::ConditionalLotOffUnderlyingGrid {
+                conditional,
+                conditional_lot,
+                underlying,
+                underlying_lot,
+            } => write!(
+                f,
+                "conditional {conditional} lot {conditional_lot} is not a multiple of underlying {underlying} lot {underlying_lot}"
+            ),
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
