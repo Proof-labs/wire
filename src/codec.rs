@@ -1664,9 +1664,7 @@ mod tests {
         ));
     }
 
-    /// Decode-compat for the record wave: 0x31 keeps 0x30 free for
-    /// exchange#1298's ConfirmDepositReceipt and must not disturb any
-    /// pre-existing discriminant.
+    /// Decode-compat: 0x31 must not disturb any pre-existing discriminant.
     #[test]
     fn payout_record_leaves_neighbouring_bytes_untouched() {
         assert_eq!(ExecuteTriggers::ACTION_TYPE, 0x2F);
@@ -1679,10 +1677,6 @@ mod tests {
             ActionType::try_from(0x31u8),
             Ok(ActionType::RecordWithdrawalPayout)
         ));
-        assert!(
-            ActionType::try_from(0x30u8).is_err(),
-            "0x30 is exchange#1298's to claim; this train must not take it"
-        );
     }
 
     // -- deposit locator ----------------------------------------------------

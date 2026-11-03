@@ -2755,9 +2755,9 @@ pub struct RecordWithdrawalPayout {
     /// owner and the payout lease's holder.
     #[serde(with = "crate::wire_bytes")]
     pub holder: [u8; 20],
-    /// Solana transaction signature, same bytes that the reported
-    /// `ConfirmDeposit.solana_tx_sig`-style transfer carries. Stored
-    /// byte-exact; no length or content validation.
+    /// Solana transaction signature of the reported transfer, in the same
+    /// raw form as `ConfirmDeposit.solana_tx_sig`. Stored byte-exact; no
+    /// length or content validation.
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
     /// The last Solana block height at which the reported transfer could
@@ -3283,9 +3283,9 @@ pub struct WithdrawalPayoutLease {
 /// (`keys::withdrawal_payout_record`). Absent means no payout has been
 /// reported. Peer watchers verify the signature against Solana before
 /// re-signing a withdrawal whose lease has lapsed, so the record must outlive
-/// lease replacement: it is superseded only by a later live holder's record
-/// and cleared exactly when the withdrawal reaches a terminal status (the
-/// same lifecycle as the lease, never a shorter one).
+/// lease replacement: it is superseded by the next report from the lease's
+/// holder and cleared exactly when the withdrawal reaches a terminal status
+/// (the same lifecycle as the lease, never a shorter one).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawalPayoutRecord {
     /// Solana transaction signature, stored byte-exact as reported.
