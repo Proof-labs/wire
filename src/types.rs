@@ -1884,8 +1884,9 @@ pub struct MarketConfig {
     /// At schema v9+, if governance tightens the cap below current OI, fills
     /// may preserve or reduce the pre-fill aggregate but may not increase it;
     /// this lets positions in the market shrink until it is back within the configured
-    /// limit. Earlier schemas preserve the strict legacy verdict. `0` disables
-    /// the cap for backward compatibility.
+    /// limit. Earlier schemas preserve the strict legacy verdict. Creation and
+    /// updates refuse `0`; a stored `0` is a market created before caps were
+    /// required, and is uncapped until a cap is set.
     ///
     /// This is appended at the tail to preserve positional MessagePack
     /// compatibility for existing on-chain `MarketConfig` records.
@@ -2488,12 +2489,12 @@ pub struct CreateMarket {
     /// must pass [`crate::ticker::validate_ticker`]: 1 to `MAX_TICKER_LEN`
     /// bytes of `A`–`Z`, `0`–`9` and `-`, starting with a letter.
     pub ticker: String,
-    /// Aggregate market open-interest cap in contracts. `0` disables the cap.
+    /// Aggregate market open-interest cap in contracts; creation refuses `0`.
     ///
     /// Always serialized, exactly like `pool_id` above: `CreateMarket` is a
     /// 14-element array (with `tick_size` and `lot_size`) whatever the cap's
-    /// value. The `serde(default)` keeps released 11-element payloads decodable as
-    /// uncapped, which is what makes this a decode-compatible tail; but a
+    /// value. The `serde(default)` keeps released 11-element payloads decodable
+    /// (creation then refuses the missing cap), which is what makes this a decode-compatible tail; but a
     /// serializer must never make the array's *length* depend on the field's
     /// *value*. In a positional MessagePack layout that would make the wire
     /// format value-dependent, and any field appended after this one would be
@@ -2904,8 +2905,8 @@ pub struct CreateEvent {
     /// Off-chain resolution criteria text (not stored in consensus state).
     #[serde(default)]
     pub rules: String,
-    /// Open-interest cap for the event's binary book, in contracts; `0` =
-    /// uncapped, as [`MarketConfig::max_open_interest`] is.
+    /// Open-interest cap for the event's binary book, in contracts. Must be
+    /// non-zero.
     #[serde(default)]
     pub max_open_interest: u64,
 }
@@ -2942,7 +2943,7 @@ pub struct AttachConditional {
     #[serde(with = "crate::wire_bytes")]
     pub signer: [u8; 20],
     /// Open-interest cap for each of the two conditional-perp books, in the
-    /// underlying's size scale; `0` = uncapped. Applied per book, as
+    /// underlying's size scale; must be non-zero. Applied per book, as
     /// [`MarketConfig::max_open_interest`] is.
     #[serde(default)]
     pub max_open_interest: u64,
@@ -3102,7 +3103,7 @@ pub struct UpdateMarketFees {
     #[serde(default)]
     pub mm_bps: Option<u32>,
     /// New aggregate open-interest cap in contracts. `None` = leave
-    /// unchanged. Setting to 0 disables the cap.
+    /// unchanged. `0` is refused.
     ///
     /// Appended at the tail to preserve positional wire compatibility.
     #[serde(default)]
