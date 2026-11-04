@@ -2747,7 +2747,7 @@ pub struct ClaimWithdrawalPayout {
 /// (the lease may already have lapsed — a report submitted at sign time can
 /// land after the lease expired, and refusing it would delete the only
 /// evidence the successor could check), while the withdrawal is still
-/// `Pending`; a later holder's record supersedes an earlier one.
+/// `Pending`. Every distinct signature is retained until settlement.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecordWithdrawalPayout {
     pub withdrawal_id: u64,
@@ -2762,11 +2762,9 @@ pub struct RecordWithdrawalPayout {
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
     /// The last Solana block height at which the reported transfer could
-    /// still be included; the reporter signed that transfer, so the bound is
-    /// always known and zero is not a height it could name. Peer watchers
-    /// bound their absence checks with it: a signature unconfirmed past this
-    /// height can never land, so absence becomes evidence instead of an
-    /// unbounded hold.
+    /// still be included. Expiry prevents future inclusion; it does not prove
+    /// the transfer never landed. Readers require a finalized height past
+    /// this bound and a subsequent successful historical status lookup.
     pub last_valid_block_height: std::num::NonZeroU64,
 }
 
@@ -3281,23 +3279,23 @@ pub struct WithdrawalPayoutLease {
     pub expires_at_height: u64,
 }
 
-/// The Solana payout signature reported for one withdrawal by its last
-/// payout-lease holder, stored under its own key
-/// (`keys::withdrawal_payout_record`). Absent means no payout has been
-/// reported. Peer watchers verify the signature against Solana before
-/// re-signing a withdrawal whose lease has lapsed, so the record must outlive
-/// lease replacement: it is superseded by the next report from the lease's
-/// holder and cleared exactly when the withdrawal reaches a terminal status
-/// (the same lifecycle as the lease, never a shorter one).
+/// The Solana payout signature one payout-lease holder reported for one
+/// withdrawal. Distinct signatures are retained separately; reporting an
+/// existing signature never changes its holder or bound. All entries clear
+/// when the withdrawal becomes terminal. Readers verify every signature
+/// before authorizing a different payout.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawalPayoutRecord {
+    /// The reporting lease holder, as in [`ClaimWithdrawalPayout::holder`].
+    #[serde(with = "crate::wire_bytes")]
+    pub holder: [u8; 20],
     /// Solana transaction signature, stored byte-exact as reported.
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
     /// The reported transfer's last valid block height, as in
     /// [`RecordWithdrawalPayout::last_valid_block_height`]. Every record
-    /// carries one, so a peer's absence check always has a bound whose
-    /// passing proves the transfer can no longer land.
+    /// carries one. Passing the bound prevents future inclusion but does not
+    /// establish whether the transfer already landed.
     pub last_valid_block_height: std::num::NonZeroU64,
 }
 
@@ -5039,6 +5037,8 @@ pub enum ExecError {
     /// never claimed. Only the last lease holder may report a payout
     /// signature.
     WithdrawalPayoutLeaseNotHeld,
+    /// The withdrawal already retains the maximum number of payout signatures.
+    WithdrawalPayoutRecordLimitReached,
     /// The order cannot carry the attached SL/TP limbs: trigger fields were
     /// sent on a reduce-only order, on a market kind the trigger contract
     /// does not admit, while the trigger feature is inactive at this height,
@@ -5238,6 +5238,7 @@ impl ExecError {
             ExecError::SubAccountsInactive => 90,
             ExecError::WithdrawalPayoutLeaseActive => 91,
             ExecError::WithdrawalPayoutLeaseNotHeld => 128,
+            ExecError::WithdrawalPayoutRecordLimitReached => 129,
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
@@ -5590,6 +5591,9 @@ impl ExecError {
             }
             ExecError::WithdrawalPayoutLeaseNotHeld => {
                 "The withdrawal's payout lease is not held by the submitter, so the payout-signature report is rejected; acquire the lease with a payout claim first."
+            }
+            ExecError::WithdrawalPayoutRecordLimitReached => {
+                "The withdrawal's payout-signature record limit is reached; no further payout may be broadcast."
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
@@ -5949,6 +5953,9 @@ impl fmt::Display for ExecError {
             }
             ExecError::WithdrawalPayoutLeaseNotHeld => {
                 write!(f, "payout lease not held by the submitter")
+            }
+            ExecError::WithdrawalPayoutRecordLimitReached => {
+                write!(f, "withdrawal payout-signature record limit reached")
             }
             ExecError::UserLeverageBelowMarketIm {
                 market,

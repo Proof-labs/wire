@@ -255,8 +255,9 @@ name = "proof-wire"
 # action RecordWithdrawalPayout at 0x31 — the pre-broadcast report of the
 # Solana signature a payout-lease holder is about to broadcast, whose
 # absence bound is a mandatory NonZeroU64 — plus the WithdrawalPayoutRecord
-# state type, Event::WithdrawalPayoutRecorded, and
-# ExecError::WithdrawalPayoutLeaseNotHeld (code 128; codes 126-127 stay
+# state type (append-only per signature, queried as a list of maps),
+# Event::WithdrawalPayoutRecorded, WithdrawalPayoutRecordLimitReached (129),
+# and WithdrawalPayoutLeaseNotHeld (128; codes 126-127 stay
 # reserved for open exchange#1298's deposit-receipt pair). Pre-existing
 # bytes still decode unchanged -> MINOR.
 version = "9.1.0"
