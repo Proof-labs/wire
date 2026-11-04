@@ -250,6 +250,15 @@ name = "proof-wire"
 # (A-Z, 0-9 and '-', starting with a letter, 1 to MAX_TICKER_LEN bytes) that
 # CreateMarket enforces and clients call before signing (#1351). A new
 # function; no bytes change -> MINOR.
+#
+# Unreleased: additive wire change (the withdrawal payout record). New outer
+# action RecordWithdrawalPayout at 0x31 — the pre-broadcast report of the
+# Solana signature a payout-lease holder is about to broadcast, whose
+# absence bound is a mandatory NonZeroU64 — plus the WithdrawalPayoutRecord
+# state type, Event::WithdrawalPayoutRecorded, and
+# ExecError::WithdrawalPayoutLeaseNotHeld (code 128; codes 126-127 stay
+# reserved for open exchange#1298's deposit-receipt pair). Pre-existing
+# bytes still decode unchanged -> MINOR.
 version = "9.1.0"
 edition = "2021"
 

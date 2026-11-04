@@ -198,9 +198,10 @@ define_actions! {
     // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
     ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
-    // Bridge custody: the lease holder's report of the Solana signature it
-    // broadcast, stored as the withdrawal's payout record for peer checks.
-    RecordWithdrawalPayout => 49, // 0x31 — record the broadcast payout signature on a Pending withdrawal
+    // Bridge custody: the lease holder records its payout signature before
+    // broadcasting it, stored as the withdrawal's payout record for peer
+    // checks.
+    RecordWithdrawalPayout => 49, // 0x31 — record the payout signature on a Pending withdrawal, before the broadcast
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -1639,14 +1640,16 @@ mod tests {
     /// Golden wire vector for the NEW action_type 0x31 plus a determinism +
     /// round-trip check — same recipe as the payout claim: payload-only hex
     /// so the vector does not depend on a signing key, and an explicit byte
-    /// assertion so a renumber cannot slip through silently.
+    /// assertion so a renumber cannot slip through silently. The bound rides
+    /// the wire as a plain integer.
     #[test]
     fn payout_record_golden_vector() {
         let report = Action::RecordWithdrawalPayout(RecordWithdrawalPayout {
             withdrawal_id: 777,
             holder: [0x05; 20],
             solana_signature: vec![0x07; 64],
-            last_valid_block_height: Some(500),
+            last_valid_block_height: std::num::NonZeroU64::new(500)
+                .expect("golden-vector bound is non-zero"),
         });
         assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
 
@@ -1677,6 +1680,34 @@ mod tests {
             ActionType::try_from(0x31u8),
             Ok(ActionType::RecordWithdrawalPayout)
         ));
+    }
+
+    /// A zero absence bound is not a report: no signed transfer could name
+    /// height 0 as the last height it can land at, so the type refuses it
+    /// and the envelope never decodes.
+    #[derive(Serialize, Deserialize)]
+    struct ZeroBoundReport {
+        withdrawal_id: u64,
+        #[serde(with = "crate::wire_bytes")]
+        holder: [u8; 20],
+        #[serde(with = "crate::wire_bytes::vec")]
+        solana_signature: Vec<u8>,
+        last_valid_block_height: u64,
+    }
+
+    #[test]
+    fn payout_record_refuses_a_zero_absence_bound() {
+        let bytes = rmp_serde::to_vec(&ZeroBoundReport {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+            solana_signature: vec![0x07; 64],
+            last_valid_block_height: 0,
+        })
+        .expect("zero-bound lookalike payload encodes");
+        assert!(
+            decode_action(RecordWithdrawalPayout::ACTION_TYPE, &bytes).is_err(),
+            "a zero bound must not decode as a payout record"
+        );
     }
 
     // -- deposit locator ----------------------------------------------------

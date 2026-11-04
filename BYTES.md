@@ -74,7 +74,7 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
 | 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
 | 0x2F | `ExecuteTriggers`                   | internal, proposer-injected trigger candidates |
-| 0x31 | `RecordWithdrawalPayout`            | the lease holder's report of the Solana signature it broadcast |
+| 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-broadcast report of its payout signature |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types

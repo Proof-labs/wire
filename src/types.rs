@@ -2737,16 +2737,17 @@ pub struct ClaimWithdrawalPayout {
     pub holder: [u8; 20],
 }
 
-/// Report the Solana signature a payout-lease holder broadcast for one
-/// withdrawal. The engine stores it as the withdrawal's payout record and
-/// never derives anything from it — peer watchers read the record and verify
-/// the signature against Solana themselves before re-signing a withdrawal
-/// whose lease has lapsed, so a recorded signature that never landed simply
-/// fails that check. Accepted only from the withdrawal's last payout-lease
-/// holder (the lease may already have lapsed — a holder that broadcast and
-/// died mid-poll is exactly the reporter this exists to preserve), while the
-/// withdrawal is still `Pending`; a later holder's record supersedes an
-/// earlier one.
+/// Report the Solana signature of a payout-lease holder's transfer for one
+/// withdrawal, recorded before the holder broadcasts it, while its lease is
+/// live. The engine stores it as the withdrawal's payout record and never
+/// derives anything from it — peer watchers read the record and verify the
+/// signature against Solana themselves before re-signing a withdrawal whose
+/// lease has lapsed, so a recorded signature that never landed simply fails
+/// that check. Accepted only from the withdrawal's last payout-lease holder
+/// (the lease may already have lapsed — a report submitted at sign time can
+/// land after the lease expired, and refusing it would delete the only
+/// evidence the successor could check), while the withdrawal is still
+/// `Pending`; a later holder's record supersedes an earlier one.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecordWithdrawalPayout {
     pub withdrawal_id: u64,
@@ -2761,10 +2762,12 @@ pub struct RecordWithdrawalPayout {
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
     /// The last Solana block height at which the reported transfer could
-    /// still be included. Peer watchers bound their absence checks with it:
-    /// a signature unconfirmed past this height can never land, so absence
-    /// becomes evidence. `None` when the reporter cannot bound it.
-    pub last_valid_block_height: Option<u64>,
+    /// still be included; the reporter signed that transfer, so the bound is
+    /// always known and zero is not a height it could name. Peer watchers
+    /// bound their absence checks with it: a signature unconfirmed past this
+    /// height can never land, so absence becomes evidence instead of an
+    /// unbounded hold.
+    pub last_valid_block_height: std::num::NonZeroU64,
 }
 
 /// Engine operator receipt registry: the epoch-pinned named
@@ -3292,10 +3295,10 @@ pub struct WithdrawalPayoutRecord {
     #[serde(with = "crate::wire_bytes::vec")]
     pub solana_signature: Vec<u8>,
     /// The reported transfer's last valid block height, as in
-    /// [`RecordWithdrawalPayout::last_valid_block_height`]. `None` when the
-    /// reporter could not bound it; peers then treat an unconfirmed
-    /// signature as pending, never as absent.
-    pub last_valid_block_height: Option<u64>,
+    /// [`RecordWithdrawalPayout::last_valid_block_height`]. Every record
+    /// carries one, so a peer's absence check always has a bound whose
+    /// passing proves the transfer can no longer land.
+    pub last_valid_block_height: std::num::NonZeroU64,
 }
 
 /// Protocol withdrawal policy: the flat fee and the minimum net withdrawal.
@@ -3878,11 +3881,11 @@ pub enum Event {
         /// Exclusive expiry height, as in [`WithdrawalPayoutLease`].
         expires_at_height: u64,
     },
-    /// The withdrawal's last payout-lease holder reported the Solana
-    /// signature it broadcast for this withdrawal. Peer watchers check the
-    /// recorded signature on Solana before re-signing a lapsed-lease
-    /// withdrawal; the engine itself treats the report as a claim to verify,
-    /// not a fact.
+    /// The withdrawal's last payout-lease holder recorded the signature of
+    /// its payout transfer for this withdrawal — before broadcasting it.
+    /// Peer watchers check the recorded signature on Solana before
+    /// re-signing a lapsed-lease withdrawal; the engine itself treats the
+    /// report as a claim to verify, not a fact.
     WithdrawalPayoutRecorded {
         withdrawal_id: u64,
         holder: [u8; 20],
@@ -5234,7 +5237,7 @@ impl ExecError {
             ExecError::SubAccountTransferZeroAmount => 89,
             ExecError::SubAccountsInactive => 90,
             ExecError::WithdrawalPayoutLeaseActive => 91,
-            ExecError::WithdrawalPayoutLeaseNotHeld => 126,
+            ExecError::WithdrawalPayoutLeaseNotHeld => 128,
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
