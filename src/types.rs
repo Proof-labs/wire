@@ -5593,7 +5593,7 @@ impl ExecError {
                 "The withdrawal's payout lease is not held by the submitter, so the payout-signature report is rejected; acquire the lease with a payout claim first."
             }
             ExecError::WithdrawalPayoutRecordLimitReached => {
-                "The withdrawal's payout-signature record limit is reached; no further payout may be broadcast."
+                "The withdrawal's payout-signature record limit is reached; the rejected payout must not be broadcast."
             }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
