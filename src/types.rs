@@ -279,9 +279,8 @@ pub const DEFAULT_MAX_ORACLE_DEVIATION_BPS: u32 = 2_000;
 /// Minimum top-of-book notional for a book-mid to be trusted
 /// as a mark source, in µUSDC. The floor binds PER SIDE at half this value —
 /// each of bid and ask, valued at the mid, must clear
-/// `MARK_MIN_BOOK_NOTIONAL_UUSDC / 2` (see `engine::book_depth_meets_floor`
-/// for why a summed floor is bypassable with one riskless deep quote plus a
-/// dust lot). Below the floor the book is treated as illiquid and the mark
+/// `MARK_MIN_BOOK_NOTIONAL_UUSDC / 2`, since a summed floor is bypassable with
+/// one riskless deep quote plus a dust lot. Below the floor the book is treated as illiquid and the mark
 /// falls back to the underlying anchor / remaining median sources. Kills the
 /// 1-lot dust-quote attack where a fractional quote inside the spread cap
 /// could otherwise drive the branch or median mark and move a solvent third
@@ -640,8 +639,7 @@ pub enum FundingSkipReason {
     OracleGuardUnset,
 }
 
-/// Why an `OracleUpdate` was refused by the per-market deviation guard
-/// (`Event::OracleUpdateRejected`).
+/// Why the deviation guard refused a retired `OracleUpdate`; kept to decode history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum OracleRejectReason {
     /// The submitted price sits outside `last_good +- max_oracle_deviation_bps`.
@@ -1745,25 +1743,8 @@ pub struct MarketConfig {
     /// surface markets in singleton pools.
     #[serde(default)]
     pub pool_id: u8,
-    /// Maximum age (ms) of the oracle reading at the time of any
-    /// margin/order/liquidation read. `0 = no check (back-compat)`.
-    ///
-    /// Oracle staleness was previously enforced only at `ResolveImpactMarket`
-    /// (60 s window) and replay-protection in `OracleUpdate`. Order
-    /// placement, margin checks, and liquidation read `get_mark_price`
-    /// without checking the oracle's age, so a node with a stuck
-    /// feeder silently mispriced everything. With this field set on a
-    /// market, the engine refuses to read an oracle whose
-    /// `publish_time_ms` is older than `block_time_ms -
-    /// mark_price_max_oracle_age_ms` and returns `ExecError::Unpriced`.
-    ///
-    /// Skipped on impact-family markets (CPY/CPN/EBY) — those
-    /// mark off the book directly via the EWMA fallback and have no
-    /// continuous oracle layer post the 2026-04-26 redesign.
-    ///
-    /// Recommended value: 30_000 (30 s) for major perps. Existing
-    /// MarketConfig records decode with `mark_price_max_oracle_age_ms = 0`
-    /// thanks to `#[serde(default)]`, preserving back-compat.
+    /// Oldest oracle reading (ms) an event resolution on this market settles
+    /// from; 0 takes the engine default.
     #[serde(default)]
     pub mark_price_max_oracle_age_ms: u64,
     /// Volume-based fee tier table. Empty (default for legacy
@@ -1791,30 +1772,10 @@ pub struct MarketConfig {
     /// improve readability.
     #[serde(default)]
     pub lot_size: u64,
-    /// Primary oracle signer for this market. When `Some`,
-    /// this signer's `OracleUpdate` is always accepted (subject to
-    /// the existing monotonic publish-time check).
-    ///
-    /// Other authorized signers (the "fallback" oracles) are accepted
-    /// only when the market's last oracle update — by *any* signer —
-    /// is older than `oracle_staleness_ms`. This means the gate works
-    /// recursively: once a fallback takes over, the next fallback is
-    /// gated against the active fallback's timestamp, not the primary's.
-    /// Net effect: fail-over chains through fallbacks rather than
-    /// requiring the primary itself to recover.
-    ///
-    /// `None` (default) preserves the legacy behavior where any
-    /// authorized signer can update at any time.
+    /// Stored for the layout; no price path reads it.
     #[serde(default)]
     pub primary_oracle_signer: Option<[u8; 20]>,
-    /// Window (ms) the primary oracle has to publish before fallback
-    /// signers can take over. **Zero disables the gate entirely** —
-    /// any authorized relayer can post `OracleUpdate` regardless of
-    /// how recent the primary's update was. Use a non-zero value
-    /// when you want primary-preferred operation with fallback only
-    /// on silence; use zero when you want simple
-    /// "any-authorized-signer" semantics. Set per-market via
-    /// `UpdateMarketFees`.
+    /// Stored for the layout; no price path reads it.
     #[serde(default)]
     pub oracle_staleness_ms: u64,
     /// Mark-price source mode. See `MarkSourceMode` docstring for
@@ -1894,16 +1855,12 @@ pub struct MarketConfig {
 /// change the bytes a quorum `CreateMarket` writes and with them the app hash
 /// of every already-executed proposal on replay. A positional array whose
 /// length depends on a value is ruled out by the `CreateMarket` encoding rule
-/// ("one value, one encoding"). A new key that only exists after the gated
-/// arm has run leaves every pre-gate byte untouched.
+/// ("one value, one encoding").
 ///
-/// An out-of-band `OracleUpdate` is REJECTED (event `OracleUpdateRejected`)
-/// rather than clipped, and an absent record (band zero) fails closed: every
-/// update after the first is rejected until a real band is set.
+/// The band prices a stale leg (`engine::stale_leg::move_bps`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketOracleGuards {
-    /// Maximum per-update move from the stored last-good price, in basis
-    /// points. Zero means unset.
+    /// The move a stale leg is valued at, in basis points. Zero means unset.
     pub max_oracle_deviation_bps: u32,
 }
 
@@ -2064,15 +2021,6 @@ pub struct TriggerRef {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExecuteTriggers {
     pub triggers: Vec<TriggerRef>,
-}
-
-/// Test/admin action — force-runs a funding tick on one market.
-/// See `Action::RunFundingTick` for rationale.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RunFundingTick {
-    pub market: MarketId,
-    #[serde(with = "crate::wire_bytes")]
-    pub signer: [u8; 20],
 }
 
 /// Pick a per-account override on the initial-margin ratio for one
@@ -2281,41 +2229,6 @@ pub struct AmendOrder {
     pub new_quantity: Option<u64>,
 }
 
-/// Push a new oracle (mark) price. Requires an authorized oracle signer
-/// AND a strictly increasing `publish_time_ms` per market.
-///
-/// **Why the timestamp check** (added 2026-04-23):
-/// before this field existed, `OracleUpdate` relied only on the envelope
-/// nonce for transaction replay protection, while the handler read no
-/// previous oracle timestamp before overwriting the price. A different
-/// previously-signed update carrying stale price data could rewind the
-/// mark price to a historical value, triggering mass liquidations or
-/// arbitrage at stale prices.
-///
-/// The field is the Pyth-style publish time of the price signal
-/// (ms since Unix epoch). The handler rejects any update whose
-/// `publish_time_ms` is ≤ the most recent stored value for the
-/// same market. Genesis / first-update carries any timestamp; the
-/// check only kicks in from the second update onward.
-///
-/// `#[serde(default)]` on `publish_time_ms` so on-chain records
-/// written before this field existed decode with `publish_time_ms = 0`,
-/// which passes the monotonicity check exactly once (and fails
-/// all replays of that seed update thereafter).
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OracleUpdate {
-    pub market: MarketId,
-    /// New mark price in micro-USDC.
-    pub price: u64,
-    #[serde(with = "crate::wire_bytes")]
-    pub signer: [u8; 20],
-    /// Oracle's own publish timestamp in ms since Unix epoch.
-    /// Must be strictly greater than the last accepted update's
-    /// `publish_time_ms` for the same market.
-    #[serde(default)]
-    pub publish_time_ms: u64,
-}
-
 /// A source identifier scoped to one policy epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OracleSourceId(pub u32);
@@ -2346,50 +2259,6 @@ pub struct ConfigureOraclePolicy {
     pub effective_height: u64,
     #[serde(with = "crate::wire_bytes::vec")]
     pub bundle: Vec<u8>,
-}
-
-/// Composite-CEX price update: the third source for the
-/// multi-source mark-price median. Carries the median (or VWAP) of N
-/// off-chain CEX feeds (Binance / OKX / Bybit / Coinbase) computed by
-/// a separate off-chain feeder process.
-///
-/// **Why it's separate from `OracleUpdate`**:
-///   1. Different signer set — composite uses a feeder-specific
-///      allowlist, not the Pyth oracle relay's. Different trust model.
-///   2. Different staleness gate — composite is polled every ~1s vs.
-///      Pyth's per-block cadence; rejected from the median when older
-///      than `cex_composite_staleness_ms` (default 30s).
-///   3. Different aggregation — Pyth oracle is a single value; the
-///      composite is explicitly a median across multiple venues, with
-///      `n_sources` carried for observability.
-///
-/// Same monotonicity-of-publish-time replay guard as `OracleUpdate`
-/// (2026-04-23).
-///
-/// Stored under `keys::CexCompositePrice` keyspace, indexed by market.
-/// Read by `compute_median_mark_price` as the third source when the
-/// market is in `MarkSourceMode::Median`. Has no effect on
-/// `OracleOnly` markets.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct OracleUpdateComposite {
-    pub market: MarketId,
-    /// Composite price in micro-USDC (median or VWAP of `n_sources`
-    /// off-chain CEX feeds, computed off-chain by the feeder).
-    pub price: u64,
-    /// Number of CEX feeds that went into the composite. Carried for
-    /// observability — a composite from 1 venue is much weaker
-    /// signal than one from 4. Field is informational; the engine
-    /// doesn't gate on it.
-    #[serde(default)]
-    pub n_sources: u8,
-    /// Authorized feeder signer (20 bytes).
-    #[serde(with = "crate::wire_bytes")]
-    pub signer: [u8; 20],
-    /// Feeder's own publish timestamp in ms since Unix epoch. Must
-    /// be strictly greater than the last accepted update's
-    /// `publish_time_ms` for the same market — replay guard.
-    #[serde(default)]
-    pub publish_time_ms: u64,
 }
 
 /// Direct deposit — requires **relayer authorization**.
@@ -4046,13 +3915,8 @@ pub enum Event {
         max_oracle_deviation_bps: u32,
         proposal_id: u64,
     },
-    /// An authorized `OracleUpdate` was refused by the per-market deviation
-    /// guard once the oracle-guard gate is active. The
-    /// transaction itself is accepted (nonce burned, no state written): the
-    /// submitted price is NOT stored, the publish time does NOT advance, and
-    /// this event records why. `max_oracle_deviation_bps == 0` with reason
-    /// `deviation_band_unset` is the fail-closed default before governance
-    /// sets a band.
+    /// A retired `OracleUpdate` refused by the deviation guard; kept to
+    /// decode history.
     OracleUpdateRejected {
         market: MarketId,
         submitted_price: u64,
@@ -4770,14 +4634,6 @@ pub enum ExecError {
         limit: u64,
         would_be: u64,
     },
-    /// Rejected `OracleUpdate` whose `publish_time_ms` is not strictly
-    /// greater than the last accepted update for this market. Replay
-    /// protection (2026-04-23).
-    OracleTimestampNotMonotonic {
-        market: MarketId,
-        stored: u64,
-        submitted: u64,
-    },
     /// Account would touch more events than the scenario margin engine can
     /// enumerate (the engine's per-account event cap). Returned instead of
     /// `InsufficientMargin` so clients can distinguish "basket exceeds the
@@ -4796,17 +4652,7 @@ pub enum ExecError {
         expected: u64,
         got: u64,
     },
-    /// Rejected `OracleUpdate` for an impact-family market (CPY/CPN/EBY).
-    /// Per the no-oracle MTM redesign (2026-04-26), these markets mark
-    /// off the book directly and have no oracle layer. The only oracle
-    /// reading happens at resolution, against the underlying perp.
-    /// Returned defensively so a misbehaving feeder or replayed update
-    /// can't corrupt the conditional's state.
-    ///
-    /// Variant defined in Phase A but not yet wired in `handle_oracle_update`
-    /// (see comment there): the engine-side reject lands in Phase D
-    /// alongside the `get_mark_price` book-mid fallback and the rewrite
-    /// of conditional test setup helpers, so the rollout is atomic.
+    /// The market is not a standalone perp, so it has no oracle of its own.
     OracleNotApplicable {
         market: MarketId,
     },
@@ -4819,9 +4665,6 @@ pub enum ExecError {
     /// existed at all. Reduce-only orders are required to actually reduce
     /// or close a position.
     ReduceOnlyWouldIncrease,
-    /// A test/admin action (`RunFundingTick`) was rejected because the engine
-    /// isn't configured to accept it in this deployment.
-    TestActionRejected(String),
     /// `SetAccountFeeOverride` rejected because a fee value is outside
     /// the legal `[0, 10_000]` basis-point range.
     FeeBpsOutOfRange {
@@ -4850,16 +4693,6 @@ pub enum ExecError {
         market: MarketId,
         lot_size: u64,
         quantity: u64,
-    },
-    /// `OracleUpdate` from a fallback (non-primary) signer was rejected
-    /// because the market's last oracle update — by any signer — is still
-    /// within the staleness window. Caller must wait until
-    /// `block_time - last_publish_ms >= oracle_staleness_ms`.
-    OracleStaleNotElapsed {
-        market: MarketId,
-        last_publish_ms: u64,
-        block_time_ms: u64,
-        staleness_ms: u64,
     },
     /// `market` has no price the action may use.
     Unpriced {
@@ -5095,13 +4928,13 @@ impl ExecError {
             // variant was added. Preserve that older integration contract and
             // use the next contiguous code for the OI-cap rejection.
             ExecError::OpenInterestLimitExceeded { .. } => 51,
-            ExecError::OracleTimestampNotMonotonic { .. } => 30,
+            // 30, 36 and 41 were OracleTimestampNotMonotonic, TestActionRejected and
+            // OracleStaleNotElapsed, retired with OracleUpdate; never reassigned.
             // 31 was TooManyActiveImpactMarkets, retired; never reassigned.
             ExecError::SettlementPriceMismatch { .. } => 32,
             ExecError::OracleNotApplicable { .. } => 33,
             ExecError::PostOnlyWouldCross => 34,
             ExecError::ReduceOnlyWouldIncrease => 35,
-            ExecError::TestActionRejected(_) => 36,
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => 37,
                 UnpricedReason::NoVerdict(_) => 77,
@@ -5111,7 +4944,6 @@ impl ExecError {
             ExecError::UserLeverageBelowMarketIm { .. } => 38,
             ExecError::TickSizeViolation { .. } => 39,
             ExecError::LotSizeViolation { .. } => 40,
-            ExecError::OracleStaleNotElapsed { .. } => 41,
             ExecError::FeeBpsOutOfRange { .. } => 42,
             ExecError::FeeOverrideStaleSeq { .. } => 43,
             ExecError::ClientOrderIdNotFound { .. } => 44,
@@ -5459,10 +5291,6 @@ impl ExecError {
                  may preserve or reduce its pre-fill aggregate OI but may not increase it; enforcement occurs \
                  before either side's position is mutated."
             }
-            ExecError::OracleTimestampNotMonotonic { .. } => {
-                "OracleUpdate publish_time_ms is not strictly greater than the last accepted update for \
-                 this market — replay protection per audit B3 (2026-04-23)."
-            }
             ExecError::TooManyActiveEvents { .. } => {
                 "Account would touch more events than the scenario margin engine can enumerate. Close a \
                  leg before opening another."
@@ -5472,8 +5300,8 @@ impl ExecError {
                  launch margin rule."
             }
             ExecError::OracleNotApplicable { .. } => {
-                "OracleUpdate targets a conditional or prediction-binary book, which marks off its own \
-                 trades and has no oracle layer."
+                "The oracle action targets a conditional or prediction-binary book, which marks off its \
+                 own trades and has no oracle layer."
             }
             ExecError::PostOnlyWouldCross => {
                 "PlaceOrder with post_only=true would have crossed the book. Rejected so makers retain \
@@ -5482,11 +5310,6 @@ impl ExecError {
             ExecError::ReduceOnlyWouldIncrease => {
                 "PlaceOrder/MarketOrder with reduce_only=true was same-side as the existing position (would \
                  increase exposure) or no position existed."
-            }
-            ExecError::TestActionRejected(_) => {
-                "Test/admin action (RunFundingTick) rejected because \
-                 the engine isn't configured to accept them, or the position the action referenced does \
-                 not exist."
             }
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => {
@@ -5569,9 +5392,6 @@ impl ExecError {
             }
             ExecError::LotSizeViolation { .. } => {
                 "Order quantity is not an exact multiple of the market lot size."
-            }
-            ExecError::OracleStaleNotElapsed { .. } => {
-                "Fallback oracle signer published before the market staleness window elapsed."
             }
             ExecError::FeeBpsOutOfRange { .. } => {
                 "Per-account fee override has a fee outside the legal basis-point range."
@@ -5756,15 +5576,6 @@ impl fmt::Display for ExecError {
                 f,
                 "open interest limit exceeded on market {market}: would be {would_be}, cap {limit}"
             ),
-            ExecError::OracleTimestampNotMonotonic {
-                market,
-                stored,
-                submitted,
-            } => write!(
-                f,
-                "oracle publish_time_ms not strictly monotonic on market {market}: \
-                stored {stored}, submitted {submitted} (submitted must be > stored)"
-            ),
             ExecError::TooManyActiveEvents { current, max } => write!(
                 f,
                 "too many active events in basket: current {current}, cap {max}"
@@ -5789,7 +5600,6 @@ impl fmt::Display for ExecError {
                 f,
                 "reduce-only order rejected: would increase exposure (same-side as position) or no position to reduce"
             ),
-            ExecError::TestActionRejected(msg) => write!(f, "test action rejected: {msg}"),
             ExecError::FeeBpsOutOfRange { bps } => {
                 write!(f, "fee out of range: {bps} bps (must be in [0, 10_000])")
             }
@@ -5815,17 +5625,6 @@ impl fmt::Display for ExecError {
             } => write!(
                 f,
                 "lot size violation on market {market}: quantity {quantity} not a multiple of lot_size {lot_size}"
-            ),
-            ExecError::OracleStaleNotElapsed {
-                market,
-                last_publish_ms,
-                block_time_ms,
-                staleness_ms,
-            } => write!(
-                f,
-                "oracle update from fallback signer rejected on market {market}: \
-                primary's last_publish_ms {last_publish_ms} is too recent \
-                (block_time {block_time_ms} - last_publish < staleness_ms {staleness_ms})"
             ),
             ExecError::Unpriced { market, reason } => match reason {
                 UnpricedReason::Stale {
@@ -6048,12 +5847,11 @@ pub mod prelude {
         FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
         LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards,
         MarketOrder, OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry,
-        OracleRejectReason, OracleUpdate, OracleUpdateComposite, Order, OrderId, Outcome,
-        PendingTriggerDiscardReason, PlaceOrder, Position, ResolveEvent, RevokeAgent,
-        RunFundingTick, SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount,
-        SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw,
-        WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar, WithdrawalRecord,
-        WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
+        OracleRejectReason, Order, OrderId, Outcome, PendingTriggerDiscardReason, PlaceOrder,
+        Position, ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side,
+        SubAccount, SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees,
+        Withdraw, WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar,
+        WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
         DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
         DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
         PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,

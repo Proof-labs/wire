@@ -151,7 +151,6 @@ macro_rules! define_actions {
 define_actions! {
     PlaceOrder => 1,             // 0x01
     CancelOrder => 2,            // 0x02
-    OracleUpdate => 3,           // 0x03
     MarketOrder => 4,            // 0x04
     Deposit => 5,                // 0x05
     Withdraw => 6,               // 0x06
@@ -162,11 +161,10 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    // 0x0E, 0x0F and 0x11 are retired: see `RETIRED_ACTION_BYTES`.
+    // 0x03, 0x0E, 0x0F, 0x11, 0x12 and 0x14 are retired: see
+    // `RETIRED_ACTION_BYTES`.
     UpdateMarketFees => 16,      // 0x10
-    RunFundingTick => 18,        // 0x12
     SetAccountFeeOverride => 19, // 0x13
-    OracleUpdateComposite => 20, // 0x14
     FailDeposit => 21,           // 0x15
     SetUserMarketLeverage => 22, // 0x16
     ClosePosition => 23,         // 0x17
@@ -204,7 +202,7 @@ define_actions! {
 /// transactions and chains that carried them still exist, so the values are
 /// never handed to a new action: `ActionType::try_from` rejects them and the
 /// byte ledger keeps their rows as `retired`.
-pub const RETIRED_ACTION_BYTES: &[u8] = &[0x0E, 0x0F, 0x11];
+pub const RETIRED_ACTION_BYTES: &[u8] = &[0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -223,9 +221,7 @@ pub enum BlockPhase {
 /// Classify one semantic action into the approved trigger-era block spine.
 pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
     match action_type {
-        ActionType::OracleUpdate
-        | ActionType::SubmitOracleObservation
-        | ActionType::OracleUpdateComposite
+        ActionType::SubmitOracleObservation
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
         | ActionType::FailWithdrawal
@@ -254,7 +250,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ConfirmWithdrawal
         | ActionType::ResolveEvent
         | ActionType::UpdateMarketFees
-        | ActionType::RunFundingTick
         | ActionType::SetAccountFeeOverride
         | ActionType::FailDeposit
         | ActionType::SetUserMarketLeverage
@@ -859,9 +854,8 @@ mod tests {
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
         CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        MarkSourceMode, MarketOrder, OperatorReceiptProof, OracleUpdate, OwnerAddress, PlaceOrder,
-        RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw,
-        WithdrawRequest,
+        MarkSourceMode, MarketOrder, OperatorReceiptProof, OwnerAddress, PlaceOrder, RevokeAgent,
+        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1066,7 +1060,6 @@ mod tests {
     fn test_golden_vectors() {
         const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
         const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
-        const ORACLE_HEX: &str = include_str!("../vectors/oracle_update.hex");
         const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
         const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
 
@@ -1103,18 +1096,6 @@ mod tests {
                 2,
                 CANCEL_HEX.trim(),
                 CancelOrder::ACTION_TYPE,
-                true,
-            ),
-            (
-                Action::OracleUpdate(OracleUpdate {
-                    market: 1,
-                    price: 5000,
-                    signer: [0x03; 20],
-                    publish_time_ms: 0,
-                }),
-                3,
-                ORACLE_HEX.trim(),
-                OracleUpdate::ACTION_TYPE,
                 true,
             ),
             (
@@ -1351,12 +1332,6 @@ mod tests {
                 order_id: 42,
                 new_price: Some(50_200),
                 new_quantity: Some(75),
-            }),
-            Action::OracleUpdate(OracleUpdate {
-                market: 2,
-                price: 60_000,
-                signer: [0xCC; 20],
-                publish_time_ms: 0,
             }),
             Action::MarketOrder(MarketOrder {
                 market: 3,
@@ -3239,12 +3214,6 @@ mod tests {
                 order_id: u64::MAX,
                 owner: [0xFF; 20],
             }),
-            Action::OracleUpdate(OracleUpdate {
-                market: u32::MAX,
-                price: u64::MAX,
-                signer: [0xFF; 20],
-                publish_time_ms: 0,
-            }),
             Action::MarketOrder(MarketOrder {
                 market: u32::MAX,
                 owner: [0xFF; 20],
@@ -3334,12 +3303,6 @@ mod tests {
             Action::CancelOrder(CancelOrder {
                 order_id: 0,
                 owner: [0u8; 20],
-            }),
-            Action::OracleUpdate(OracleUpdate {
-                market: 0,
-                price: 0,
-                signer: [0u8; 20],
-                publish_time_ms: 0,
             }),
             Action::MarketOrder(MarketOrder {
                 market: 0,
@@ -3450,12 +3413,6 @@ mod tests {
                     take_profit: None,
                 }),
                 Action::CancelOrder(CancelOrder { order_id: i, owner }),
-                Action::OracleUpdate(OracleUpdate {
-                    market,
-                    price: i * 50,
-                    signer: owner,
-                    publish_time_ms: 0,
-                }),
                 Action::MarketOrder(MarketOrder {
                     market,
                     owner,
@@ -3692,7 +3649,6 @@ mod tests {
         let expected = [
             (ActionType::PlaceOrder, BlockPhase::Ordinary),
             (ActionType::CancelOrder, BlockPhase::TriggerManagement),
-            (ActionType::OracleUpdate, BlockPhase::PriceCreditPrefix),
             (ActionType::MarketOrder, BlockPhase::Ordinary),
             (ActionType::Deposit, BlockPhase::PriceCreditPrefix),
             (ActionType::Withdraw, BlockPhase::Ordinary),
@@ -3704,12 +3660,7 @@ mod tests {
             (ActionType::ApproveAgent, BlockPhase::AgentAuthority),
             (ActionType::RevokeAgent, BlockPhase::AgentAuthority),
             (ActionType::UpdateMarketFees, BlockPhase::Ordinary),
-            (ActionType::RunFundingTick, BlockPhase::Ordinary),
             (ActionType::SetAccountFeeOverride, BlockPhase::Ordinary),
-            (
-                ActionType::OracleUpdateComposite,
-                BlockPhase::PriceCreditPrefix,
-            ),
             (ActionType::FailDeposit, BlockPhase::Ordinary),
             (ActionType::SetUserMarketLeverage, BlockPhase::Ordinary),
             (ActionType::ClosePosition, BlockPhase::Ordinary),
@@ -3878,12 +3829,6 @@ mod tests {
             Action::CancelOrder(CancelOrder {
                 order_id: 1,
                 owner: [0; 20],
-            }),
-            Action::OracleUpdate(OracleUpdate {
-                market: 1,
-                price: 100,
-                signer: [0; 20],
-                publish_time_ms: 0,
             }),
             Action::MarketOrder(MarketOrder {
                 market: 1,
@@ -4213,11 +4158,9 @@ mod tests {
                         order_id: seq,
                         owner,
                     }),
-                    2 => Action::OracleUpdate(OracleUpdate {
-                        market: 1,
-                        price: seq + 1,
-                        signer: owner,
-                        publish_time_ms: 0,
+                    2 => Action::CancelOrder(CancelOrder {
+                        order_id: seq + 1,
+                        owner,
                     }),
                     3 => Action::MarketOrder(MarketOrder {
                         market: 1,

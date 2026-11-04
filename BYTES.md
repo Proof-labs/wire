@@ -27,7 +27,7 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x01 | `PlaceOrder`                        | shipped  |
   ↳ proof-wire 2.1.0: `PlaceOrder` payload gains trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte and field order unchanged.
 | 0x02 | `CancelOrder`                       | shipped  |
-| 0x03 | `OracleUpdate`                      | shipped  |
+| 0x03 | `OracleUpdate`                      | retired  |
 | 0x04 | `MarketOrder`                       | shipped  |
   ↳ proof-wire 2.1.0: `MarketOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
 | 0x05 | `Deposit`                           | shipped  |
@@ -43,9 +43,9 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x0F | `ResolveImpactMarket`               | retired  |
 | 0x10 | `UpdateMarketFees`                  | shipped  |
 | 0x11 | `RunLiquidationSweep`               | retired  |
-| 0x12 | `RunFundingTick`                    | shipped  |
+| 0x12 | `RunFundingTick`                    | retired  |
 | 0x13 | `SetAccountFeeOverride`             | planned  |
-| 0x14 | `OracleUpdateComposite`             | planned  |
+| 0x14 | `OracleUpdateComposite`             | retired  |
 | 0x15 | `FailDeposit`                       | planned  |
 | 0x16 | `SetUserMarketLeverage`             | planned  |
 | 0x17 | `ClosePosition`                     | shipped  |

@@ -552,8 +552,7 @@ pub struct CertifiedPrice {
 pub struct OraclePermissions {
     pub market: MarketId,
     pub finalized_height: u64,
-    /// `None` while no oracle policy governs the market.
-    pub permission: Option<OraclePermission>,
+    pub permission: OraclePermission,
     /// The price trading may use at this height.
     pub certified: Option<CertifiedPrice>,
     /// Why trading is not permitted; `None` when permitted or no verdict is committed.

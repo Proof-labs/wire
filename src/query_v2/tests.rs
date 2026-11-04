@@ -324,7 +324,7 @@ fn oracle_permissions_round_trip() {
     round_trip(&OraclePermissions {
         market: 1,
         finalized_height: 10,
-        permission: Some(OraclePermission::Satisfied),
+        permission: OraclePermission::Satisfied,
         certified: Some(CertifiedPrice {
             price: 100,
             provider_time_ms: 8,
@@ -334,7 +334,7 @@ fn oracle_permissions_round_trip() {
     round_trip(&OraclePermissions {
         market: 1,
         finalized_height: 10,
-        permission: Some(OraclePermission::Unavailable),
+        permission: OraclePermission::Unavailable,
         certified: None,
         reason: Some(OracleReason::SessionClosed),
     });
