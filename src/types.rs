@@ -290,18 +290,8 @@ pub const DEFAULT_MAX_ORACLE_DEVIATION_BPS: u32 = 2_000;
 /// v9; pre-v9 replay keeps the historical spread-only book-mid rule.
 pub const MARK_MIN_BOOK_NOTIONAL_UUSDC: u128 = 50_000_000_000;
 
-/// Hard-cap multiple on `mark_price_max_oracle_age_ms` past
-/// which the stale→last-good mark fallback stops and `get_mark_price` errors
-/// (`StaleOracle`) again. Two-tier staleness policy: below the per-market
-/// gate the oracle is fresh; between the gate and `gate × this factor` the
-/// mark falls back to the stored last-good price (liquidation stays live
-/// through routine feeder hiccups); past the hard cap the mark errors, which
-/// re-freezes margin-gated actions — order placement, withdrawals, and the
-/// sweep's per-account deferral — so a multi-hour outage cannot be used to
-/// lever up against an arbitrarily old price. Withdrawal initiation is stricter
-/// and rejects immediately after the configured freshness gate. Both policies
-/// activate at stored schema v9; pre-v9 replay retains immediate staleness
-/// rejection for every mark consumer.
+/// Retained for the wire API; the engine reads no last-good price, so a
+/// stale oracle prices no valuation.
 pub const DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR: u64 = 10;
 
 impl MarketKind {
@@ -1765,7 +1755,7 @@ pub struct MarketConfig {
     /// feeder silently mispriced everything. With this field set on a
     /// market, the engine refuses to read an oracle whose
     /// `publish_time_ms` is older than `block_time_ms -
-    /// mark_price_max_oracle_age_ms` and returns `ExecError::StaleOracle`.
+    /// mark_price_max_oracle_age_ms` and returns `ExecError::Unpriced`.
     ///
     /// Skipped on impact-family markets (CPY/CPN/EBY) — those
     /// mark off the book directly via the EWMA fallback and have no
@@ -4561,6 +4551,25 @@ pub enum OracleReason {
 // Errors
 // ---------------------------------------------------------------------------
 
+/// Why a market has no price an action may use. Each reason keeps its
+/// receipt code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnpricedReason {
+    /// The oracle is older than the action allows.
+    Stale {
+        publish_time_ms: u64,
+        block_time_ms: u64,
+        max_staleness_ms: u64,
+    },
+    /// The market's `mark_price_max_oracle_age_ms` is the unset zero.
+    GuardUnset,
+    /// The oracle policy has no fresh certified verdict for this block;
+    /// `None` when none was committed.
+    NoVerdict(Option<OracleReason>),
+    /// No trade or publish has produced a mark yet.
+    NoMark,
+}
+
 /// Transaction execution error. Each variant maps to a stable non-zero ABCI
 /// result code via [`ExecError::code()`] (see the `impl` block below). Codes
 /// are unique except for the deliberate code-21 nonce-error family. The
@@ -4777,13 +4786,6 @@ pub enum ExecError {
         current: u32,
         max: u32,
     },
-    /// A mark price could not be produced for an existing market: an
-    /// impact-family book (conditional perp / binary prediction) with no
-    /// recent-trade EWMA and no oracle fallback value. Distinct from
-    /// `UnknownMarket`, which means the market itself is not registered.
-    MarkUnavailable {
-        market: MarketId,
-    },
     /// Retained for the stable error-code map; no current producer.
     ///
     /// Raised by the removed net-delta grouping when legs of one group
@@ -4859,39 +4861,10 @@ pub enum ExecError {
         block_time_ms: u64,
         staleness_ms: u64,
     },
-    /// `get_mark_price` rejected because the oracle for `market` is
-    /// older than `MarketConfig::mark_price_max_oracle_age_ms`. Order
-    /// placement, margin checks, and liquidation refuse to use a
-    /// stale oracle so a node with a stuck feeder can't silently
-    /// misprice the book.
-    StaleOracle {
+    /// `market` has no price the action may use.
+    Unpriced {
         market: MarketId,
-        /// Stored `publish_time_ms` of the most recent oracle update.
-        publish_time_ms: u64,
-        /// Block time at which the read was attempted.
-        block_time_ms: u64,
-        /// Configured staleness cap from `MarketConfig`.
-        max_staleness_ms: u64,
-    },
-    /// A mark-dependent read on `market` was refused because the market's
-    /// `mark_price_max_oracle_age_ms` is still the unset zero. Zero no longer
-    /// means "disabled": the default fails closed until the admin quorum sets
-    /// a real value through `AdminAction::SetOracleGuards`.
-    OracleGuardUnset {
-        market: MarketId,
-    },
-    /// Once the oracle policy is active, a mark-dependent read on `market`
-    /// was refused because the block has no certified verdict for it. The
-    /// market is stale or unpriceable for this block, not misconfigured: the
-    /// action can succeed in a later block. Malformed verdict state is
-    /// `StateCorruption`, never this variant.
-    OracleVerdictUnavailable {
-        market: MarketId,
-        /// The classifier's primary reason for a committed Stale or
-        /// Unpriceable verdict; `None` when no verdict was committed for
-        /// this block (the market's price prefix is not frozen, or the market
-        /// has no policy epoch after activation).
-        reason: Option<OracleReason>,
+        reason: UnpricedReason,
     },
     /// `SetUserMarketLeverage` rejected because the user attempted to
     /// pick an IM ratio LOWER than the market's risk floor. The
@@ -5129,7 +5102,12 @@ impl ExecError {
             ExecError::PostOnlyWouldCross => 34,
             ExecError::ReduceOnlyWouldIncrease => 35,
             ExecError::TestActionRejected(_) => 36,
-            ExecError::StaleOracle { .. } => 37,
+            ExecError::Unpriced { reason, .. } => match reason {
+                UnpricedReason::Stale { .. } => 37,
+                UnpricedReason::NoVerdict(_) => 77,
+                UnpricedReason::GuardUnset => 82,
+                UnpricedReason::NoMark => 97,
+            },
             ExecError::UserLeverageBelowMarketIm { .. } => 38,
             ExecError::TickSizeViolation { .. } => 39,
             ExecError::LotSizeViolation { .. } => 40,
@@ -5169,8 +5147,6 @@ impl ExecError {
             ExecError::WithdrawalBelowMinimum { .. } => 75,
             ExecError::WithdrawalTerminalGated(_) => 76,
             // First of the 77-81 block reserved for oracle-policy errors.
-            ExecError::OracleVerdictUnavailable { .. } => 77,
-            ExecError::OracleGuardUnset { .. } => 82,
             ExecError::SubAccountNotFound => 83,
             ExecError::SubAccountAlreadyExists => 84,
             ExecError::SubAccountTransferSameAccount => 85,
@@ -5186,7 +5162,6 @@ impl ExecError {
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
             ExecError::TooManyAttachedConditionals { .. } => 95,
             ExecError::TooManyActiveEvents { .. } => 96,
-            ExecError::MarkUnavailable { .. } => 97,
             ExecError::TriggerOrderIncompatible => 98,
             ExecError::WithdrawalLimitExceeded { .. } => 99,
             ExecError::AccountOrderCapReached { .. } => 100,
@@ -5492,11 +5467,6 @@ impl ExecError {
                 "Account would touch more events than the scenario margin engine can enumerate. Close a \
                  leg before opening another."
             }
-            ExecError::MarkUnavailable { .. } => {
-                "No mark price is available for the market: a conditional or prediction-binary book \
-                 has no recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
-                 mark exists."
-            }
             ExecError::SettlementPriceMismatch { .. } => {
                 "Reserved error code; the net-delta grouping that raised it is not part of the \
                  launch margin rule."
@@ -5518,15 +5488,22 @@ impl ExecError {
                  the engine isn't configured to accept them, or the position the action referenced does \
                  not exist."
             }
-            ExecError::StaleOracle { .. } => {
-                "Oracle price is stale for this market; refresh the oracle before placing orders, reading margin, or liquidating."
-            }
-            ExecError::OracleGuardUnset { .. } => {
-                "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
-            }
-            ExecError::OracleVerdictUnavailable { .. } => {
-                "The oracle policy has no certified verdict for this market in this block (stale, unpriceable, or not yet committed); mark-dependent actions are refused until a later block certifies a price."
-            }
+            ExecError::Unpriced { reason, .. } => match reason {
+                UnpricedReason::Stale { .. } => {
+                    "Oracle price is stale for this market; refresh the oracle before placing orders, reading margin, or liquidating."
+                }
+                UnpricedReason::GuardUnset => {
+                    "The oracle-guard gate is active and this market has no mark-price max oracle age set; every mark-dependent action is refused until governance sets one."
+                }
+                UnpricedReason::NoVerdict(_) => {
+                    "The oracle policy has no certified verdict for this market in this block (stale, unpriceable, or not yet committed); mark-dependent actions are refused until a later block certifies a price."
+                }
+                UnpricedReason::NoMark => {
+                    "No mark price is available for the market: a conditional or prediction-binary book \
+                     has no recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
+                     mark exists."
+                }
+            },
             ExecError::WithdrawalPayoutLeaseActive => {
                 "A live Solana payout lease on this withdrawal is held by another watcher; the claim is rejected so the rejected watcher cannot also sign a payout."
             }
@@ -5631,10 +5608,7 @@ impl ExecError {
         matches!(
             self,
             ExecError::InvalidResolution(_)
-                | ExecError::StaleOracle { .. }
-                | ExecError::OracleGuardUnset { .. }
-                | ExecError::OracleVerdictUnavailable { .. }
-                | ExecError::MarkUnavailable { .. }
+                | ExecError::Unpriced { .. }
                 | ExecError::UnknownMarket(_)
         )
     }
@@ -5795,11 +5769,6 @@ impl fmt::Display for ExecError {
                 f,
                 "too many active events in basket: current {current}, cap {max}"
             ),
-            ExecError::MarkUnavailable { market } => write!(
-                f,
-                "no mark price available on market {market}: impact-family book has no recent-trade \
-                EWMA and no oracle fallback value"
-            ),
             ExecError::SettlementPriceMismatch {
                 market,
                 expected,
@@ -5858,37 +5827,37 @@ impl fmt::Display for ExecError {
                 primary's last_publish_ms {last_publish_ms} is too recent \
                 (block_time {block_time_ms} - last_publish < staleness_ms {staleness_ms})"
             ),
-            ExecError::StaleOracle {
-                market,
-                publish_time_ms,
-                block_time_ms,
-                max_staleness_ms,
-            } => write!(
-                f,
-                "oracle stale on market {market}: last publish_time {publish_time_ms}ms, \
-                block time {block_time_ms}ms (age {age}ms > cap {max_staleness_ms}ms)",
-                age = block_time_ms.saturating_sub(*publish_time_ms),
-            ),
-            ExecError::OracleGuardUnset { market } => write!(
-                f,
-                "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
-                oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
-            ),
-            ExecError::OracleVerdictUnavailable {
-                market,
-                reason: Some(reason),
-            } => write!(
-                f,
-                "oracle verdict unavailable on market {market}: committed verdict is not fresh \
-                ({reason:?})"
-            ),
-            ExecError::OracleVerdictUnavailable {
-                market,
-                reason: None,
-            } => write!(
-                f,
-                "oracle verdict unavailable on market {market}: no verdict committed for this block"
-            ),
+            ExecError::Unpriced { market, reason } => match reason {
+                UnpricedReason::Stale {
+                    publish_time_ms,
+                    block_time_ms,
+                    max_staleness_ms,
+                } => write!(
+                    f,
+                    "oracle stale on market {market}: last publish_time {publish_time_ms}ms, \
+                    block time {block_time_ms}ms (age {age}ms > cap {max_staleness_ms}ms)",
+                    age = block_time_ms.saturating_sub(*publish_time_ms),
+                ),
+                UnpricedReason::GuardUnset => write!(
+                    f,
+                    "oracle guard unset on market {market}: mark_price_max_oracle_age_ms is 0 while the \
+                    oracle-guard gate is active; mark-dependent actions are refused until governance sets it"
+                ),
+                UnpricedReason::NoVerdict(Some(reason)) => write!(
+                    f,
+                    "oracle verdict unavailable on market {market}: committed verdict is not fresh \
+                    ({reason:?})"
+                ),
+                UnpricedReason::NoVerdict(None) => write!(
+                    f,
+                    "oracle verdict unavailable on market {market}: no verdict committed for this block"
+                ),
+                UnpricedReason::NoMark => write!(
+                    f,
+                    "no mark price available on market {market}: impact-family book has no recent-trade \
+                    EWMA and no oracle fallback value"
+                ),
+            },
             ExecError::WithdrawalPayoutLeaseActive => {
                 write!(f, "payout lease live and held by another watcher")
             }
@@ -6507,13 +6476,13 @@ mod tests {
     /// the legacy age guard (37) and a misconfigured market (23).
     #[test]
     fn oracle_verdict_unavailable_is_code_77_and_names_its_reason() {
-        let classified = ExecError::OracleVerdictUnavailable {
+        let classified = ExecError::Unpriced {
             market: 4,
-            reason: Some(OracleReason::SessionClosed),
+            reason: UnpricedReason::NoVerdict(Some(OracleReason::SessionClosed)),
         };
-        let uncommitted = ExecError::OracleVerdictUnavailable {
+        let uncommitted = ExecError::Unpriced {
             market: 4,
-            reason: None,
+            reason: UnpricedReason::NoVerdict(None),
         };
         assert_eq!(classified.code(), 77, "code 77 is permanently assigned");
         assert_eq!(uncommitted.code(), 77, "the reason never changes the code");
