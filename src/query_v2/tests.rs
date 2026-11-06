@@ -1,4 +1,19 @@
 use super::*;
+#[test]
+fn authorized_agents_maps_round_trip_without_stored_policy_fields() {
+    let view = AuthorizedAgents {
+        owner: Address([1; 20]),
+        finalized_height: 42,
+        agents: vec![Address([2; 20])],
+        complete: true,
+    };
+    let bytes = encode(&view).expect("agent view encodes");
+    assert_eq!(
+        decode::<AuthorizedAgents>(&bytes).expect("agent view decodes"),
+        view
+    );
+    assert!(matches!(bytes.first(), Some(0x80..=0x8f)), "view is a map");
+}
 
 fn round_trip<T>(view: &T)
 where

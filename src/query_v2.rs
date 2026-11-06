@@ -386,6 +386,19 @@ pub struct AccountState {
     pub positions: Vec<LedgerPosition>,
 }
 
+/// Current stored trading-agent grants. Grants have no stored expiry or per-action scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizedAgents {
+    pub owner: Address,
+    pub finalized_height: u64,
+    /// Strictly increasing address order, with at most `AUTHORIZED_AGENTS_LIMIT` entries.
+    pub agents: Vec<Address>,
+    /// False when further grants exist beyond the bounded result.
+    pub complete: bool,
+}
+
+pub const AUTHORIZED_AGENTS_LIMIT: usize = 100;
+
 /// An account's fee override; `None` on a side means the market's fee applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeeOverride {
