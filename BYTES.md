@@ -113,6 +113,7 @@ are not outer transaction action bytes.
 | 0x1B | `SetMarginOffsetPolicy`            | governed; replaces the explicit partial-margin offset policy (compare-and-set on its sequence) |
 | 0x1C | `SetDepositLimit`                 | governed; writes the `ConfirmDeposit` / `Deposit` per-deposit maximum and protocol-wide rolling-window cap (exchange#425); both off at 0 and when unset |
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |
+| 0x1E | `SettleEvent`                     | governed; settles a price event whose resolution window closed unresolved, on the quorum's Yes or No |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:

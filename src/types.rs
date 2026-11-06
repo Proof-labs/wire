@@ -864,6 +864,9 @@ pub enum AdminAction {
     /// Voids an event: every binary and conditional on it settles in cash at
     /// the Yes price the quorum names.
     VoidEvent(VoidEvent),
+    /// Settles a price event whose resolution window closed unresolved, on
+    /// the Yes or No the quorum names from deadline evidence.
+    SettleEvent(SettleEvent),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1014,6 +1017,14 @@ pub struct WithdrawalOutflow {
 /// below-minimum withdrawal floor, so reaching this needs a governance cap
 /// above `4096 * min_withdrawal` inside a single window.
 pub const MAX_WITHDRAWAL_WINDOW_ENTRIES: usize = 4096;
+
+/// Payload of [`AdminAction::SettleEvent`]: the event and its outcome.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettleEvent {
+    pub event_id: EventId,
+    /// Yes or No; Void is refused.
+    pub outcome: Outcome,
+}
 
 /// Payload of [`AdminAction::SetDepositLimit`]: bounds on what
 /// `ConfirmDeposit` and `Deposit` may credit. Executing it
@@ -1208,6 +1219,8 @@ pub enum AdminActionType {
     SetDepositLimit = 28,
     /// Voids an event at a quorum-set Yes price.
     VoidEvent = 29,
+    /// Settles a price event past its resolution window.
+    SettleEvent = 30,
 }
 
 impl AdminAction {
@@ -1236,6 +1249,7 @@ impl AdminAction {
             Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
             Self::SetDepositLimit(_) => AdminActionType::SetDepositLimit,
             Self::VoidEvent(_) => AdminActionType::VoidEvent,
+            Self::SettleEvent(_) => AdminActionType::SettleEvent,
         }
     }
 

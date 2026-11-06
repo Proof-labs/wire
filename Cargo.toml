@@ -206,6 +206,10 @@ name = "proof-wire"
 # (event id, Yes price), and Event::EventVoided and
 # Event::ConditionalVoidSettled appended. No existing bytes change -> MINOR.
 #
+# Unreleased: additive wire change (quorum settlement). New
+# AdminAction::SettleEvent at inner tag 0x1E with its SettleEvent payload
+# (event id, Yes or No). No existing bytes change -> MINOR.
+#
 # Unreleased: additive wire change (the deposit limits, exchange#425).
 # New AdminAction::SetDepositLimit at inner tag 0x1C with its SetDepositLimit
 # payload (per-deposit maximum, protocol-wide rolling-window cap, window
