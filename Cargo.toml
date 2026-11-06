@@ -170,6 +170,14 @@ name = "proof-wire"
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
 #
+# Unreleased: breaking wire change (per-market halt).
+# MarketStatus gains Halted, ExecError::MarketHalted takes code 134, and the
+# v2 Market view gains status (with its MarketStatus) and the v2
+# TriggerOutcomeReason gains MarketHalted. EmergencyAction keeps only
+# PauseMarket: HaltTrading and SetReduceOnly, never admitted, are removed,
+# EmergencyActionRecord::market_id is no longer optional, and
+# Event::MarketStatusSet drops proposal_id -> MAJOR.
+#
 # Unreleased: additive wire change (perpetual lifecycle).
 # New AdminAction::SetMarketStatus at inner tag 0x1F with its SetMarketStatus
 # payload and the MarketStatus enum (Trading, ReduceOnly, Delisted);

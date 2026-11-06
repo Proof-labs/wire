@@ -168,14 +168,13 @@ the tag is ASSIGNED from this commit regardless of when it activates.
 
 `EmergencyActionType` in [`src/types.rs`](src/types.rs). Committed by the
 on-chain emergency audit log (`EmergencyActionRecord::action_tag`) and by the
-governance digest; never repurpose after use on a persistent chain. No arm is
-admitted at initial release; each activates later behind its own pairing gate.
+governance digest; never repurpose after use on a persistent chain.
 
 | Byte | Arm                | Status   |
 |------|--------------------|----------|
-| 0x01 | `PauseMarket`      | planned  |
-| 0x02 | `HaltTrading`      | planned  |
-| 0x03 | `SetReduceOnly`    | planned  |
+| 0x01 | `PauseMarket`      | live; halts one market, `SetMarketStatus` lifts it |
+| 0x02 | `HaltTrading`      | retired, never admitted |
+| 0x03 | `SetReduceOnly`    | retired, never admitted |
 
 ## Reservation tracker
 

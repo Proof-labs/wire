@@ -757,8 +757,7 @@ pub struct EmergencyActionRecord {
     pub signer: SignerAddress,
     /// `EmergencyAction` arm discriminant.
     pub action_tag: u8,
-    /// `None` for market-less arms (`HaltTrading`).
-    pub market_id: Option<MarketId>,
+    pub market_id: MarketId,
     pub height: u64,
     /// Block time at execution; feeds the rolling rate window.
     pub time_ms: u64,
@@ -1058,7 +1057,7 @@ pub struct VoidEvent {
     pub yes_price: u64,
 }
 
-/// A perpetual's lifecycle. A market with no stored status is `Trading`.
+/// A market's governed status. A market with no stored status is `Trading`.
 #[derive(
     Clone,
     Copy,
@@ -1082,10 +1081,15 @@ pub enum MarketStatus {
     /// Terminal: no orders, positions or oracle.
     #[display("delisted")]
     Delisted,
+    /// Nothing trades, a liquidation's fills included; cancels and funding
+    /// still run, and a full liquidation moves to the insurance fund.
+    #[display("halted")]
+    Halted,
 }
 
-/// Payload of [`AdminAction::SetMarketStatus`]. Allowed moves: Trading to
-/// ReduceOnly, ReduceOnly back to Trading, and ReduceOnly to Delisted.
+/// Payload of [`AdminAction::SetMarketStatus`]. Allowed moves: a perpetual
+/// Trading to ReduceOnly and back, ReduceOnly to Delisted, and Trading or
+/// ReduceOnly to Halted and back; any market Trading to Halted and back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetMarketStatus {
     pub market: MarketId,
@@ -1361,9 +1365,8 @@ pub struct RejectAdminAction {
 /// Reverse transitions are intentionally absent and require multisig actions.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum EmergencyAction {
+    /// Moves the market to [`MarketStatus::Halted`]; `SetMarketStatus` lifts it.
     PauseMarket { market_id: MarketId },
-    HaltTrading {},
-    SetReduceOnly { market_id: MarketId },
 }
 
 /// Stable discriminant for the closed [`EmergencyAction`] namespace,
@@ -1375,8 +1378,6 @@ pub enum EmergencyAction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EmergencyActionType {
     PauseMarket = 1,
-    HaltTrading = 2,
-    SetReduceOnly = 3,
 }
 
 impl EmergencyAction {
@@ -1384,8 +1385,6 @@ impl EmergencyAction {
     pub const fn action_type(&self) -> EmergencyActionType {
         match self {
             Self::PauseMarket { .. } => EmergencyActionType::PauseMarket,
-            Self::HaltTrading {} => EmergencyActionType::HaltTrading,
-            Self::SetReduceOnly { .. } => EmergencyActionType::SetReduceOnly,
         }
     }
 
@@ -1393,11 +1392,9 @@ impl EmergencyAction {
         self.action_type() as u8
     }
 
-    /// Target market for market-scoped arms; `None` for chain-wide arms.
-    pub const fn market_id(&self) -> Option<MarketId> {
+    pub const fn market_id(&self) -> MarketId {
         match self {
-            Self::PauseMarket { market_id } | Self::SetReduceOnly { market_id } => Some(*market_id),
-            Self::HaltTrading {} => None,
+            Self::PauseMarket { market_id } => *market_id,
         }
     }
 }
@@ -3950,8 +3947,7 @@ pub enum Event {
         proposal_id: u64,
         reason: ExpiryReason,
     },
-    /// A single-signer emergency action executed. `market_id` is zero
-    /// for market-less arms (`HaltTrading`).
+    /// A single-signer emergency action executed.
     EmergencyActionExecuted {
         signer: [u8; 20],
         action_tag: u8,
@@ -4443,11 +4439,11 @@ pub enum Event {
         branch_weight: u64,
         realized_pnl: i64,
     },
-    /// The admin quorum moved a perpetual to `status`.
+    /// `market` moved to `status`; the transaction's `ProposalExecuted` or
+    /// `EmergencyActionExecuted` names who moved it.
     MarketStatusSet {
         market: MarketId,
         status: MarketStatus,
-        proposal_id: u64,
     },
     /// Delisting closed `owner`'s position at `settlement_price`, the
     /// market's last certified price. `realized_pnl` is what it paid or was
@@ -5013,11 +5009,15 @@ pub enum ExecError {
         from: MarketStatus,
         to: MarketStatus,
     },
-    /// The perpetual backs a Conditional on an unresolved event, so it stays
-    /// Trading until the event resolves.
+    /// The perpetual backs a Conditional on an unresolved event, so it
+    /// cannot wind down until the event resolves.
     MarketBacksLiveEvent {
         market: MarketId,
         event_id: EventId,
+    },
+    /// The market is halted: nothing trades there.
+    MarketHalted {
+        market: MarketId,
     },
 }
 
@@ -5158,6 +5158,7 @@ impl ExecError {
             ExecError::MarketDelisted { .. } => 131,
             ExecError::MarketStatusTransitionRefused { .. } => 132,
             ExecError::MarketBacksLiveEvent { .. } => 133,
+            ExecError::MarketHalted { .. } => 134,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5527,10 +5528,13 @@ impl ExecError {
             }
             ExecError::MarketDelisted { .. } => "The market is delisted and takes no orders.",
             ExecError::MarketStatusTransitionRefused { .. } => {
-                "SetMarketStatus names a move the market cannot make: only a perpetual moves, Trading to ReduceOnly and back, then ReduceOnly to Delisted."
+                "SetMarketStatus or PauseMarket names a move the market cannot make: any market moves Trading to Halted and back; a perpetual also moves Trading or Halted to ReduceOnly and back, then ReduceOnly to Delisted."
             }
             ExecError::MarketBacksLiveEvent { .. } => {
-                "The perpetual backs a Conditional on an unresolved event and stays Trading until the event resolves."
+                "The perpetual backs a Conditional on an unresolved event and cannot wind down until the event resolves."
+            }
+            ExecError::MarketHalted { .. } => {
+                "The market is halted and takes no orders or fills; cancels still work."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -5989,6 +5993,7 @@ impl fmt::Display for ExecError {
                 f,
                 "market {market} backs a Conditional on unresolved event {event_id}"
             ),
+            ExecError::MarketHalted { market } => write!(f, "market {market} is halted"),
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
