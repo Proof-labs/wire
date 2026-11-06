@@ -201,6 +201,11 @@ name = "proof-wire"
 # the ABCI surface (as_str, FromStr, ALL), and Event::kind (rendered by
 # proof-wire-derive 1.3). No bytes change -> MINOR.
 #
+# Unreleased: additive wire change (emergency Void). New
+# AdminAction::VoidEvent at inner tag 0x1D with its VoidEvent payload
+# (event id, Yes price), and Event::EventVoided and
+# Event::ConditionalVoidSettled appended. No existing bytes change -> MINOR.
+#
 # Unreleased: additive wire change (the deposit limits, exchange#425).
 # New AdminAction::SetDepositLimit at inner tag 0x1C with its SetDepositLimit
 # payload (per-deposit maximum, protocol-wide rolling-window cap, window

@@ -107,8 +107,8 @@ pub enum Outcome {
     Yes = 1,
     #[display("no")]
     No = 2,
-    /// Neither branch won. `ResolveEvent` refuses it: no event resolves to
-    /// Void, with or without attached conditionals.
+    /// Neither branch won: the multisig's `VoidEvent` settles every event
+    /// position in cash at its Yes price. `ResolveEvent` refuses it.
     #[display("void")]
     Void = 3,
 }
@@ -331,9 +331,10 @@ pub enum EventStatus {
     /// Past its settlement time, awaiting resolution. New orders on the
     /// event's books are rejected.
     PreResolution,
-    /// Resolved. Binaries settled to $1 (winner) or $0 (loser); each
-    /// attached conditional's winning branch settled and losing branch
-    /// voided. The outcome is never Void.
+    /// Resolved. On Yes or No, binaries settled to $1 (winner) or $0
+    /// (loser) and each attached conditional's winning branch settled and
+    /// losing branch was removed. On Void every position settled in cash at
+    /// the Yes price carried by [`Event::EventVoided`].
     Resolved(Outcome),
 }
 
@@ -860,6 +861,9 @@ pub enum AdminAction {
     /// rolling-window cap. Either cap at 0 is off; absent configuration is
     /// both off.
     SetDepositLimit(SetDepositLimit),
+    /// Voids an event: every binary and conditional on it settles in cash at
+    /// the Yes price the quorum names.
+    VoidEvent(VoidEvent),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1028,6 +1032,17 @@ pub struct SetDepositLimit {
     pub window_secs: u32,
 }
 
+/// Payload of [`AdminAction::VoidEvent`]: the event and its Yes price.
+/// A Yes position pays `yes_price`, a No position `BINARY_PRICE_MAX -
+/// yes_price`, a Yes conditional `yes_price` of its Yes payoff and a No
+/// conditional the rest of its No payoff.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoidEvent {
+    pub event_id: EventId,
+    /// Yes price in micro-USDC per share, at most [`BINARY_PRICE_MAX`].
+    pub yes_price: u64,
+}
+
 /// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
 /// values to write. `None` leaves a field untouched; at least one field must
 /// be `Some`, and a supplied value must be non-zero, because zero is the
@@ -1191,6 +1206,8 @@ pub enum AdminActionType {
     /// Writes (or replaces) the `ConfirmDeposit` / `Deposit` per-deposit
     /// maximum and rolling-window cap. Both default off.
     SetDepositLimit = 28,
+    /// Voids an event at a quorum-set Yes price.
+    VoidEvent = 29,
 }
 
 impl AdminAction {
@@ -1218,6 +1235,7 @@ impl AdminAction {
             Self::SetLiquidationConfig(_) => AdminActionType::SetLiquidationConfig,
             Self::SetMarginOffsetPolicy(_) => AdminActionType::SetMarginOffsetPolicy,
             Self::SetDepositLimit(_) => AdminActionType::SetDepositLimit,
+            Self::VoidEvent(_) => AdminActionType::VoidEvent,
         }
     }
 
@@ -3543,8 +3561,8 @@ pub enum Event {
         cpy_market: MarketId,
         cpn_market: MarketId,
     },
-    /// An event resolved to Yes or No, never Void. The event itself has no
-    /// settlement price; each attached conditional's is carried by its
+    /// An event resolved to Yes or No; a Void emits [`Event::EventVoided`].
+    /// The event itself has no settlement price; each attached conditional's is carried by its
     /// [`Event::ConditionMet`] events.
     EventResolved {
         event_id: EventId,
@@ -3583,8 +3601,8 @@ pub enum Event {
     /// Condition not met: a conditional-perp position was removed because its
     /// branch lost. The position holder's reserved IM is released (effectively:
     /// position deleted, no balance change, as IM is equity-based not locked
-    /// collateral). An event never resolves to Void, so a lost branch is the
-    /// only reason. Bytes written under the former name `ConditionalVoided`
+    /// collateral). A Void emits [`Event::ConditionalVoidSettled`] instead.
+    /// Bytes written under the former name `ConditionalVoided`
     /// decode to this variant.
     #[serde(alias = "ConditionalVoided")] // vocabulary-lint: allow
     ConditionNotMet {
@@ -4345,6 +4363,30 @@ pub enum Event {
         window_cap_micro_usdc: u64,
         window_secs: u32,
         proposal_id: u64,
+    },
+    /// The admin quorum voided an event. Its positions settled in cash at
+    /// `yes_price`, reported by the preceding `PredictionSettled` and
+    /// `ConditionalVoidSettled` events.
+    EventVoided {
+        event_id: EventId,
+        yes_price: u64,
+        timestamp_ms: u64,
+        proposal_id: u64,
+    },
+    /// A conditional position settled in cash on Void: its payoff at
+    /// `settlement_price`, the underlying's oracle price, weighted by
+    /// `branch_weight` per `BINARY_PRICE_MAX` (the Yes price on a Yes book,
+    /// its complement on a No book).
+    ConditionalVoidSettled {
+        event_id: EventId,
+        market: MarketId,
+        owner: [u8; 20],
+        side: Side,
+        size: u64,
+        entry_price: u64,
+        settlement_price: u64,
+        branch_weight: u64,
+        realized_pnl: i64,
     },
 }
 
