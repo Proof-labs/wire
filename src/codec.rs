@@ -196,6 +196,10 @@ define_actions! {
     // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
     ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
+    // Bridge custody: the lease holder records its payout signature before
+    // broadcasting it, stored as the withdrawal's payout record for peer
+    // checks.
+    RecordWithdrawalPayout => 49, // 0x31 — record the payout signature on a Pending withdrawal, before the broadcast
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -229,11 +233,15 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         // Confirm/FailWithdrawal and take the same credit-band phase.
         // The payout claim pairs with them: a lease must be acquirable in
         // the same band the bridge custody actions run in, before any
-        // terminal can settle the withdrawal.
+        // terminal can settle the withdrawal. The payout record rides the
+        // same band: the report follows the claim's broadcast immediately,
+        // and shedding it behind trading txs would leave peer watchers
+        // blind longest exactly when a payout just moved.
         | ActionType::ConfirmWithdrawalReceipt
         | ActionType::FailWithdrawalReceipt
         | ActionType::AuthorizeWithdrawal
-        | ActionType::ClaimWithdrawalPayout => BlockPhase::PriceCreditPrefix,
+        | ActionType::ClaimWithdrawalPayout
+        | ActionType::RecordWithdrawalPayout => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
         ActionType::CancelOrder
@@ -1602,6 +1610,81 @@ mod tests {
             ActionType::try_from(0x2Eu8),
             Ok(ActionType::ClaimWithdrawalPayout)
         ));
+    }
+
+    // -- payout record -------------------------------------------------------
+
+    /// Golden wire vector for the NEW action_type 0x31 plus a determinism +
+    /// round-trip check — same recipe as the payout claim: payload-only hex
+    /// so the vector does not depend on a signing key, and an explicit byte
+    /// assertion so a renumber cannot slip through silently. The bound rides
+    /// the wire as a plain integer.
+    #[test]
+    fn payout_record_golden_vector() {
+        let report = Action::RecordWithdrawalPayout(RecordWithdrawalPayout {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+            solana_signature: vec![0x07; 64],
+            last_valid_block_height: std::num::NonZeroU64::new(500)
+                .expect("golden-vector bound is non-zero"),
+        });
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
+
+        const RECORD_PAYLOAD_HEX: &str = include_str!("../vectors/record_withdrawal_payout.hex");
+        let payload = hex_string(&report.encode_action().unwrap().payload.0);
+        assert_eq!(payload, RECORD_PAYLOAD_HEX.trim(), "golden vector mismatch");
+
+        assert_round_trip(&report, 9);
+        let encoded = encode_tx(&report, 9).unwrap();
+        assert_eq!(encode_tx(&report, 9).unwrap(), encoded, "deterministic");
+        assert_eq!(peek_action_type(&encoded), Some(0x31));
+        assert!(matches!(
+            decode_tx(&encoded).unwrap().action,
+            Action::RecordWithdrawalPayout(_)
+        ));
+    }
+
+    /// Decode-compat: 0x31 must not disturb any pre-existing discriminant.
+    #[test]
+    fn payout_record_leaves_neighbouring_bytes_untouched() {
+        assert_eq!(ExecuteTriggers::ACTION_TYPE, 0x2F);
+        assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
+        assert!(matches!(
+            ActionType::try_from(0x2Fu8),
+            Ok(ActionType::ExecuteTriggers)
+        ));
+        assert!(matches!(
+            ActionType::try_from(0x31u8),
+            Ok(ActionType::RecordWithdrawalPayout)
+        ));
+    }
+
+    /// A zero absence bound is not a report: no signed transfer could name
+    /// height 0 as the last height it can land at, so the type refuses it
+    /// and the envelope never decodes.
+    #[derive(Serialize, Deserialize)]
+    struct ZeroBoundReport {
+        withdrawal_id: u64,
+        #[serde(with = "crate::wire_bytes")]
+        holder: [u8; 20],
+        #[serde(with = "crate::wire_bytes::vec")]
+        solana_signature: Vec<u8>,
+        last_valid_block_height: u64,
+    }
+
+    #[test]
+    fn payout_record_refuses_a_zero_absence_bound() {
+        let bytes = rmp_serde::to_vec(&ZeroBoundReport {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+            solana_signature: vec![0x07; 64],
+            last_valid_block_height: 0,
+        })
+        .expect("zero-bound lookalike payload encodes");
+        assert!(
+            decode_action(RecordWithdrawalPayout::ACTION_TYPE, &bytes).is_err(),
+            "a zero bound must not decode as a payout record"
+        );
     }
 
     // -- deposit locator ----------------------------------------------------
@@ -3697,6 +3780,10 @@ mod tests {
             ),
             (
                 ActionType::ClaimWithdrawalPayout,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (
+                ActionType::RecordWithdrawalPayout,
                 BlockPhase::PriceCreditPrefix,
             ),
             (
