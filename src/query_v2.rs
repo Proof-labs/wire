@@ -432,6 +432,80 @@ pub struct InsurancePool {
     pub balance: Option<i64>,
 }
 
+pub const INSURANCE_FUND_POSITIONS_LIMIT: usize = 100;
+
+/// Current cash ledger, not marked portfolio equity.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundLedger {
+    pub pool_id: crate::types::InsurancePoolId,
+    pub owner: Address,
+    pub registered: bool,
+    pub stored_ledger: bool,
+    pub cash: u64,
+    pub debt: u64,
+    pub net_cash: i64,
+}
+
+/// Registered pools and canonical fund accounts with stored ledger state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundDirectory {
+    pub finalized_height: u64,
+    pub finalized_time_ms: u64,
+    pub funds: Vec<InsuranceFundLedger>,
+}
+
+/// Exact unsigned microUSDC amount serialized as decimal text to preserve 128 bits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NotionalMicroUsdc(pub String);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettlementReferenceUnavailable {
+    Stale,
+    GuardUnset,
+    NoVerdict,
+    NoMark,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum InsurancePositionNotional {
+    /// The engine settlement reference, including conditional clamping/anchor fallback.
+    Priced {
+        reference_price: u64,
+        /// Floor(reference_price * raw size / 10^sz_decimals), not equity or exit proceeds.
+        notional_micro_usdc: NotionalMicroUsdc,
+    },
+    Unpriced {
+        reason: SettlementReferenceUnavailable,
+    },
+    /// Binary payoff bounds are not a current trading mark.
+    UnsupportedBinary,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundPosition {
+    pub market: MarketId,
+    pub side: Side,
+    pub size: u64,
+    pub sz_decimals: u8,
+    pub notional: InsurancePositionNotional,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsuranceFundState {
+    pub finalized_height: u64,
+    pub finalized_time_ms: u64,
+    pub fund: InsuranceFundLedger,
+    pub positions: Vec<InsuranceFundPosition>,
+    pub positions_complete: bool,
+}
+
 /// The ledger layout a [`FinancialState`] projects. Numbered with the v1
 /// positional ledger formats it is read from, so a reader can refuse a
 /// snapshot whose layout it does not know.
