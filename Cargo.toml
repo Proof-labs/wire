@@ -170,6 +170,14 @@ name = "proof-wire"
 # LiquidationRefusal enum) are appended, and ExecError::LiquidationRefused
 # takes code 111.
 #
+# Unreleased: additive wire change (perpetual lifecycle).
+# New AdminAction::SetMarketStatus at inner tag 0x1F with its SetMarketStatus
+# payload and the MarketStatus enum (Trading, ReduceOnly, Delisted);
+# Event::MarketStatusSet and Event::PositionDelisted appended; ExecError
+# codes 130-133 (MarketReduceOnly, MarketDelisted,
+# MarketStatusTransitionRefused, MarketBacksLiveEvent) appended. No
+# existing bytes change -> MINOR.
+#
 # Unreleased: additive wire change (the governed partial-margin offset
 # policy). New AdminAction::SetMarginOffsetPolicy at inner tag 0x1B, the
 # margin_offsets module (MarginOffsetPolicy with a compare-and-set

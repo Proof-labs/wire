@@ -2309,7 +2309,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 24] = [
+        const ALL_INNER_TAGS: [AdminActionType; 25] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2334,6 +2334,7 @@ mod tests {
             AdminActionType::SetDepositLimit,
             AdminActionType::VoidEvent,
             AdminActionType::SettleEvent,
+            AdminActionType::SetMarketStatus,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2360,7 +2361,8 @@ mod tests {
                 | AdminActionType::SetMarginOffsetPolicy
                 | AdminActionType::SetDepositLimit
                 | AdminActionType::VoidEvent
-                | AdminActionType::SettleEvent => {}
+                | AdminActionType::SettleEvent
+                | AdminActionType::SetMarketStatus => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket

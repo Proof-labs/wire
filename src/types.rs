@@ -867,6 +867,10 @@ pub enum AdminAction {
     /// Settles a price event whose resolution window closed unresolved, on
     /// the Yes or No the quorum names from deadline evidence.
     SettleEvent(SettleEvent),
+    /// Moves a perpetual through its lifecycle: Trading, ReduceOnly, then
+    /// Delisted. Delisting settles every open position at the last certified
+    /// price and retires the market's oracle.
+    SetMarketStatus(SetMarketStatus),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1054,6 +1058,40 @@ pub struct VoidEvent {
     pub yes_price: u64,
 }
 
+/// A perpetual's lifecycle. A market with no stored status is `Trading`.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    derive_more::Display,
+)]
+pub enum MarketStatus {
+    #[default]
+    #[display("trading")]
+    Trading,
+    /// Every order and fill must shrink its owner's position.
+    #[display("reduce_only")]
+    ReduceOnly,
+    /// Terminal: no orders, positions or oracle.
+    #[display("delisted")]
+    Delisted,
+}
+
+/// Payload of [`AdminAction::SetMarketStatus`]. Allowed moves: Trading to
+/// ReduceOnly, ReduceOnly back to Trading, and ReduceOnly to Delisted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetMarketStatus {
+    pub market: MarketId,
+    pub status: MarketStatus,
+}
+
 /// Payload of [`AdminAction::SetOracleGuards`]: the market and the guard
 /// values to write. `None` leaves a field untouched; at least one field must
 /// be `Some`, and a supplied value must be non-zero, because zero is the
@@ -1221,6 +1259,8 @@ pub enum AdminActionType {
     VoidEvent = 29,
     /// Settles a price event past its resolution window.
     SettleEvent = 30,
+    /// Moves a perpetual to ReduceOnly, back to Trading, or to Delisted.
+    SetMarketStatus = 31,
 }
 
 impl AdminAction {
@@ -1250,6 +1290,7 @@ impl AdminAction {
             Self::SetDepositLimit(_) => AdminActionType::SetDepositLimit,
             Self::VoidEvent(_) => AdminActionType::VoidEvent,
             Self::SettleEvent(_) => AdminActionType::SettleEvent,
+            Self::SetMarketStatus(_) => AdminActionType::SetMarketStatus,
         }
     }
 
@@ -4402,6 +4443,25 @@ pub enum Event {
         branch_weight: u64,
         realized_pnl: i64,
     },
+    /// The admin quorum moved a perpetual to `status`.
+    MarketStatusSet {
+        market: MarketId,
+        status: MarketStatus,
+        proposal_id: u64,
+    },
+    /// Delisting closed `owner`'s position at `settlement_price`, the
+    /// market's last certified price. `realized_pnl` is what it paid or was
+    /// paid; `deleveraged` is profit it gave up to holders who could not pay.
+    PositionDelisted {
+        market: MarketId,
+        owner: [u8; 20],
+        side: Side,
+        size: u64,
+        entry_price: u64,
+        settlement_price: u64,
+        realized_pnl: i64,
+        deleveraged: u64,
+    },
 }
 
 impl Event {
@@ -4939,6 +4999,26 @@ pub enum ExecError {
         underlying: MarketId,
         underlying_lot: u64,
     },
+    /// An order or fill would grow a position on a ReduceOnly market.
+    MarketReduceOnly {
+        market: MarketId,
+    },
+    /// The market is delisted.
+    MarketDelisted {
+        market: MarketId,
+    },
+    /// `SetMarketStatus` names a move its market cannot make.
+    MarketStatusTransitionRefused {
+        market: MarketId,
+        from: MarketStatus,
+        to: MarketStatus,
+    },
+    /// The perpetual backs a Conditional on an unresolved event, so it stays
+    /// Trading until the event resolves.
+    MarketBacksLiveEvent {
+        market: MarketId,
+        event_id: EventId,
+    },
 }
 
 impl ExecError {
@@ -5073,6 +5153,11 @@ impl ExecError {
             ExecError::DepositLimitExceeded { .. } => 123,
             ExecError::EventPoolMismatch { .. } => 124,
             ExecError::ConditionalLotOffUnderlyingGrid { .. } => 125,
+            // 126-129 are claimed by open exchange#1391, #1355 and #1298.
+            ExecError::MarketReduceOnly { .. } => 130,
+            ExecError::MarketDelisted { .. } => 131,
+            ExecError::MarketStatusTransitionRefused { .. } => 132,
+            ExecError::MarketBacksLiveEvent { .. } => 133,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5436,6 +5521,16 @@ impl ExecError {
             }
             ExecError::ConditionalLotOffUnderlyingGrid { .. } => {
                 "A lot_size change would leave an unresolved event's conditional lot not a multiple of its underlying perpetual's lot."
+            }
+            ExecError::MarketReduceOnly { .. } => {
+                "The market is reduce-only: an order or fill there must shrink its owner's position."
+            }
+            ExecError::MarketDelisted { .. } => "The market is delisted and takes no orders.",
+            ExecError::MarketStatusTransitionRefused { .. } => {
+                "SetMarketStatus names a move the market cannot make: only a perpetual moves, Trading to ReduceOnly and back, then ReduceOnly to Delisted."
+            }
+            ExecError::MarketBacksLiveEvent { .. } => {
+                "The perpetual backs a Conditional on an unresolved event and stays Trading until the event resolves."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -5882,6 +5977,17 @@ impl fmt::Display for ExecError {
             } => write!(
                 f,
                 "conditional {conditional} lot {conditional_lot} is not a multiple of underlying {underlying} lot {underlying_lot}"
+            ),
+            ExecError::MarketReduceOnly { market } => {
+                write!(f, "market {market} is reduce-only")
+            }
+            ExecError::MarketDelisted { market } => write!(f, "market {market} is delisted"),
+            ExecError::MarketStatusTransitionRefused { market, from, to } => {
+                write!(f, "market {market} cannot move from {from} to {to}")
+            }
+            ExecError::MarketBacksLiveEvent { market, event_id } => write!(
+                f,
+                "market {market} backs a Conditional on unresolved event {event_id}"
             ),
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
