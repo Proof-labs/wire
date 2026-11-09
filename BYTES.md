@@ -74,6 +74,7 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
 | 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
 | 0x2F | `ExecuteTriggers`                   | internal, proposer-injected trigger candidates |
+| 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-broadcast report of its payout signature |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types
@@ -114,6 +115,7 @@ are not outer transaction action bytes.
 | 0x1C | `SetDepositLimit`                 | governed; writes the `ConfirmDeposit` / `Deposit` per-deposit maximum and protocol-wide rolling-window cap (exchange#425); both off at 0 and when unset |
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |
 | 0x1E | `SettleEvent`                     | governed; settles a price event whose resolution window closed unresolved, on the quorum's Yes or No |
+| 0x1F | `SetMarketStatus`                 | governed; moves a perpetual Trading to ReduceOnly, back, or ReduceOnly to Delisted (settles its positions at the last certified price and retires its oracle) |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:
@@ -167,14 +169,13 @@ the tag is ASSIGNED from this commit regardless of when it activates.
 
 `EmergencyActionType` in [`src/types.rs`](src/types.rs). Committed by the
 on-chain emergency audit log (`EmergencyActionRecord::action_tag`) and by the
-governance digest; never repurpose after use on a persistent chain. No arm is
-admitted at initial release; each activates later behind its own pairing gate.
+governance digest; never repurpose after use on a persistent chain.
 
 | Byte | Arm                | Status   |
 |------|--------------------|----------|
-| 0x01 | `PauseMarket`      | planned  |
-| 0x02 | `HaltTrading`      | planned  |
-| 0x03 | `SetReduceOnly`    | planned  |
+| 0x01 | `PauseMarket`      | live; halts one market, `SetMarketStatus` lifts it |
+| 0x02 | `HaltTrading`      | retired, never admitted |
+| 0x03 | `SetReduceOnly`    | retired, never admitted |
 
 ## Reservation tracker
 

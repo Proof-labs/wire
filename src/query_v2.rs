@@ -123,6 +123,18 @@ pub struct Market {
     pub default_ttl_ms: Option<u64>,
     /// `None` for event books, which mark off their own book.
     pub mark: Option<MarkConfig>,
+    pub status: MarketStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketStatus {
+    Trading,
+    ReduceOnly,
+    Halted,
+    Delisted,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -563,6 +575,7 @@ pub enum TriggerOutcomeReason {
     OpenInterestLimitExceeded,
     MarketClosed,
     EngineFault,
+    MarketHalted,
     #[serde(other)]
     Unknown,
 }
