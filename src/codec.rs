@@ -2545,6 +2545,7 @@ mod tests {
             maker_fee_bps: 2,
             signer: [0u8; 20],
             max_open_interest: 0,
+            impact_notional: 1_000_000_000,
         });
         let AdminAction::AttachConditional(attach_cmd) = attach.clone() else {
             unreachable!()
@@ -2560,11 +2561,11 @@ mod tests {
         for (action, expected) in [
             (
                 &attach,
-                "3ffeb7f420cf9f4f50bade95919d885dfc590c7f8c92fb69eacc1704d4662be4",
+                "424729ae1b5fbbfd182d4e099ca565a06347fa68fb334fd325725d2a38eaa82a",
             ),
             (
                 &batch,
-                "66a35d72765b3554acc039d0747f177680c1a1b08247ece47daa4a3492b9d0f7",
+                "27b0091972e0da2193ba71736966457ccf2debbbf3b228fa9f3d263f93cbad1b",
             ),
         ] {
             let h = admin_proposal_content_hash(
@@ -2687,11 +2688,12 @@ mod tests {
             maker_fee_bps: 2,
             signer: [0u8; 20],
             max_open_interest: 0,
+            impact_notional: 1_000_000_000,
         });
         assert_eq!(attach.action_tag(), 10);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&attach).expect("attach arm encodes")),
-            "81b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
+            "81b1417474616368436f6e646974696f6e616c9a5b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000ce3b9aca00"
         );
 
         let AdminAction::AttachConditional(attach_cmd) = attach else {
@@ -2711,7 +2713,7 @@ mod tests {
         assert_eq!(batch.action_tag(), 4);
         assert_eq!(
             hex_string(&canonical_admin_action_bytes(&batch).expect("batch encodes")),
-            "81a542617463689281ac4372656174654d61726b65749e0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a000010181b1417474616368436f6e646974696f6e616c995b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000"
+            "81a542617463689281ac4372656174654d61726b65749e0fcd0d06cd06830502dc00140000000000000000000000000000000000000000cdea60cd0bb80000a000010181b1417474616368436f6e646974696f6e616c9a5b0fcd238ccd0d06cd06830502dc0014000000000000000000000000000000000000000000ce3b9aca00"
         );
     }
 
@@ -2847,6 +2849,7 @@ mod tests {
             maker_fee_bps: u32::MAX,
             signer: [0u8; 20],
             max_open_interest: u64::MAX,
+            impact_notional: 1_000_000_000,
         };
 
         let worst_create = AdminAction::CreateMarket(CreateMarket {
@@ -3232,6 +3235,7 @@ mod tests {
             im_bps: old_update.im_bps,
             mm_bps: old_update.mm_bps,
             max_open_interest: Some(99),
+            impact_notional: None,
         };
         // Same length since the flag left, so the frozen decoder refuses on
         // the first shifted field rather than on the array length.
@@ -3270,7 +3274,7 @@ mod tests {
     }
 
     #[test]
-    fn release_7_update_market_fees_bytes_no_longer_decode() {
+    fn release_7_update_market_fees_bytes_with_the_partial_flag_no_longer_decode() {
         let old = Release7UpdateMarketFees {
             market: 91,
             signer: [0x91; 20],
@@ -3288,7 +3292,7 @@ mod tests {
             mark_source_mode: None,
             max_mark_spread_bps: None,
             cex_composite_staleness_ms: None,
-            partial_liquidation_enabled: None,
+            partial_liquidation_enabled: Some(true),
             fee_tiers: None,
             im_bps: None,
             mm_bps: None,
@@ -3301,7 +3305,7 @@ mod tests {
         );
         let error = rmp_serde::from_slice::<UpdateMarketFees>(&bytes).unwrap_err();
         assert!(
-            error.to_string().contains("length") || error.to_string().contains("LengthMismatch"),
+            error.to_string().contains("expected a sequence"),
             "unexpected UpdateMarketFees decoder error: {error}"
         );
     }

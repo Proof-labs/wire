@@ -427,6 +427,7 @@ fn market_config() -> MarketConfig {
         sz_decimals: 3,
         ticker: "BTC-USD-FEDCUT-Y".to_owned(),
         max_open_interest: 50_000_000,
+        impact_notional: 0,
     }
 }
 

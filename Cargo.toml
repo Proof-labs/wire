@@ -288,6 +288,17 @@ name = "proof-wire"
 # re-encodes a proposal's stored action, so drain or re-propose pending
 # CreateMarket proposals (and batches holding one) before rollout. ExecError
 # appends EventPoolMismatch (124) and ConditionalLotOffUnderlyingGrid (125).
+#
+# Unreleased: the conditional impact mark (DEC-293). MarketConfig,
+# AttachConditional and UpdateMarketFees gain a trailing defaulted
+# impact_notional, and Event::MarketConfigUpdated trailing defaulted
+# impact_notional and max_mark_spread_bps. Old bytes still decode, but a
+# decoder built before it rejects the longer arrays -> MAJOR. Approval
+# re-encodes a proposal's stored action, so drain or re-propose pending
+# AttachConditional proposals (and batches holding one) before rollout.
+# DEFAULT_CONDITIONAL_MARK_CLAMP_BPS is deprecated and
+# DEFAULT_CONDITIONAL_MAX_IMPACT_SPREAD_BPS added. UnpricedReason gains
+# ThinBook at receipt code 126.
 version = "11.0.0"
 edition = "2021"
 
