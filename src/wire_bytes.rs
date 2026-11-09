@@ -107,3 +107,25 @@ pub mod vec {
         }
     }
 }
+
+/// A `Vec<u8>` field holding one raw Solana transaction signature. Encodes as
+/// [`vec`]; decoding refuses anything but exactly 64 bytes.
+pub mod solana_signature {
+    use super::*;
+
+    pub use super::vec::serialize;
+
+    /// The fixed length of an Ed25519 signature on Solana.
+    pub const LEN: usize = 64;
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let bytes = vec::deserialize(d)?;
+        if bytes.len() != LEN {
+            return Err(D::Error::invalid_length(
+                bytes.len(),
+                &"64 raw Solana signature bytes",
+            ));
+        }
+        Ok(bytes)
+    }
+}

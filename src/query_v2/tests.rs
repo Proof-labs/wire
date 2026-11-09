@@ -160,6 +160,7 @@ fn market_round_trips() {
         max_open_interest: Some(1_000),
         default_ttl_ms: Some(60_000),
         mark: None,
+        status: MarketStatus::Halted,
     });
 }
 
