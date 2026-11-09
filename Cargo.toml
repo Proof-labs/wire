@@ -288,7 +288,7 @@ name = "proof-wire"
 # re-encodes a proposal's stored action, so drain or re-propose pending
 # CreateMarket proposals (and batches holding one) before rollout. ExecError
 # appends EventPoolMismatch (124) and ConditionalLotOffUnderlyingGrid (125).
-version = "10.1.0"
+version = "11.0.0"
 edition = "2021"
 
 [features]
