@@ -249,13 +249,13 @@ pub enum MarkSourceMode {
 /// excluded from the median when the top-of-book spread exceeds this.
 pub const DEFAULT_MAX_MARK_SPREAD_BPS: u32 = 100;
 
-/// Built-in clamp for a conditional's own mark, used by scenario margin.
-///
-/// A conditional marks at its own book, but its book can be thin, so
-/// consensus margin must not let one print move that mark arbitrarily far
-/// from the underlying it settles against. The mark is bounded to ±25%
-/// around the current underlying mark unless a future config field
-/// overrides it.
+/// The widest impact spread, `(ask − bid) / mid` at Q, a conditional marks
+/// through when its `max_mark_spread_bps` is 0 (DEC-293).
+pub const DEFAULT_CONDITIONAL_MAX_IMPACT_SPREAD_BPS: u32 = 500;
+
+/// No engine path reads this: a conditional marks at its impact mid with no
+/// clamp (DEC-293).
+#[deprecated(note = "conditionals mark at their impact mid, unclamped (DEC-293)")]
 pub const DEFAULT_CONDITIONAL_MARK_CLAMP_BPS: u32 = 2_500;
 
 /// Built-in default staleness threshold for the composite-CEX price,
@@ -1868,6 +1868,9 @@ pub struct MarketConfig {
     /// `MarketConfig` records (written before this field existed)
     /// decode to thanks to `serde(default)`. Operators tighten or
     /// loosen per-market via `UpdateMarketFees`.
+    ///
+    /// On a conditional it caps the impact spread at Q instead; zero takes
+    /// `DEFAULT_CONDITIONAL_MAX_IMPACT_SPREAD_BPS` (500 bps).
     #[serde(default)]
     pub max_mark_spread_bps: u32,
     /// Max age (ms) for a composite-CEX price update
@@ -1913,6 +1916,11 @@ pub struct MarketConfig {
     /// compatibility for existing on-chain `MarketConfig` records.
     #[serde(default)]
     pub max_open_interest: u64,
+    /// Q, in microUSDC: a conditional marks at the average of the prices to
+    /// buy and to sell this notional against its book (DEC-293). Zero, the
+    /// value of conditionals created before it, marks at the underlying.
+    #[serde(default)]
+    pub impact_notional: u64,
 }
 
 /// Per-market oracle guards that live OUTSIDE `MarketConfig`, at
@@ -2907,6 +2915,10 @@ pub struct AttachConditional {
     /// [`MarketConfig::max_open_interest`] is.
     #[serde(default)]
     pub max_open_interest: u64,
+    /// Q for each of the two conditional-perp books, in microUSDC; must be
+    /// non-zero. See [`MarketConfig::impact_notional`].
+    #[serde(default)]
+    pub impact_notional: u64,
 }
 
 /// Resolve an event. Cancels every resting order on its books, settles its
@@ -3034,7 +3046,9 @@ pub struct UpdateMarketFees {
     /// New thin-book spread cap in bps for the median guard.
     /// `None` = leave unchanged. `Some(0)` resets
     /// to the built-in default `DEFAULT_MAX_MARK_SPREAD_BPS` (100 bps).
-    /// Ignored unless `mark_source_mode` is `Median`.
+    /// Ignored on a perpetual unless `mark_source_mode` is `Median`. On a
+    /// conditional it caps the impact spread; `Some(0)` resets it to
+    /// `DEFAULT_CONDITIONAL_MAX_IMPACT_SPREAD_BPS` (500 bps).
     #[serde(default)]
     pub max_mark_spread_bps: Option<u32>,
     /// Max age (ms) for a composite-CEX price update
@@ -3068,6 +3082,10 @@ pub struct UpdateMarketFees {
     /// Appended at the tail to preserve positional wire compatibility.
     #[serde(default)]
     pub max_open_interest: Option<u64>,
+    /// New impact notional Q for a conditional, in microUSDC. `None` = leave
+    /// unchanged. `0` is refused, as is any value on another kind of market.
+    #[serde(default)]
+    pub impact_notional: Option<u64>,
 }
 
 /// Per-account fee override. Stored at
@@ -3633,6 +3651,10 @@ pub enum Event {
         oracle_staleness_ms: u64,
         max_open_interest: u64,
         signer: Option<[u8; 20]>,
+        #[serde(default)]
+        impact_notional: u64,
+        #[serde(default)]
+        max_mark_spread_bps: u32,
     },
     /// An account's fee override was set. Emitted on success
     /// of `SetAccountFeeOverride`. Carries the post-update values so
@@ -4606,6 +4628,8 @@ pub enum UnpricedReason {
     NoVerdict(Option<OracleReason>),
     /// No trade or publish has produced a mark yet.
     NoMark,
+    /// The conditional book has no usable current impact sample or mark.
+    ThinBook,
 }
 
 /// Transaction execution error. Each variant maps to a stable non-zero ABCI
@@ -5145,6 +5169,7 @@ impl ExecError {
                 UnpricedReason::NoVerdict(_) => 77,
                 UnpricedReason::GuardUnset => 82,
                 UnpricedReason::NoMark => 97,
+                UnpricedReason::ThinBook => 126,
             },
             ExecError::UserLeverageBelowMarketIm { .. } => 38,
             ExecError::TickSizeViolation { .. } => 39,
@@ -5534,6 +5559,10 @@ impl ExecError {
                 UnpricedReason::NoVerdict(_) => {
                     "The oracle policy has no certified verdict for this market in this block (stale, unpriceable, or not yet committed); mark-dependent actions are refused until a later block certifies a price."
                 }
+                UnpricedReason::ThinBook => {
+                    "The conditional mark is held or not yet established: takers may only reduce, \
+                     initial margin excludes unrealized gains, and triggers wait for usable depth."
+                }
                 UnpricedReason::NoMark => {
                     "No mark price is available for the market: a conditional or prediction-binary book \
                      has no recent-trade EWMA and no oracle fallback value. Fund or trade the market once a \
@@ -5883,6 +5912,7 @@ impl fmt::Display for ExecError {
                     f,
                     "oracle verdict unavailable on market {market}: no verdict committed for this block"
                 ),
+                UnpricedReason::ThinBook => write!(f, "market {market} is book-restricted"),
                 UnpricedReason::NoMark => write!(
                     f,
                     "no mark price available on market {market}: impact-family book has no recent-trade \
