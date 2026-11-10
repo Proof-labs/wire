@@ -444,6 +444,7 @@ pub struct InsurancePool {
     pub balance: Option<i64>,
 }
 
+/// Maximum preview length, not an account exposure or execution limit.
 pub const INSURANCE_FUND_POSITIONS_LIMIT: usize = 100;
 
 /// Current cash ledger, not marked portfolio equity.
@@ -478,6 +479,7 @@ pub enum SettlementReferenceUnavailable {
     GuardUnset,
     NoVerdict,
     NoMark,
+    ThinBook,
     #[serde(other)]
     Unknown,
 }
@@ -514,7 +516,11 @@ pub struct InsuranceFundState {
     pub finalized_height: u64,
     pub finalized_time_ms: u64,
     pub fund: InsuranceFundLedger,
+    /// Ascending market id, at most `INSURANCE_FUND_POSITIONS_LIMIT` entries.
+    /// A bounded preview, not total exposure or evidence authorizing execution.
     pub positions: Vec<InsuranceFundPosition>,
+    /// False means positions were omitted; this interface has no pagination.
+    /// Cash and debt in `fund` remain the complete ledger, not preview sums.
     pub positions_complete: bool,
 }
 

@@ -1,5 +1,8 @@
 [package]
 name = "proof-wire"
+# Unreleased: additive query_v2 InsuranceFundDirectory, InsuranceFundState and
+# NotionalMicroUsdc read views. These additions change no existing bytes (MINOR).
+# This entry does not classify other changes included in the eventual release.
 #
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire

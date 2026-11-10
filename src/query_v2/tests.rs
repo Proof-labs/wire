@@ -24,6 +24,9 @@ fn insurance_fund_views_preserve_exact_amounts_and_unavailable_values() {
             reason: SettlementReferenceUnavailable::Stale,
         },
         InsurancePositionNotional::UnsupportedBinary,
+        InsurancePositionNotional::Unpriced {
+            reason: SettlementReferenceUnavailable::ThinBook,
+        },
     ] {
         round_trip(&InsuranceFundState {
             finalized_height: 42,
@@ -45,6 +48,17 @@ fn insurance_fund_views_preserve_exact_amounts_and_unavailable_values() {
     assert_eq!(
         decode::<InsurancePositionNotional>(&future).expect("future status decodes"),
         InsurancePositionNotional::Unknown
+    );
+    let future_reason = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("status", "unpriced"),
+        ("reason", "future_reason"),
+    ]))
+    .expect("future reason encodes");
+    assert_eq!(
+        decode::<InsurancePositionNotional>(&future_reason).expect("future reason decodes"),
+        InsurancePositionNotional::Unpriced {
+            reason: SettlementReferenceUnavailable::Unknown,
+        }
     );
 }
 
