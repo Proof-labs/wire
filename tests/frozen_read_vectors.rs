@@ -16,9 +16,10 @@ use proof_wire::abci_event::AbciEventWriter;
 use proof_wire::query::{AccountInfo, BindingScenario, PositionBrief};
 use proof_wire::types::{
     AttachedConditional, Branch, ClientTriggerId, ConversionFallbackReason, Event, EventId,
-    EventInfo, EventOracleSource, EventStatus, FeeTier, MarkSourceMode, MarketConfig, MarketKind,
-    Outcome, OwnerAddress, PendingTriggerDiscardReason, PositionEpoch, PriceComparison, Side,
-    TradeReason, TriggerLimb, TriggerSlippageBps,
+    EventInfo, EventOracleSource, EventStatus, FeeTier, FundingDeadBandBps, FundingInterestRate,
+    FundingRate, MarkSourceMode, MarketConfig, MarketKind, Outcome, OwnerAddress,
+    PendingTriggerDiscardReason, PositionEpoch, PriceComparison, Side, TradeReason, TriggerLimb,
+    TriggerSlippageBps,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -125,6 +126,29 @@ fn folded_events() -> Vec<Event> {
             funding_rate_bps: -3,
             cumulative_funding: -1_234_567,
             timestamp_ms: 1_767_225_600_000,
+            funding_rate: FundingRate(-31_250),
+        },
+        Event::MarketConfigUpdated {
+            market: MARKET,
+            im_bps: 1_000,
+            mm_bps: 500,
+            taker_fee_bps: 5,
+            maker_fee_bps: 2,
+            max_funding_rate_bps: 400,
+            funding_interval_ms: 3_600_000,
+            max_position_size: 1_000_000,
+            default_ttl_ms: 60_000,
+            net_delta_margin: true,
+            tick_size: 100,
+            lot_size: 10,
+            primary_oracle_signer: SIGNER,
+            oracle_staleness_ms: 30_000,
+            max_open_interest: 50_000_000,
+            signer: Some(SIGNER),
+            impact_notional: 0,
+            max_mark_spread_bps: 200,
+            funding_dead_band_bps: Some(FundingDeadBandBps(10)),
+            funding_interest_rate: Some(FundingInterestRate(-12_500)),
         },
         Event::PositionUpdated {
             owner: OWNER,
@@ -428,6 +452,8 @@ fn market_config() -> MarketConfig {
         ticker: "BTC-USD-FEDCUT-Y".to_owned(),
         max_open_interest: 50_000_000,
         impact_notional: 0,
+        funding_dead_band_bps: Some(FundingDeadBandBps(10)),
+        funding_interest_rate: Some(FundingInterestRate(-12_500)),
     }
 }
 
@@ -482,5 +508,48 @@ fn every_response_vector_matches_its_fixture() {
     assert_eq!(
         vector_names("responses"),
         names.into_iter().map(str::to_owned).collect()
+    );
+}
+
+#[test]
+fn market_config_without_funding_terms_decodes_as_defaults() {
+    let current = MarketConfig {
+        funding_dead_band_bps: None,
+        funding_interest_rate: None,
+        ..market_config()
+    };
+    let mut old = rmp_serde::to_vec(&current).expect("config encodes");
+    assert_eq!(
+        old[..3],
+        [0xdc, 0x00, 27],
+        "current shape is a 27-element array16"
+    );
+    assert_eq!(old[old.len() - 2..], [0xc0, 0xc0]);
+    old.truncate(old.len() - 2);
+    old[2] = 25;
+    let decoded: MarketConfig = rmp_serde::from_slice(&old).expect("25-element record decodes");
+    assert_eq!(
+        rmp_serde::to_vec(&decoded).expect("decoded config re-encodes"),
+        rmp_serde::to_vec(&current).expect("config encodes")
+    );
+}
+
+#[test]
+fn funding_applied_without_the_exact_rate_still_decodes() {
+    let old = hex::decode("81ae46756e64696e674170706c6965649407fdd2ffed2979cf0000019b76daa800")
+        .expect("valid hex");
+    let decoded: Event = rmp_serde::from_slice(&old).expect("4-element payload decodes");
+    assert_eq!(
+        format!("{decoded:?}"),
+        format!(
+            "{:?}",
+            Event::FundingApplied {
+                market: MARKET,
+                funding_rate_bps: -3,
+                cumulative_funding: -1_234_567,
+                timestamp_ms: 1_767_225_600_000,
+                funding_rate: FundingRate(0),
+            }
+        )
     );
 }

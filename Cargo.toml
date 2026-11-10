@@ -299,6 +299,17 @@ name = "proof-wire"
 # DEFAULT_CONDITIONAL_MARK_CLAMP_BPS is deprecated and
 # DEFAULT_CONDITIONAL_MAX_IMPACT_SPREAD_BPS added. UnpricedReason gains
 # ThinBook at receipt code 126.
+#
+# Unreleased: per-market funding terms (DEC-106). UpdateMarketFees gains two
+# required trailing fields, funding_dead_band_bps and funding_interest_rate
+# (23 elements), so its older bytes no longer decode. MarketConfig gains both
+# as trailing defaulted Options; Event::MarketConfigUpdated gains both as
+# required trailing fields. Event::FundingApplied, query::FundingInfo and the
+# v2 Funding and MarketLedger views keep funding_rate_bps in whole bps
+# (truncated toward zero) and gain a trailing defaulted funding_rate, the
+# exact per-interval FundingRate in 1e-8 units; the v2 Market view gains the
+# effective funding terms. Old bytes of those still decode, but a decoder
+# built before it rejects the longer arrays -> MAJOR.
 version = "11.0.0"
 edition = "2021"
 

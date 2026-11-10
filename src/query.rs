@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{
     AdminAction, Branch, EmergencyActionRecord, EmergencyId, EventId, EventInfo, FeeTier,
-    MarketConfig, MarketId, Position, PositionEpoch, ProposalId, ProposalStatus, RegistryVersion,
-    Side, SignatureThreshold, SignerAddress,
+    FundingRate, MarketConfig, MarketId, Position, PositionEpoch, ProposalId, ProposalStatus,
+    RegistryVersion, Side, SignatureThreshold, SignerAddress,
 };
 
 /// Position with response-only enrichment fields computed inline by
@@ -231,7 +231,7 @@ pub struct AuthoritiesSnapshot {
 #[derive(Serialize, Deserialize)]
 pub struct FundingInfo {
     pub market: MarketId,
-    /// Current funding rate in basis points (signed). 0 if no funding has run.
+    /// Current funding rate in basis points (signed), truncated toward zero. 0 if no funding has run.
     pub funding_rate_bps: i64,
     /// Cumulative funding index (sum of all funding rates × prices).
     pub cumulative_funding: i64,
@@ -245,6 +245,9 @@ pub struct FundingInfo {
     pub funding_interval_ms: u64,
     /// Max funding rate from market config.
     pub max_funding_rate_bps: u32,
+    /// Current funding rate, exact. 0 if no funding has run.
+    #[serde(default)]
+    pub funding_rate: FundingRate,
 }
 
 /// One row of the ADL queue response — a profitable position on a

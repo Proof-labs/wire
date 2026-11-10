@@ -146,6 +146,8 @@ fn market_round_trips() {
         default_ttl_ms: Some(60_000),
         mark: None,
         status: MarketStatus::Halted,
+        funding_dead_band_bps: None,
+        funding_interest_rate: None,
     });
 }
 
@@ -372,13 +374,14 @@ fn configuration_views_round_trip() {
     round_trip(&SignerRegistryInfo { registry: None });
     round_trip(&Funding {
         market: 1,
-        funding_rate_bps: None,
+        funding_rate_bps: Some(0),
         cumulative_funding: Some(-4),
         last_funding_time_ms: None,
         mark_price_ewma: None,
         oracle_price: Some(5),
         funding_interval_ms: Some(3_600_000),
         max_funding_rate_bps: 100,
+        funding_rate: Some(FundingRate(-1_250)),
     });
     round_trip(&Withdrawal {
         withdrawal_id: 1,

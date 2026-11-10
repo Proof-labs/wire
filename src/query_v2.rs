@@ -5,8 +5,8 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::types::{
-    ClientTriggerGroupId, ClientTriggerId, EventId, MarketId, OrderId, PositionEpoch, ProposalId,
-    RegistryVersion, SignatureThreshold, TriggerSlippageBps,
+    ClientTriggerGroupId, ClientTriggerId, EventId, FundingRate, MarketId, OrderId, PositionEpoch,
+    ProposalId, RegistryVersion, SignatureThreshold, TriggerSlippageBps,
 };
 
 pub fn encode<T: Serialize>(view: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
@@ -124,6 +124,10 @@ pub struct Market {
     /// `None` for event books, which mark off their own book.
     pub mark: Option<MarkConfig>,
     pub status: MarketStatus,
+    /// Effective funding dead-band half-width in bps; `None` when the market pays no funding.
+    pub funding_dead_band_bps: Option<u32>,
+    /// Effective funding interest leg per 8h in units of 1e-8; `None` when the market pays no funding.
+    pub funding_interest_rate: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,7 +237,7 @@ pub struct FeeSchedule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Funding {
     pub market: MarketId,
-    /// `None` until the first funding tick.
+    /// Whole bps, truncated toward zero; `None` until the first funding tick.
     pub funding_rate_bps: Option<i64>,
     pub cumulative_funding: Option<i64>,
     pub last_funding_time_ms: Option<u64>,
@@ -243,6 +247,9 @@ pub struct Funding {
     pub oracle_price: Option<u64>,
     pub funding_interval_ms: Option<u64>,
     pub max_funding_rate_bps: u32,
+    /// Exact rate of the last funding interval; `None` until the first funding tick.
+    #[serde(default)]
+    pub funding_rate: Option<FundingRate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +430,9 @@ pub struct MarketLedger {
     pub funding_rate_bps: Option<i64>,
     pub last_funding_time_ms: Option<u64>,
     pub mark_price_ewma: Option<u64>,
+    /// Exact rate of the last funding interval.
+    #[serde(default)]
+    pub funding_rate: Option<FundingRate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

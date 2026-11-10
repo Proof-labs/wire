@@ -1717,6 +1717,45 @@ pub struct ClientTriggerId(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct TriggerSlippageBps(pub u32);
 
+/// Half-width of a market's funding dead band around the interest leg, in basis points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FundingDeadBandBps(pub u32);
+
+/// A market's funding interest leg per 8 hours, in units of 1e-8 (1 bps = 10_000).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct FundingInterestRate(pub i32);
+
+/// A market's funding rate per interval, in units of 1e-8 (1 bps = 10_000): what a position pays.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub struct FundingRate(pub i64);
+
+impl FundingRate {
+    /// The rate in whole basis points, truncated toward zero.
+    pub const fn whole_bps(self) -> i64 {
+        self.0.wrapping_div(10_000)
+    }
+}
+
+impl core::fmt::Display for FundingDeadBandBps {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl core::fmt::Display for FundingInterestRate {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl core::fmt::Display for FundingRate {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Maximum byte length of a `MarketConfig::ticker` / `CreateMarket::ticker`.
 /// Bounds state size and keeps the metadata field predictable. Derived impact
 /// child tickers (`<underlying>-<id>-<leg>`) also stay within this for any
@@ -1921,6 +1960,12 @@ pub struct MarketConfig {
     /// value of conditionals created before it, marks at the underlying.
     #[serde(default)]
     pub impact_notional: u64,
+    /// Funding dead-band half-width. `None` uses the engine default.
+    #[serde(default)]
+    pub funding_dead_band_bps: Option<FundingDeadBandBps>,
+    /// Funding interest leg. `None` uses the engine default.
+    #[serde(default)]
+    pub funding_interest_rate: Option<FundingInterestRate>,
 }
 
 /// Per-market oracle guards that live OUTSIDE `MarketConfig`, at
@@ -3086,6 +3131,11 @@ pub struct UpdateMarketFees {
     /// unchanged. `0` is refused, as is any value on another kind of market.
     #[serde(default)]
     pub impact_notional: Option<u64>,
+    /// New funding dead-band half-width, at most 3,000 bps. `None` = leave unchanged.
+    /// Required, so an older, shorter payload cannot decode with its fields shifted.
+    pub funding_dead_band_bps: Option<FundingDeadBandBps>,
+    /// New funding interest leg, at most ±3,000 bps per 8h. `None` = leave unchanged.
+    pub funding_interest_rate: Option<FundingInterestRate>,
 }
 
 /// Per-account fee override. Stored at
@@ -3655,6 +3705,10 @@ pub enum Event {
         impact_notional: u64,
         #[serde(default)]
         max_mark_spread_bps: u32,
+        /// `None` when the market uses the default dead band.
+        funding_dead_band_bps: Option<FundingDeadBandBps>,
+        /// `None` when the market uses the default interest leg.
+        funding_interest_rate: Option<FundingInterestRate>,
     },
     /// An account's fee override was set. Emitted on success
     /// of `SetAccountFeeOverride`. Carries the post-update values so
@@ -3898,11 +3952,14 @@ pub enum Event {
     /// A new funding rate was computed and applied to the market.
     FundingApplied {
         market: MarketId,
-        /// Signed funding rate in basis points for this interval.
+        /// Signed funding rate in basis points for this interval, truncated toward zero.
         funding_rate_bps: i64,
         /// New cumulative funding index after applying this rate.
         cumulative_funding: i64,
         timestamp_ms: u64,
+        /// Funding rate charged for this interval.
+        #[serde(default)]
+        funding_rate: FundingRate,
     },
     /// Funding payment settled for a single position.
     FundingSettled {

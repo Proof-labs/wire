@@ -861,8 +861,9 @@ mod tests {
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
         CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        MarkSourceMode, MarketOrder, OperatorReceiptProof, OwnerAddress, PlaceOrder, RevokeAgent,
-        Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw, WithdrawRequest,
+        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OperatorReceiptProof,
+        OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
+        UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1069,6 +1070,7 @@ mod tests {
         const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
         const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
         const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
+        const UPDATE_MARKET_FEES_HEX: &str = include_str!("../vectors/update_market_fees.hex");
 
         let cases: Vec<(Action, u64, &str, u8, bool)> = vec![
             (
@@ -1126,6 +1128,37 @@ mod tests {
                 200,
                 SUB_ACCOUNT_TRANSFER_HEX.trim(),
                 SubAccountTransfer::ACTION_TYPE,
+                true,
+            ),
+            (
+                Action::UpdateMarketFees(UpdateMarketFees {
+                    market: 7,
+                    signer: [0xC3; 20],
+                    taker_fee_bps: Some(5),
+                    maker_fee_bps: None,
+                    max_funding_rate_bps: Some(400),
+                    funding_interval_ms: Some(3_600_000),
+                    max_position_size: None,
+                    default_ttl_ms: None,
+                    net_delta_margin: None,
+                    tick_size: None,
+                    lot_size: None,
+                    primary_oracle_signer: None,
+                    oracle_staleness_ms: None,
+                    mark_source_mode: None,
+                    max_mark_spread_bps: None,
+                    cex_composite_staleness_ms: None,
+                    fee_tiers: None,
+                    im_bps: None,
+                    mm_bps: None,
+                    max_open_interest: Some(50_000_000),
+                    impact_notional: None,
+                    funding_dead_band_bps: Some(FundingDeadBandBps(10)),
+                    funding_interest_rate: Some(FundingInterestRate(-12_500)),
+                }),
+                300,
+                UPDATE_MARKET_FEES_HEX.trim(),
+                UpdateMarketFees::ACTION_TYPE,
                 true,
             ),
         ];
@@ -3236,6 +3269,8 @@ mod tests {
             mm_bps: old_update.mm_bps,
             max_open_interest: Some(99),
             impact_notional: None,
+            funding_dead_band_bps: None,
+            funding_interest_rate: None,
         };
         // Same length since the flag left, so the frozen decoder refuses on
         // the first shifted field rather than on the array length.
@@ -3306,6 +3341,59 @@ mod tests {
         let error = rmp_serde::from_slice::<UpdateMarketFees>(&bytes).unwrap_err();
         assert!(
             error.to_string().contains("expected a sequence"),
+            "unexpected UpdateMarketFees decoder error: {error}"
+        );
+    }
+
+    #[test]
+    fn update_market_fees_requires_the_funding_terms_tail() {
+        let update = UpdateMarketFees {
+            market: 91,
+            signer: [0x91; 20],
+            taker_fee_bps: Some(5),
+            maker_fee_bps: None,
+            max_funding_rate_bps: None,
+            funding_interval_ms: None,
+            max_position_size: None,
+            default_ttl_ms: None,
+            net_delta_margin: None,
+            tick_size: None,
+            lot_size: None,
+            primary_oracle_signer: None,
+            oracle_staleness_ms: None,
+            mark_source_mode: None,
+            max_mark_spread_bps: None,
+            cex_composite_staleness_ms: None,
+            fee_tiers: None,
+            im_bps: None,
+            mm_bps: None,
+            max_open_interest: None,
+            impact_notional: None,
+            funding_dead_band_bps: Some(FundingDeadBandBps(10)),
+            funding_interest_rate: Some(FundingInterestRate(-12_500)),
+        };
+        let bytes = rmp_serde::to_vec(&update).unwrap();
+        let decoded: UpdateMarketFees = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(format!("{decoded:?}"), format!("{update:?}"));
+
+        // The previous 21-element shape: this one with both tail fields nil and dropped.
+        let untailed = UpdateMarketFees {
+            funding_dead_band_bps: None,
+            funding_interest_rate: None,
+            ..update
+        };
+        let mut old = rmp_serde::to_vec(&untailed).unwrap();
+        assert_eq!(
+            old[..3],
+            [0xdc, 0x00, 23],
+            "current shape is a 23-element array16"
+        );
+        assert_eq!(old[old.len() - 2..], [0xc0, 0xc0]);
+        old.truncate(old.len() - 2);
+        old[2] = 21;
+        let error = rmp_serde::from_slice::<UpdateMarketFees>(&old).unwrap_err();
+        assert!(
+            error.to_string().contains("length") || error.to_string().contains("LengthMismatch"),
             "unexpected UpdateMarketFees decoder error: {error}"
         );
     }
