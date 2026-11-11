@@ -178,13 +178,9 @@ define_actions! {
     ApproveAdminAction => 31,    // 0x1F — signed governance approval
     RejectAdminAction => 32,     // 0x20 — signed governance rejection
     EmergencyAdminAction => 33,  // 0x21 — signed emergency action
-    // Bridge custody: receipt-gated terminal withdrawal actions.
-    // NEW action_types (additive) — the legacy relayer ConfirmWithdrawal
-    // (0x0A) / FailWithdrawal (0x0B) remain decodable, so old decoders are
-    // unaffected. See the codec decode-compat tests.
-    ConfirmWithdrawalReceipt => 34, // 0x22 — operator-quorum Paid receipt
-    FailWithdrawalReceipt => 35,    // 0x23 — operator-quorum Cancelled receipt
-    AuthorizeWithdrawal => 36,      // 0x24 — operator-quorum withdrawal authorization
+    // Bridge custody: the receipt-era terminal actions (0x22, 0x23, 0x24)
+    // are retired with wire 12 — the vote actions (0x30/0x32) replace them.
+    // See `RETIRED_ACTION_BYTES` and the byte ledger.
     SetPositionTriggers => 37,   // 0x25 — replace a whole-position SL/TP bracket
     CancelPositionTriggers => 38,// 0x26 — cancel a whole-position SL/TP bracket
     ResolveEvent => 39,          // 0x27 — resolve a standalone event
@@ -212,7 +208,7 @@ define_actions! {
 /// transactions and chains that carried them still exist, so the values are
 /// never handed to a new action: `ActionType::try_from` rejects them and the
 /// byte ledger keeps their rows as `retired`.
-pub const RETIRED_ACTION_BYTES: &[u8] = &[0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14];
+pub const RETIRED_ACTION_BYTES: &[u8] = &[0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x22, 0x23, 0x24];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -235,16 +231,10 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::Deposit
         | ActionType::ConfirmDeposit
         | ActionType::FailWithdrawal
-        // Receipt-gated terminals replace the legacy relayer
-        // Confirm/FailWithdrawal and take the same credit-band phase.
-        // The payout claim pairs with them: a lease must be acquirable in
-        // the same band the bridge custody actions run in, before any
-        // terminal can settle the withdrawal. The payout record rides the
-        // same band: the holder waits for the report's inclusion before it
-        // broadcasts, so shedding it behind trading txs would hold the payout.
-        | ActionType::ConfirmWithdrawalReceipt
-        | ActionType::FailWithdrawalReceipt
-        | ActionType::AuthorizeWithdrawal
+        // The custody actions share the credit-band phase: a lease must be
+        // acquirable in the same band the bridge custody actions run in,
+        // before any settlement can land. The payout record and the bridge
+        // votes ride the same band.
         | ActionType::ClaimWithdrawalPayout
         | ActionType::RecordWithdrawalPayout
         | ActionType::VoteWithdrawalPaid
@@ -866,12 +856,11 @@ mod tests {
         TriggerMarkMaxAgeMs,
     };
     use crate::types::{
-        AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
-        CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OperatorReceiptProof,
-        OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
-        UpdateMarketFees, Withdraw, WithdrawRequest,
+        AmendOrder, ApproveAgent, CancelOrder, CancelReplaceOrder, ConfirmDeposit,
+        ConfirmWithdrawal, CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FeeTier,
+        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OwnerAddress,
+        PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees,
+        Withdraw, WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1485,92 +1474,14 @@ mod tests {
     }
 
     // -- receipt-gated terminal withdrawal actions --------------------------
-
-    /// A deterministic wire receipt fixture for the golden vectors.
-    fn golden_receipt(terminal_state: u8) -> BridgeWithdrawalReceipt {
-        BridgeWithdrawalReceipt {
-            deployment_id: [0x11; 32],
-            authorization_digest: [0x22; 32],
-            withdrawal_id: 777,
-            terminal_state,
-            vault_tier: 1,
-            proof_owner: [0x05; 20],
-            destination_owner: [0x06; 32],
-            destination_token_acct: [0x07; 32],
-            amount_micro_usdc: 1_000_000,
-            fee_micro_usdc: 1_000_000,
-            authorization_signer_epoch: 3,
-            solana_tx_signature: vec![0x10; 64],
-            finalized_slot: 900,
-            finalized_blockhash: [0x33; 32],
-            receipt_quorum_kind: 1,
-            receipt_authority_epoch: 3,
-        }
-    }
-
-    fn golden_proof() -> OperatorReceiptProof {
-        OperatorReceiptProof {
-            signer_bitmap: vec![0x0F],
-            signatures: vec![
-                vec![0xAB; 64],
-                vec![0xCD; 64],
-                vec![0xEF; 64],
-                vec![0x12; 64],
-            ],
-        }
-    }
-
-    /// Golden wire vectors for the two NEW action_types (0x22 / 0x23) plus a
-    /// determinism + round-trip check. If a serializer change moves these
-    /// bytes, the SDK conformance contract broke.
-    #[test]
-    fn receipt_action_golden_vectors() {
-        let confirm = Action::ConfirmWithdrawalReceipt(ConfirmWithdrawalReceipt {
-            receipt: golden_receipt(1),
-            proof: golden_proof(),
-        });
-        let fail = Action::FailWithdrawalReceipt(FailWithdrawalReceipt {
-            receipt: golden_receipt(2),
-            proof: golden_proof(),
-        });
-        // The authorization payload is opaque canonical bytes at this layer
-        // (fixed 221-byte `WithdrawalAuthorizationV1` wire form); the codec
-        // vector pins the envelope layout, not the authorization semantics.
-        let authorize = Action::AuthorizeWithdrawal(AuthorizeWithdrawal {
-            authorization: vec![0x44; 221],
-            proof: golden_proof(),
-        });
-
-        // Payload-only golden hex (envelope signature excluded so the vector
-        // does not depend on a signing key).
-        const CONFIRM_RECEIPT_PAYLOAD_HEX: &str =
-            include_str!("../vectors/confirm_withdrawal_receipt.hex");
-        const FAIL_RECEIPT_PAYLOAD_HEX: &str =
-            include_str!("../vectors/fail_withdrawal_receipt.hex");
-        const AUTHORIZE_PAYLOAD_HEX: &str = include_str!("../vectors/authorize_withdrawal.hex");
-
-        let confirm_payload = hex_string(&confirm.encode_action().unwrap().payload.0);
-        let fail_payload = hex_string(&fail.encode_action().unwrap().payload.0);
-        let authorize_payload = hex_string(&authorize.encode_action().unwrap().payload.0);
-        assert_eq!(confirm_payload, CONFIRM_RECEIPT_PAYLOAD_HEX.trim());
-        assert_eq!(fail_payload, FAIL_RECEIPT_PAYLOAD_HEX.trim());
-        assert_eq!(authorize_payload, AUTHORIZE_PAYLOAD_HEX.trim());
-
-        // NEW action_type bytes, distinct from the legacy 0x0A / 0x0B.
-        assert_eq!(ConfirmWithdrawalReceipt::ACTION_TYPE, 0x22);
-        assert_eq!(FailWithdrawalReceipt::ACTION_TYPE, 0x23);
-        assert_eq!(AuthorizeWithdrawal::ACTION_TYPE, 0x24);
-
-        for (i, action) in [confirm, fail, authorize].into_iter().enumerate() {
-            let encoded = encode_tx(&action, i as u64).unwrap();
-            assert_eq!(
-                encode_tx(&action, i as u64).unwrap(),
-                encoded,
-                "deterministic"
-            );
-            assert_round_trip(&action, i as u64);
-        }
-    }
+    //
+    // Retired with wire 12: 0x22 / 0x23 / 0x24 joined
+    // `RETIRED_ACTION_BYTES`, the payload structs are gone, and the vote
+    // actions (0x30 / 0x32) replace them. The exhaustive retired-bytes test
+    // below now covers the three receipt-era bytes; the golden vectors
+    // carried for eleven releases (confirm_withdrawal_receipt.hex,
+    // fail_withdrawal_receipt.hex, authorize_withdrawal.hex) left with the
+    // actions.
 
     /// Decode-compat: the legacy terminal actions keep their 0x0A / 0x0B
     /// discriminants and still decode byte-for-byte. This is what makes the
@@ -3911,18 +3822,6 @@ mod tests {
             (ActionType::ApproveAdminAction, BlockPhase::Ordinary),
             (ActionType::RejectAdminAction, BlockPhase::Ordinary),
             (ActionType::EmergencyAdminAction, BlockPhase::Ordinary),
-            (
-                ActionType::ConfirmWithdrawalReceipt,
-                BlockPhase::PriceCreditPrefix,
-            ),
-            (
-                ActionType::FailWithdrawalReceipt,
-                BlockPhase::PriceCreditPrefix,
-            ),
-            (
-                ActionType::AuthorizeWithdrawal,
-                BlockPhase::PriceCreditPrefix,
-            ),
             (
                 ActionType::ClaimWithdrawalPayout,
                 BlockPhase::PriceCreditPrefix,

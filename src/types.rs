@@ -2654,97 +2654,17 @@ pub struct FailWithdrawal {
 }
 
 // ---------------------------------------------------------------------------
-// Bridge custody: receipt-gated terminal withdrawal actions
+// Bridge custody: withdrawal payout actions
 // ---------------------------------------------------------------------------
 //
-// Operator-multisig phase. The legacy relayer `ConfirmWithdrawal` (0x0A) /
-// `FailWithdrawal` (0x0B) trust an authorized-relayer assertion; these new
-// action_types carry a `bridge_core::BridgeReceiptV1` and its operator
-// ed25519 proof, and the engine verifies the quorum in consensus before
-// crediting/refunding — no trusted courier assertion. Additive: the legacy
-// actions stay decodable for the shadow/canary phase and rollback.
-
-/// Engine-side mirror of `bridge_core::BridgeReceiptV1` (fixed 327-byte wire
-/// form). Carried by the receipt-gated actions; the engine rebuilds the
-/// `BridgeReceiptV1`, re-encodes, and verifies the operator quorum signed
-/// exactly those bytes. Every field is signed, so tampering fails closed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeWithdrawalReceipt {
-    /// `bridge_core::DeploymentId` — pins Proof/Solana genesis, program, mint.
-    #[serde(with = "crate::wire_bytes")]
-    pub deployment_id: [u8; 32],
-    /// `SHA256(Borsh(WithdrawalAuthorizationV1))`.
-    #[serde(with = "crate::wire_bytes")]
-    pub authorization_digest: [u8; 32],
-    pub withdrawal_id: u64,
-    /// `1 = Paid`, `2 = Cancelled`.
-    pub terminal_state: u8,
-    /// `bridge_core::VaultTier` wire byte.
-    pub vault_tier: u8,
-    #[serde(with = "crate::wire_bytes")]
-    pub proof_owner: [u8; 20],
-    #[serde(with = "crate::wire_bytes")]
-    pub destination_owner: [u8; 32],
-    #[serde(with = "crate::wire_bytes")]
-    pub destination_token_acct: [u8; 32],
-    pub amount_micro_usdc: u64,
-    pub fee_micro_usdc: u64,
-    pub authorization_signer_epoch: u64,
-    /// Solana tx signature (64 bytes). `Vec<u8>` because serde has no `[u8; 64]`.
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub solana_tx_signature: Vec<u8>,
-    pub finalized_slot: u64,
-    #[serde(with = "crate::wire_bytes")]
-    pub finalized_blockhash: [u8; 32],
-    /// `1 = operator m-of-n`, `2 = validator stake`.
-    pub receipt_quorum_kind: u8,
-    pub receipt_authority_epoch: u64,
-}
-
-/// Operator ed25519 proof wrapper — mirrors
-/// `bridge_core::ReceiptProofV1::OperatorEd25519`. Bitmap plus one signature
-/// per set bit in ascending registry order; structure and every signature
-/// are checked by the quorum-proof verifier.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OperatorReceiptProof {
-    /// `ceil(registry_len / 8)` bytes; unused high bits zero.
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub signer_bitmap: Vec<u8>,
-    /// One 64-byte ed25519 signature per set bit, ascending set-bit order.
-    pub signatures: Vec<Vec<u8>>,
-}
-
-/// Receipt-gated confirmation: a finalized `Paid` `BridgeReceiptV1`. Replaces
-/// the relayer assertion in `ConfirmWithdrawal`. Permissionless to submit —
-/// the operator quorum in the receipt is the authority, not the envelope
-/// signer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConfirmWithdrawalReceipt {
-    pub receipt: BridgeWithdrawalReceipt,
-    pub proof: OperatorReceiptProof,
-}
-
-/// Receipt-gated failure: a finalized `Cancelled` `BridgeReceiptV1`. Replaces
-/// the free-text `FailWithdrawal`; refunds `amount` only against a positive
-/// on-chain cancellation proof, never a timeout.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FailWithdrawalReceipt {
-    pub receipt: BridgeWithdrawalReceipt,
-    pub proof: OperatorReceiptProof,
-}
-
-/// Records the operator-quorum-signed `WithdrawalAuthorizationV1` for a pending
-/// withdrawal, binding its digest to the record so a terminal receipt can only
-/// settle an authorization the quorum actually issued. Permissionless to submit
-/// — the operator quorum in `proof` is the authority, not the envelope signer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AuthorizeWithdrawal {
-    /// The canonical `WithdrawalAuthorizationV1` bytes the quorum signed
-    /// (`bridge_core::WithdrawalAuthorizationV1::encode`, fixed 221 bytes).
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub authorization: Vec<u8>,
-    pub proof: OperatorReceiptProof,
-}
+// The vote model. The receipt-gated actions that once lived in this section
+// (`AuthorizeWithdrawal` 0x24, `ConfirmWithdrawalReceipt` 0x22,
+// `FailWithdrawalReceipt` 0x23) retired with wire 12: distinct operator
+// registry members now vote `VoteWithdrawalPaid` (0x30) / `VoteDeposit`
+// (0x32), the payout moves from a governed Squads vault the members control,
+// and the engine aggregates the signatures in consensus — no trusted courier
+// assertion, and no combined proof that would need a watcher-to-watcher
+// channel.
 
 /// Single-holder claim on a `Pending` withdrawal's Solana payout. The
 /// holder named here is the only watcher that may sign the
@@ -4107,13 +4027,6 @@ pub enum Event {
         reason: FailDepositReason,
         signer: Option<[u8; 20]>,
     },
-    WithdrawalConfirmed {
-        withdrawal_id: u64,
-        solana_tx_sig: Vec<u8>,
-        /// Address that signed the action. `None` when confirmed via an
-        /// operator-quorum receipt, which has no single signer.
-        signer: Option<[u8; 20]>,
-    },
     WithdrawalFailed {
         withdrawal_id: u64,
         owner: [u8; 20],
@@ -4124,9 +4037,13 @@ pub enum Event {
         /// operator-quorum receipt, which has no single signer.
         signer: Option<[u8; 20]>,
     },
-    WithdrawalAuthorized {
+    WithdrawalConfirmed {
         withdrawal_id: u64,
-        authorization_digest: [u8; 32],
+        solana_tx_sig: Vec<u8>,
+        /// Address that signed the action. `None` when confirmed via an
+        /// operator-quorum receipt (receipt era) or a threshold of member
+        /// votes (the vote model).
+        signer: Option<[u8; 20]>,
     },
     AgentApproved {
         owner: [u8; 20],
@@ -4599,14 +4516,27 @@ pub enum Event {
         threshold: u16,
     },
     /// A bridge vote was refused because it conflicts with the votes already
-    /// recorded for its item: a different registry epoch than the first
-    /// vote bound (withdrawals), or a different observation for a transfer
-    /// identity that already has votes (deposits).
+    /// recorded for its item within one registry epoch: a different
+    /// observation for a transfer identity that already has votes
+    /// (deposits), or any same-epoch divergence from the binding.
     BridgeVoteConflict {
         /// The voting member whose vote was refused.
         #[serde(with = "crate::wire_bytes")]
         voter: [u8; 32],
         reason: String,
+    },
+    /// A registry rotation superseded the votes an item had bound to the
+    /// previous epoch: the old roster is gone, so the election restarts at
+    /// the current one with this member's vote opening it. A rotation is a
+    /// full-vault migration; nothing signed under the old epoch can settle.
+    BridgeVotesSuperseded {
+        /// The epoch whose binding was replaced.
+        old_epoch: u64,
+        /// The epoch the votes now bind to.
+        new_epoch: u64,
+        /// The member whose vote opened the new binding.
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 32],
     },
     /// A threshold-reaching deposit credit is deferred because a governed
     /// deposit limit refuses it. The votes are retained and the credit
@@ -5056,9 +4986,8 @@ pub enum ExecError {
     /// set, until `UnpauseBridge` clears it.
     BridgePaused,
     /// A bridge vote conflicted with the votes already recorded for its
-    /// item — a different registry epoch (withdrawals), or a different
-    /// observation for a transfer identity that already has votes
-    /// (deposits). Names the divergence.
+    /// item — a different observation for a transfer identity that already
+    /// has votes, or a same-epoch divergence. Names the divergence.
     BridgeVoteConflict(String),
     /// A bridge vote failed verification: the signature did not verify
     /// against the named registry roster, or the vote names a non-current
@@ -6473,22 +6402,21 @@ impl fmt::Display for ExecError {
 pub mod prelude {
     pub use crate::types::{
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
-        AttachConditional, AttachedConditional, AuthorizeWithdrawal, Branch,
-        BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelOrder, CancelReason,
-        CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
-        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers,
-        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
-        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards,
-        MarketOrder, OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry,
-        OracleRejectReason, Order, OrderId, Outcome, PendingTriggerDiscardReason, PlaceOrder,
-        Position, ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side,
-        SubAccount, SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees,
-        Withdraw, WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar,
-        WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
-        DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
-        DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
-        PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,
+        AttachConditional, AttachedConditional, Branch, CancelAllOrders, CancelClientOrder,
+        CancelOrder, CancelReason, CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition,
+        ConfirmDeposit, ConfirmWithdrawal, CreateMarket, CreateSubAccount, Deposit, DepositLocator,
+        Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers, FailDeposit,
+        FailWithdrawal, FillId, FundingSkipReason, LiquidateAccounts, MarkSourceMode, MarketConfig,
+        MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
+        OperatorReceiptRegistry, OracleRejectReason, Order, OrderId, Outcome,
+        PendingTriggerDiscardReason, PlaceOrder, Position, ResolveEvent, RevokeAgent,
+        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
+        TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        WithdrawalPayoutLease, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
+        BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
+        DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
+        MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
+        PREDICTION_BINARY_TICK_SIZE,
     };
 }
 

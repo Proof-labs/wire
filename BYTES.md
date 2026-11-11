@@ -60,9 +60,9 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x1F | `ApproveAdminAction`                | planned  |
 | 0x20 | `RejectAdminAction`                 | planned  |
 | 0x21 | `EmergencyAdminAction`              | planned  |
-| 0x22 | `ConfirmWithdrawalReceipt`          | engine-native |
-| 0x23 | `FailWithdrawalReceipt`             | engine-native |
-| 0x24 | `AuthorizeWithdrawal`               | engine-native |
+| 0x22 | `ConfirmWithdrawalReceipt`          | retired (wire 12: the vote model replaces the receipt path) |
+| 0x23 | `FailWithdrawalReceipt`             | retired (wire 12: the vote model replaces the receipt path) |
+| 0x24 | `AuthorizeWithdrawal`               | retired (wire 12: the vote model replaces the receipt path) |
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | shipped  |
