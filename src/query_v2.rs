@@ -316,6 +316,112 @@ pub struct Withdrawal {
     pub request_height: u64,
 }
 
+// ---------------------------------------------------------------------------
+// Bridge custody
+// ---------------------------------------------------------------------------
+
+/// A 64-byte ed25519 signature or Solana transaction signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Signature64(#[serde(with = "serde_bytes")] pub [u8; 64]);
+
+/// Where inside one Solana transaction a USDC transfer sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositLocator {
+    pub top_index: u16,
+    pub inner_index: Option<u16>,
+}
+
+/// One member's vote on a pending bridge item: the verifying key that
+/// produced it and the signature itself, so a reader can re-verify without
+/// trusting the aggregation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeVote {
+    /// The member's ed25519 verification key.
+    pub voter: Hash32,
+    pub signature: Signature64,
+}
+
+/// The Paid votes on one pending withdrawal: the binding epoch and one entry
+/// per distinct member.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalVotes {
+    pub registry_epoch: u64,
+    pub votes: Vec<BridgeVote>,
+}
+
+/// The Squads payout a lease holder reported for a pending withdrawal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalPayoutReport {
+    pub holder: Address,
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
+    pub registry_epoch: u64,
+}
+
+/// The payout lease on a pending withdrawal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalPayoutLease {
+    pub holder: Address,
+    pub acquired_height: u64,
+    /// Exclusive: the first height at which the lease no longer binds.
+    pub expires_at_height: u64,
+}
+
+/// A pending withdrawal with everything a peer member needs to act on it:
+/// the record, the live lease, the reported payout proposals and the Paid
+/// votes so far.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingWithdrawal {
+    pub withdrawal: Withdrawal,
+    pub lease: Option<WithdrawalPayoutLease>,
+    pub payout_reports: Vec<WithdrawalPayoutReport>,
+    pub votes: Option<WithdrawalVotes>,
+}
+
+/// A pending deposit: the voted observation and the aggregation so far. The
+/// votes carry the credit identity `(solana_tx_sig, locator)`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDeposit {
+    pub owner: Address,
+    pub amount_micro_usdc: u64,
+    pub solana_tx_sig: Signature64,
+    pub locator: Option<DepositLocator>,
+    pub registry_epoch: u64,
+    pub votes: Vec<BridgeVote>,
+}
+
+/// The bridge's governance state: the quorum's halt flag, the governed
+/// payout vault and the current operator roster facts. Payout configuration
+/// fields are absent while unset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeStatus {
+    pub halted: bool,
+    pub payout_multisig: Option<SolanaAddress>,
+    pub ops_wallet: Option<SolanaAddress>,
+    pub registry_epoch: Option<u64>,
+    pub registry_threshold: Option<u16>,
+    pub operator_count: Option<u32>,
+}
+
+/// One operator receipt registry member: its ed25519 verification key and
+/// the engine address it controls. `owner` is absent on a roster stored
+/// before wire 12 (that roster fails closed at the payout gates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorMember {
+    pub key: Hash32,
+    pub owner: Option<Address>,
+}
+
+/// The operator receipt registry at one epoch: the roster every payout gate
+/// and vote verifies against.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorRegistry {
+    pub deployment_id: Hash32,
+    pub epoch: u64,
+    pub threshold: u16,
+    pub members: Vec<OperatorMember>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubAccount {
     pub master: Address,
