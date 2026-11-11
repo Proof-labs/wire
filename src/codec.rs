@@ -196,10 +196,16 @@ define_actions! {
     // fleet cannot both sign a Solana payout.
     ClaimWithdrawalPayout => 46, // 0x2E — acquire the payout lease on a Pending withdrawal
     ExecuteTriggers => 47,       // 0x2F — internal, proposer-injected, unsigned
-    // Bridge custody: the lease holder records its payout signature before
-    // broadcasting it, stored as the withdrawal's payout record for peer
-    // checks.
-    RecordWithdrawalPayout => 49, // 0x31 — record the payout signature on a Pending withdrawal, before the broadcast
+    // Bridge custody: operator-registry votes (the vote model). Each member
+    // submits its own signature; the engine aggregates distinct members and
+    // settles at the roster's threshold — no combined proof, no
+    // troll-to-troll channel.
+    VoteWithdrawalPaid => 48, // 0x30 — one member's vote to settle a withdrawal as Paid
+    // Bridge custody: the lease holder records the Squads vault payout it
+    // proposed for the withdrawal, stored as the withdrawal's payout record
+    // for peer verification and successor handover.
+    RecordWithdrawalPayout => 49, // 0x31 — record the Squads payout proposal on a Pending withdrawal
+    VoteDeposit => 50,            // 0x32 — one member's vote to credit an observed deposit
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -240,7 +246,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::FailWithdrawalReceipt
         | ActionType::AuthorizeWithdrawal
         | ActionType::ClaimWithdrawalPayout
-        | ActionType::RecordWithdrawalPayout => BlockPhase::PriceCreditPrefix,
+        | ActionType::RecordWithdrawalPayout
+        | ActionType::VoteWithdrawalPaid
+        | ActionType::VoteDeposit => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
         ActionType::CancelOrder
@@ -1649,16 +1657,17 @@ mod tests {
     /// Golden wire vector for the NEW action_type 0x31 plus a determinism +
     /// round-trip check — same recipe as the payout claim: payload-only hex
     /// so the vector does not depend on a signing key, and an explicit byte
-    /// assertion so a renumber cannot slip through silently. The bound rides
-    /// the wire as a plain integer.
+    /// assertion so a renumber cannot slip through silently. Wire 12
+    /// repurposed the payload to the Squads payout report (vault, index,
+    /// epoch); the vector pins THOSE bytes.
     #[test]
     fn payout_record_golden_vector() {
         let report = Action::RecordWithdrawalPayout(RecordWithdrawalPayout {
             withdrawal_id: 777,
             holder: [0x05; 20],
-            solana_signature: vec![0x07; 64],
-            last_valid_block_height: std::num::NonZeroU64::new(500)
-                .expect("golden-vector bound is non-zero"),
+            vault: [0x07; 32],
+            squads_transaction_index: 9,
+            registry_epoch: 4,
         });
         assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
 
@@ -1676,6 +1685,25 @@ mod tests {
         ));
     }
 
+    /// Wire 12 repurposed 0x31: the pre-12 payload (a 64-byte Solana
+    /// signature plus a non-zero bound) must NOT decode as the new payout
+    /// report — a stale client's bytes fail closed instead of silently
+    /// pinning evidence to a signature nobody stores.
+    #[test]
+    fn payout_record_refuses_the_pre_vote_payload_shape() {
+        let bytes = rmp_serde::to_vec(&PreVotePayoutReportLookalike {
+            withdrawal_id: 777,
+            holder: [0x05; 20],
+            solana_signature: vec![0x07; 64],
+            last_valid_block_height: 500,
+        })
+        .expect("pre-vote lookalike payload encodes");
+        assert!(
+            decode_action(RecordWithdrawalPayout::ACTION_TYPE, &bytes).is_err(),
+            "the pre-wire-12 payout record shape must not decode"
+        );
+    }
+
     /// Decode-compat: 0x31 must not disturb any pre-existing discriminant.
     #[test]
     fn payout_record_leaves_neighbouring_bytes_untouched() {
@@ -1691,11 +1719,11 @@ mod tests {
         ));
     }
 
-    /// A zero absence bound is not a report: no signed transfer could name
-    /// height 0 as the last height it can land at, so the type refuses it
-    /// and the envelope never decodes.
+    /// The pre-wire-12 payout record shape: a 64-byte Solana signature plus
+    /// a plain bound. Kept as a decode-refusal fixture for the 0x31
+    /// repurpose.
     #[derive(Serialize, Deserialize)]
-    struct ZeroBoundReport {
+    struct PreVotePayoutReportLookalike {
         withdrawal_id: u64,
         #[serde(with = "crate::wire_bytes")]
         holder: [u8; 20],
@@ -1704,40 +1732,39 @@ mod tests {
         last_valid_block_height: u64,
     }
 
+    /// The vote actions carry one 64-byte ed25519 signature each. Only the
+    /// 64 raw bytes decode: base58 text (88 bytes) is the likely client
+    /// mistake, and a truncated or padded signature must fail closed.
     #[test]
-    fn payout_record_refuses_a_zero_absence_bound() {
-        let bytes = rmp_serde::to_vec(&ZeroBoundReport {
-            withdrawal_id: 777,
-            holder: [0x05; 20],
-            solana_signature: vec![0x07; 64],
-            last_valid_block_height: 0,
-        })
-        .expect("zero-bound lookalike payload encodes");
-        assert!(
-            decode_action(RecordWithdrawalPayout::ACTION_TYPE, &bytes).is_err(),
-            "a zero bound must not decode as a payout record"
-        );
-    }
-
-    /// A retained signature cannot be replaced, so a malformed one would hold
-    /// its withdrawal until settlement. Only the 64 raw bytes decode: base58
-    /// text (88 bytes) is the likely client mistake.
-    #[test]
-    fn payout_record_refuses_any_signature_length_but_64() {
+    fn vote_signatures_refuse_any_length_but_64() {
         for len in [0usize, 63, 65, 88, 4096] {
-            let payload = Action::RecordWithdrawalPayout(RecordWithdrawalPayout {
-                withdrawal_id: 777,
-                holder: [0x05; 20],
-                solana_signature: vec![0x07; len],
-                last_valid_block_height: std::num::NonZeroU64::new(500)
-                    .expect("the fixture bound is non-zero"),
+            let withdrawal = Action::VoteWithdrawalPaid(VoteWithdrawalPaid {
+                withdrawal_id: 1,
+                registry_epoch: 1,
+                signature: vec![0x07; len],
             })
             .encode_action()
             .expect("the encoder does not police the signature length")
             .payload;
             assert!(
-                decode_action(RecordWithdrawalPayout::ACTION_TYPE, &payload.0).is_err(),
-                "a {len}-byte signature must not decode as a payout record"
+                decode_action(VoteWithdrawalPaid::ACTION_TYPE, &withdrawal.0).is_err(),
+                "a {len}-byte withdrawal-vote signature must not decode"
+            );
+
+            let deposit = Action::VoteDeposit(VoteDeposit {
+                owner: [0x05; 20],
+                amount_micro_usdc: 1,
+                solana_tx_sig: vec![0x07; 64],
+                locator: None,
+                registry_epoch: 1,
+                signature: vec![0x07; len],
+            })
+            .encode_action()
+            .expect("the encoder does not police the signature length")
+            .payload;
+            assert!(
+                decode_action(VoteDeposit::ACTION_TYPE, &deposit.0).is_err(),
+                "a {len}-byte deposit-vote signature must not decode"
             );
         }
     }
@@ -2447,7 +2474,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 25] = [
+        const ALL_INNER_TAGS: [AdminActionType; 27] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2473,6 +2500,8 @@ mod tests {
             AdminActionType::VoidEvent,
             AdminActionType::SettleEvent,
             AdminActionType::SetMarketStatus,
+            AdminActionType::PauseBridge,
+            AdminActionType::SetBridgePayoutConfig,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2500,7 +2529,9 @@ mod tests {
                 | AdminActionType::SetDepositLimit
                 | AdminActionType::VoidEvent
                 | AdminActionType::SettleEvent
-                | AdminActionType::SetMarketStatus => {}
+                | AdminActionType::SetMarketStatus
+                | AdminActionType::PauseBridge
+                | AdminActionType::SetBridgePayoutConfig => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket
@@ -3900,6 +3931,11 @@ mod tests {
                 ActionType::RecordWithdrawalPayout,
                 BlockPhase::PriceCreditPrefix,
             ),
+            (
+                ActionType::VoteWithdrawalPaid,
+                BlockPhase::PriceCreditPrefix,
+            ),
+            (ActionType::VoteDeposit, BlockPhase::PriceCreditPrefix),
             (
                 ActionType::SubmitOracleObservation,
                 BlockPhase::PriceCreditPrefix,

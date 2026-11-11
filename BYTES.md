@@ -74,7 +74,9 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
 | 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
 | 0x2F | `ExecuteTriggers`                   | internal, proposer-injected trigger candidates |
-| 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-broadcast report of its payout signature |
+| 0x30 | `VoteWithdrawalPaid`                | one operator-registry member's vote to settle a withdrawal as Paid; the engine aggregates to the threshold |
+| 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-approval report of its Squads vault payout proposal (wire 12 repurposed the payload from a Solana signature) |
+| 0x32 | `VoteDeposit`                       | one operator-registry member's vote to credit an observed deposit; the engine aggregates to the threshold |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types
@@ -116,6 +118,8 @@ are not outer transaction action bytes.
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |
 | 0x1E | `SettleEvent`                     | governed; settles a price event whose resolution window closed unresolved, on the quorum's Yes or No |
 | 0x1F | `SetMarketStatus`                 | governed; moves a perpetual Trading to ReduceOnly, back, or ReduceOnly to Delisted (settles its positions at the last certified price and retires its oracle) |
+| 0x20 | `PauseBridge`                     | governed; sets the stored bridge halt flag — claims, payout reports and bridge votes refuse until `UnpauseBridge` (0x06) clears it. Tags 0x16-0x18 stay reserved for the partial-liquidation settings |
+| 0x21 | `SetBridgePayoutConfig`           | governed; writes the Squads payout vault and the ops rent wallet payout reports are checked against |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:
