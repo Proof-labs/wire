@@ -14,6 +14,10 @@ use std::path::PathBuf;
 
 use proof_wire::abci_event::AbciEventWriter;
 use proof_wire::query::{AccountInfo, BindingScenario, PositionBrief};
+use proof_wire::query_v2::{
+    self, InsuranceFundDirectory, InsuranceFundLedger, InsuranceFundPosition, InsuranceFundState,
+    InsurancePositionNotional, NotionalMicroUsdc, SettlementReferenceUnavailable,
+};
 use proof_wire::types::{
     AttachedConditional, Branch, ClientTriggerId, ConversionFallbackReason, Event, EventId,
     EventInfo, EventOracleSource, EventStatus, FeeTier, FundingDeadBandBps, FundingInterestRate,
@@ -499,16 +503,90 @@ fn every_response_vector_matches_its_fixture() {
     assert_frozen("responses", "event_info", &event_info());
     assert_frozen("responses", "market_config", &market_config());
     assert_frozen("responses", "position_brief", &position_brief());
+    assert_frozen_v2(
+        "insurance_fund_directory",
+        &InsuranceFundDirectory {
+            finalized_height: 42,
+            finalized_time_ms: 1_000,
+            funds: vec![fund_ledger()],
+        },
+    );
+    assert_frozen_v2("insurance_fund_state", &fund_state());
     let names = [
         "account_info",
         "event_info",
         "market_config",
         "position_brief",
+        "insurance_fund_directory",
+        "insurance_fund_state",
     ];
     assert_eq!(
         vector_names("responses"),
         names.into_iter().map(str::to_owned).collect()
     );
+}
+
+// V2 uses named maps, unlike the positional legacy response fixtures above.
+fn assert_frozen_v2<T: Serialize + DeserializeOwned>(name: &str, fixture: &T) {
+    let encoded = query_v2::encode(fixture).expect("v2 fixture encodes");
+    let path = vector_path("responses", name);
+    let frozen = fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!(
+            "reading {}: {error}; encoding is {}",
+            path.display(),
+            hex::encode(&encoded)
+        )
+    });
+    assert_eq!(hex::encode(&encoded), frozen.trim(), "{name}.hex drifted");
+    let bytes = hex::decode(frozen.trim()).expect("valid hex");
+    let decoded: T = query_v2::decode(&bytes).expect("v2 fixture decodes");
+    assert_eq!(query_v2::encode(&decoded).expect("v2 re-encodes"), bytes);
+}
+
+fn fund_ledger() -> InsuranceFundLedger {
+    InsuranceFundLedger {
+        pool_id: proof_wire::types::InsurancePoolId(255),
+        owner: query_v2::Address(OWNER),
+        registered: false,
+        stored_ledger: true,
+        cash: 5,
+        debt: 9,
+        net_cash: -4,
+    }
+}
+
+fn fund_state() -> InsuranceFundState {
+    use SettlementReferenceUnavailable::*;
+    let mut notionals = vec![InsurancePositionNotional::Priced {
+        reference_price: u64::MAX,
+        notional_micro_usdc: NotionalMicroUsdc(u128::MAX.to_string()),
+    }];
+    notionals.extend(
+        [Stale, GuardUnset, NoVerdict, NoMark, ThinBook, Unknown]
+            .into_iter()
+            .map(|reason| InsurancePositionNotional::Unpriced { reason }),
+    );
+    notionals.extend([
+        InsurancePositionNotional::UnsupportedBinary,
+        InsurancePositionNotional::Unknown,
+    ]);
+    InsuranceFundState {
+        finalized_height: 42,
+        finalized_time_ms: 1_000,
+        fund: fund_ledger(),
+        positions: notionals
+            .into_iter()
+            .zip(1u32..)
+            .map(|(notional, market)| InsuranceFundPosition {
+                market,
+                side: query_v2::Side::Sell,
+                size: 1,
+                sz_decimals: 0,
+                notional,
+            })
+            .collect(),
+        positions_complete: false,
+    }
 }
 
 #[test]

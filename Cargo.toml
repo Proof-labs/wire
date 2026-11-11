@@ -1,5 +1,13 @@
 [package]
 name = "proof-wire"
+# Unreleased: additive query_v2 insurance fund read views:
+# InsuranceFundDirectory, InsuranceFundState, InsuranceFundLedger,
+# InsuranceFundPosition, InsurancePositionNotional, NotionalMicroUsdc,
+# SettlementReferenceUnavailable and INSURANCE_FUND_POSITIONS_LIMIT. The
+# `unknown` fallback tags of InsurancePositionNotional and
+# SettlementReferenceUnavailable are frozen in the response vectors. These
+# additions change no existing bytes (MINOR).
+# This entry does not classify other changes included in the eventual release.
 #
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire

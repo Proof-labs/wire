@@ -1,5 +1,68 @@
 use super::*;
 #[test]
+fn insurance_fund_views_preserve_exact_amounts_and_unavailable_values() {
+    let ledger = InsuranceFundLedger {
+        pool_id: crate::types::InsurancePoolId(255),
+        owner: Address([7; 20]),
+        registered: false,
+        stored_ledger: true,
+        cash: 5,
+        debt: 9,
+        net_cash: -4,
+    };
+    round_trip(&InsuranceFundDirectory {
+        finalized_height: 42,
+        finalized_time_ms: 1_000,
+        funds: vec![ledger.clone()],
+    });
+    for notional in [
+        InsurancePositionNotional::Priced {
+            reference_price: u64::MAX,
+            notional_micro_usdc: NotionalMicroUsdc(u128::MAX.to_string()),
+        },
+        InsurancePositionNotional::Unpriced {
+            reason: SettlementReferenceUnavailable::Stale,
+        },
+        InsurancePositionNotional::UnsupportedBinary,
+        InsurancePositionNotional::Unpriced {
+            reason: SettlementReferenceUnavailable::ThinBook,
+        },
+    ] {
+        round_trip(&InsuranceFundState {
+            finalized_height: 42,
+            finalized_time_ms: 1_000,
+            fund: ledger.clone(),
+            positions_complete: true,
+            positions: vec![InsuranceFundPosition {
+                market: 1,
+                side: Side::Sell,
+                size: 1,
+                sz_decimals: 0,
+                notional,
+            }],
+        });
+    }
+    let future =
+        rmp_serde::to_vec_named(&std::collections::BTreeMap::from([("status", "new_kind")]))
+            .expect("future map encodes");
+    assert_eq!(
+        decode::<InsurancePositionNotional>(&future).expect("future status decodes"),
+        InsurancePositionNotional::Unknown
+    );
+    let future_reason = rmp_serde::to_vec_named(&std::collections::BTreeMap::from([
+        ("status", "unpriced"),
+        ("reason", "future_reason"),
+    ]))
+    .expect("future reason encodes");
+    assert_eq!(
+        decode::<InsurancePositionNotional>(&future_reason).expect("future reason decodes"),
+        InsurancePositionNotional::Unpriced {
+            reason: SettlementReferenceUnavailable::Unknown,
+        }
+    );
+}
+
+#[test]
 fn authorized_agents_maps_round_trip_without_stored_policy_fields() {
     let view = AuthorizedAgents {
         owner: Address([1; 20]),
