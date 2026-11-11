@@ -378,16 +378,46 @@ pub struct PendingWithdrawal {
     pub votes: Option<WithdrawalVotes>,
 }
 
-/// A pending deposit: the voted observation and the aggregation so far. The
-/// votes carry the credit identity `(solana_tx_sig, locator)`.
+/// One (owner, amount) reading of a pending deposit, with the distinct
+/// member votes backing that reading.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingDeposit {
+pub struct PendingDepositObservation {
     pub owner: Address,
     pub amount_micro_usdc: u64,
-    pub solana_tx_sig: Signature64,
-    pub locator: Option<DepositLocator>,
-    pub registry_epoch: u64,
     pub votes: Vec<BridgeVote>,
+}
+
+/// A pending deposit: the voted readings of one transfer identity and the
+/// aggregation so far. The votes carry the credit identity
+/// `(solana_tx_sig, locator)`. Usually exactly one observation; more means
+/// members currently disagree, and the first reading to reach the roster
+/// threshold credits.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDeposit {
+    pub solana_tx_sig: Signature64,
+    /// Always present: the identity rides the store key, so every row
+    /// carries one. The LEGACY reading decodes with no inner index.
+    pub locator: DepositLocator,
+    pub registry_epoch: u64,
+    pub observations: Vec<PendingDepositObservation>,
+}
+
+/// One page of the pending-withdrawals read, with the cursor to resume from.
+/// `next_cursor` is absent once the read walked past the last pending
+/// withdrawal; pass it back as the route's `cursor` to continue.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingWithdrawalPage {
+    pub rows: Vec<PendingWithdrawal>,
+    /// The id to resume after — the last row's withdrawal id.
+    pub next_cursor: Option<u64>,
+}
+
+/// One page of the pending-deposits read. `next_cursor` is the raw store
+/// key to resume after (the route hex-encodes it); absent once exhausted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDepositPage {
+    pub rows: Vec<PendingDeposit>,
+    pub next_cursor: Option<Vec<u8>>,
 }
 
 /// The bridge's governance state: the quorum's halt flag, the governed

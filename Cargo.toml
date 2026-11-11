@@ -286,7 +286,9 @@ name = "proof-wire"
 # function; no bytes change -> MINOR.
 #
 # Unreleased: additive. New query_v2 module of version 2 read views, encoded
-# as MessagePack maps. No existing bytes change -> MINOR.
+# as MessagePack maps. No existing bytes change -> MINOR. The bridge views
+# (pending withdrawals/deposits, pages with continuation cursors, registry,
+# status) land with this module before its first release.
 #
 # Unreleased: CreateMarket gains trailing defaulted tick_size and lot_size,
 # always encoded, so the action is a 14-element array and governance creates a

@@ -2610,6 +2610,21 @@ impl DepositLocator {
         );
         suffix
     }
+
+    /// Decode [`Self::id_suffix`] bytes; `None` when `inner` carries the
+    /// sentinel (the no-inner reading).
+    pub fn from_id_suffix(suffix: [u8; 4]) -> Option<Self> {
+        let top = u16::from_be_bytes([suffix[0], suffix[1]]);
+        let inner = u16::from_be_bytes([suffix[2], suffix[3]]);
+        Some(Self {
+            top_index: top,
+            inner_index: if inner == Self::INNER_SENTINEL {
+                None
+            } else {
+                Some(inner)
+            },
+        })
+    }
 }
 
 /// Relayer confirms an on-chain USDC deposit from Solana.
@@ -2865,9 +2880,9 @@ impl VoteDeposit {
     }
 }
 
-/// The aggregated votes on one withdrawal, stored under its own key until
-/// settlement. The first vote fixes the epoch binding; a vote for a different
-/// epoch on the same withdrawal is a conflict, not a second election.
+/// The aggregated Paid votes on one withdrawal, stored under its own key
+/// until settlement. The first vote fixes the epoch binding; a rotation
+/// supersedes the whole record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawalVoteRecord {
     pub registry_epoch: u64,
@@ -2877,20 +2892,37 @@ pub struct WithdrawalVoteRecord {
     pub signatures: Vec<Vec<u8>>,
 }
 
-/// The aggregated votes on one deposit, stored under the deposit's dedup
-/// identity until it credits or is superseded.
+/// One (owner, amount) reading of a deposited transfer, with the distinct
+/// member votes backing it. A transfer identity usually carries exactly one
+/// observation; a second appears only while members disagree, and the first
+/// reading to reach the roster threshold credits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DepositVoteRecord {
+pub struct DepositObservationVotes {
+    /// The receiving engine account this reading credits.
+    #[serde(with = "crate::wire_bytes")]
     pub owner: [u8; 20],
+    /// The observed amount in micro-USDC.
     pub amount_micro_usdc: u64,
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub solana_tx_sig: Vec<u8>,
-    pub locator: Option<DepositLocator>,
-    pub registry_epoch: u64,
-    /// Distinct member verification keys that have voted, ascending.
+    /// Distinct member verification keys that voted for THIS reading,
+    /// ascending. A member votes at most once per transfer identity —
+    /// joining a second reading is attributable equivocation.
     pub voters: Vec<[u8; 32]>,
     /// One 64-byte signature per voter, in the same order.
     pub signatures: Vec<Vec<u8>>,
+}
+
+/// The aggregated votes on one deposit, stored under the deposit's dedup
+/// identity until it credits or is superseded. Observations are separate
+/// elections over one transfer: keeping them side by side means one
+/// member's wrong reading can never block the honest members from reaching
+/// threshold on the right one — the first reading to reach the threshold
+/// credits and the record disappears.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositVoteRecord {
+    pub registry_epoch: u64,
+    /// One entry per distinct (owner, amount) reading, in first-vote order.
+    /// Almost always length 1.
+    pub observations: Vec<DepositObservationVotes>,
 }
 
 /// Why a Solana deposit was rejected by the relayer. Mirrors the small
