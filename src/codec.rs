@@ -859,8 +859,8 @@ mod tests {
         AmendOrder, ApproveAgent, CancelOrder, CancelReplaceOrder, ConfirmDeposit,
         ConfirmWithdrawal, CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FeeTier,
         FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OwnerAddress,
-        PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees,
-        Withdraw, WithdrawRequest,
+        PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw,
+        WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1651,6 +1651,8 @@ mod tests {
         for len in [0usize, 63, 65, 88, 4096] {
             let withdrawal = Action::VoteWithdrawalPaid(VoteWithdrawalPaid {
                 withdrawal_id: 1,
+                deployment_id: [0x11; 32],
+                chain_id: [0x22; 32],
                 registry_epoch: 1,
                 signature: vec![0x07; len],
             })
@@ -1667,6 +1669,8 @@ mod tests {
                 amount_micro_usdc: 1,
                 solana_tx_sig: vec![0x07; 64],
                 locator: None,
+                deployment_id: [0x11; 32],
+                chain_id: [0x22; 32],
                 registry_epoch: 1,
                 signature: vec![0x07; len],
             })

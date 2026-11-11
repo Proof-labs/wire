@@ -336,7 +336,8 @@ name = "proof-wire"
 # repurposed: the payload now carries the Squads vault payout (vault, vault
 # transaction index, epoch) instead of a Solana signature — old bytes do not
 # decode. New actions VoteWithdrawalPaid (0x30) and VoteDeposit (0x32) carry
-# one member signature each; the engine aggregates. New admin tags
+# one member signature each over domain-, kind-, item-, deployment- and
+# chain-bound canonical bytes; the engine aggregates. New admin tags
 # PauseBridge (0x20) and SetBridgePayoutConfig (0x21) — tags 0x16-0x18 stay
 # reserved for the partial-liquidation settings. ExecError appends
 # BridgePaused (135), BridgeVoteConflict (136), BridgeVoteInvalid (137),

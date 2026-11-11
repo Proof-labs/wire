@@ -2772,6 +2772,17 @@ pub const BRIDGE_VOTE_KIND_DEPOSIT_CREDIT: u8 = 2;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VoteWithdrawalPaid {
     pub withdrawal_id: u64,
+    /// The bridge deployment the withdrawal belongs to, as in
+    /// [`OperatorReceiptRegistry::deployment_id`]. Must equal the stored
+    /// registry's, and rides the signed message: a vote signature captured
+    /// for one deployment can never settle a withdrawal on another.
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The signing chain's id, as the envelope's `chain_id`. Rides the
+    /// signed message, so a captured vote cannot replay on a second chain
+    /// that shares the deployment.
+    #[serde(with = "crate::wire_bytes")]
+    pub chain_id: [u8; 32],
     /// The registry epoch the vote is bound to; must be the current one, so
     /// a rotation invalidates in-flight votes instead of mixing rosters.
     pub registry_epoch: u64,
@@ -2783,14 +2794,17 @@ pub struct VoteWithdrawalPaid {
 
 impl VoteWithdrawalPaid {
     /// The canonical bytes every member signs for this vote. Domain, kind,
-    /// withdrawal id and epoch — nothing else — so two members' votes over
-    /// the same item are byte-identical, and any other byte string a member
-    /// signs for the same item is an attributable conflict.
+    /// withdrawal id, deployment, chain and epoch — nothing else — so two
+    /// members' votes over the same item are byte-identical, and any other
+    /// byte string a member signs for the same item is an attributable
+    /// conflict.
     pub fn vote_message(&self) -> Vec<u8> {
-        let mut message = Vec::with_capacity(2 + 8 + 8);
+        let mut message = Vec::with_capacity(2 + 8 + 32 + 32 + 8);
         message.extend_from_slice(BRIDGE_VOTE_DOMAIN);
         message.push(BRIDGE_VOTE_KIND_WITHDRAWAL_PAID);
         message.extend_from_slice(&self.withdrawal_id.to_be_bytes());
+        message.extend_from_slice(&self.deployment_id);
+        message.extend_from_slice(&self.chain_id);
         message.extend_from_slice(&self.registry_epoch.to_be_bytes());
         message
     }
@@ -2813,6 +2827,14 @@ pub struct VoteDeposit {
     /// Instruction locator, the other half of the dedup identity, as in
     /// `ConfirmDeposit.locator`.
     pub locator: Option<DepositLocator>,
+    /// The bridge deployment the transfer belongs to; must equal the stored
+    /// registry's, and rides the signed message (see
+    /// [`VoteWithdrawalPaid::deployment_id`]).
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The signing chain's id; rides the signed message.
+    #[serde(with = "crate::wire_bytes")]
+    pub chain_id: [u8; 32],
     /// The registry epoch the vote is bound to; must be the current one.
     pub registry_epoch: u64,
     /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
@@ -2824,28 +2846,22 @@ pub struct VoteDeposit {
 impl VoteDeposit {
     /// The canonical bytes every member signs for this vote: domain, kind,
     /// and the full credit identity (owner, amount, signature, locator,
-    /// epoch). Two members voting on the same observation sign identical
-    /// bytes; a different observation for a transfer identity that already
-    /// has votes is an attributable conflict.
+    /// deployment, chain, epoch). Two members voting on the same observation
+    /// sign identical bytes; a different observation for a transfer identity
+    /// that already has votes is an attributable conflict.
     pub fn vote_message(&self) -> Vec<u8> {
         let locator_suffix = self.locator.unwrap_or(DepositLocator::LEGACY).id_suffix();
-        let mut message = Vec::with_capacity(2 + 20 + 8 + 64 + 4 + 8);
+        let mut message = Vec::with_capacity(2 + 20 + 8 + 64 + 4 + 32 + 32 + 8);
         message.extend_from_slice(BRIDGE_VOTE_DOMAIN);
         message.push(BRIDGE_VOTE_KIND_DEPOSIT_CREDIT);
         message.extend_from_slice(&self.owner);
         message.extend_from_slice(&self.amount_micro_usdc.to_be_bytes());
         message.extend_from_slice(&self.solana_tx_sig);
         message.extend_from_slice(&locator_suffix);
+        message.extend_from_slice(&self.deployment_id);
+        message.extend_from_slice(&self.chain_id);
         message.extend_from_slice(&self.registry_epoch.to_be_bytes());
         message
-    }
-
-    /// The dedup identity this vote's credit would consume — the same
-    /// `(signature, locator)` pair a `ConfirmDeposit` credit records — so a
-    /// vote can never credit a transfer the legacy path already credited or
-    /// marked failed.
-    pub fn deposit_identity(&self) -> (Vec<u8>, Option<DepositLocator>) {
-        (self.solana_tx_sig.clone(), self.locator)
     }
 }
 
