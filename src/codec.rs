@@ -1596,6 +1596,58 @@ mod tests {
         ));
     }
 
+    /// Golden wire vectors for the two vote actions plus determinism and
+    /// round-trip checks — the fixtures the resolved-vector inventory and
+    /// every SDK client pin. Domain, kind, item, deployment `[0x11; 32]`,
+    /// chain `[0x22; 32]`, epoch, signature `[0x07; 64]`.
+    #[test]
+    fn vote_golden_vectors() {
+        let withdrawal = Action::VoteWithdrawalPaid(VoteWithdrawalPaid {
+            withdrawal_id: 1,
+            deployment_id: [0x11; 32],
+            chain_id: [0x22; 32],
+            registry_epoch: 1,
+            signature: vec![0x07; 64],
+        });
+        assert_eq!(VoteWithdrawalPaid::ACTION_TYPE, 0x30);
+        const WITHDRAWAL_VOTE_HEX: &str = include_str!("../vectors/vote_withdrawal_paid.hex");
+        let payload = hex_string(&withdrawal.encode_action().unwrap().payload.0);
+        assert_eq!(
+            payload,
+            WITHDRAWAL_VOTE_HEX.trim(),
+            "golden vector mismatch"
+        );
+        assert_round_trip(&withdrawal, 1);
+        let encoded = encode_tx(&withdrawal, 1).unwrap();
+        assert_eq!(encode_tx(&withdrawal, 1).unwrap(), encoded, "deterministic");
+        assert!(matches!(
+            decode_tx(&encoded).unwrap().action,
+            Action::VoteWithdrawalPaid(_)
+        ));
+
+        let deposit = Action::VoteDeposit(VoteDeposit {
+            owner: [0x05; 20],
+            amount_micro_usdc: 1,
+            solana_tx_sig: vec![0x07; 64],
+            locator: None,
+            deployment_id: [0x11; 32],
+            chain_id: [0x22; 32],
+            registry_epoch: 1,
+            signature: vec![0x07; 64],
+        });
+        assert_eq!(VoteDeposit::ACTION_TYPE, 0x32);
+        const DEPOSIT_VOTE_HEX: &str = include_str!("../vectors/vote_deposit.hex");
+        let payload = hex_string(&deposit.encode_action().unwrap().payload.0);
+        assert_eq!(payload, DEPOSIT_VOTE_HEX.trim(), "golden vector mismatch");
+        assert_round_trip(&deposit, 2);
+        let encoded = encode_tx(&deposit, 2).unwrap();
+        assert_eq!(encode_tx(&deposit, 2).unwrap(), encoded, "deterministic");
+        assert!(matches!(
+            decode_tx(&encoded).unwrap().action,
+            Action::VoteDeposit(_)
+        ));
+    }
+
     /// Wire 12 repurposed 0x31: the pre-12 payload (a 64-byte Solana
     /// signature plus a non-zero bound) must NOT decode as the new payout
     /// report — a stale client's bytes fail closed instead of silently
