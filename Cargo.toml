@@ -286,7 +286,9 @@ name = "proof-wire"
 # function; no bytes change -> MINOR.
 #
 # Unreleased: additive. New query_v2 module of version 2 read views, encoded
-# as MessagePack maps. No existing bytes change -> MINOR.
+# as MessagePack maps. No existing bytes change -> MINOR. The bridge views
+# (pending withdrawals/deposits, pages with continuation cursors, registry,
+# status) land with this module before its first release.
 #
 # Unreleased: CreateMarket gains trailing defaulted tick_size and lot_size,
 # always encoded, so the action is a 14-element array and governance creates a
@@ -318,7 +320,36 @@ name = "proof-wire"
 # exact per-interval FundingRate in 1e-8 units; the v2 Market view gains the
 # effective funding terms. Old bytes of those still decode, but a decoder
 # built before it rejects the longer arrays -> MAJOR.
-version = "11.0.0"
+#
+# Unreleased: the receipt era retires. Actions ConfirmWithdrawalReceipt
+# (0x22), FailWithdrawalReceipt (0x23) and AuthorizeWithdrawal (0x24) joined
+# RETIRED_ACTION_BYTES: a wire-12 decoder refuses them and their payload
+# structs are gone, so old bytes decode only on a pre-12 decoder — MAJOR.
+# The vote actions and the bridge status above replace the whole path; the
+# Event::WithdrawalAuthorized variant left with its emitter. Approval
+# re-encodes a proposal's stored action, so drain or re-propose any pending
+# proposal holding one of the retired actions before rollout.
+#
+# Unreleased: the bridge vote model. OperatorReceiptRegistry gains
+# operator_owners (the members' engine signer addresses, parallel to
+# operator_keys; #[serde(default)] on the STORED registry — pre-12 rows
+# decode with an empty roster and fail closed until the next rotation),
+# SetOperatorReceiptRegistry requires it. RecordWithdrawalPayout (0x31) is
+# repurposed: the payload now carries the Squads vault payout (vault, vault
+# transaction index, epoch) instead of a Solana signature — old bytes do not
+# decode. New actions VoteWithdrawalPaid (0x30) and VoteDeposit (0x32) carry
+# one member signature each over domain-, kind-, item-, deployment- and
+# chain-bound canonical bytes; the engine aggregates. New admin tags
+# PauseBridge (0x20) and SetBridgePayoutConfig (0x21) — tags 0x16-0x18 stay
+# reserved for the partial-liquidation settings. ExecError appends
+# BridgePaused (135), BridgeVoteConflict (136), BridgeVoteInvalid (137),
+# BridgeUnauthorizedOperator (138) and BridgePayoutReportInvalid (139). Old
+# bytes decode except the two payload changes above, but a decoder built
+# before this rejects the new actions and the longer registry -> MAJOR.
+# Approval re-encodes a proposal's stored action, so drain or re-propose
+# pending SetOperatorReceiptRegistry / RecordWithdrawalPayout proposals (and
+# batches, which carry neither) before rollout.
+version = "12.0.0"
 edition = "2021"
 
 [features]
