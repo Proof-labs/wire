@@ -17,11 +17,13 @@ pub enum LiquidationMode {
     Full,
     /// Negative equity in some outcome: closed at mark.
     Insolvent,
+    /// No positive equity after a resolution's fund paid: binaries taken by the funds.
+    Resolution,
 }
 
 impl LiquidationMode {
     /// Every variant, in encoding order.
-    pub const ALL: [Self; 3] = [Self::Partial, Self::Full, Self::Insolvent];
+    pub const ALL: [Self; 4] = [Self::Partial, Self::Full, Self::Insolvent, Self::Resolution];
 
     /// The ABCI attribute value.
     pub const fn as_str(self) -> &'static str {
@@ -29,6 +31,7 @@ impl LiquidationMode {
             Self::Partial => "partial",
             Self::Full => "full",
             Self::Insolvent => "insolvent",
+            Self::Resolution => "resolution",
         }
     }
 }
