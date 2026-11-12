@@ -31,6 +31,8 @@ pub mod query;
 #[cfg(feature = "full")]
 pub mod query_v2;
 #[cfg(feature = "full")]
+pub mod resolution_balances;
+#[cfg(feature = "full")]
 pub mod ticker;
 #[cfg(feature = "full")]
 pub mod triggers;

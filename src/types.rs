@@ -4599,6 +4599,20 @@ pub enum Event {
         realized_pnl: i64,
         deleveraged: u64,
     },
+    /// Cash at the ends of the blocks immediately before and after resolution.
+    /// Settlement balances isolate this resolution from other cash changes in
+    /// either block. Emitted in `after_height`, not in the resolution block.
+    ResolutionBalanceSnapshot {
+        event_id: EventId,
+        owner: [u8; 20],
+        resolution_height: crate::resolution_balances::BalanceHeight,
+        before_height: crate::resolution_balances::BalanceHeight,
+        after_height: crate::resolution_balances::BalanceHeight,
+        balance_before: crate::resolution_balances::AccountCash,
+        balance_after: crate::resolution_balances::AccountCash,
+        settlement_balance_before: crate::resolution_balances::AccountCash,
+        settlement_balance_after: crate::resolution_balances::AccountCash,
+    },
 }
 
 impl Event {
