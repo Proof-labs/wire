@@ -5183,6 +5183,8 @@ pub enum ExecError {
     MarketHalted {
         market: MarketId,
     },
+    /// The Solana withdrawal destination is not an on-curve wallet owner.
+    OffCurveWithdrawalDestination,
 }
 
 impl ExecError {
@@ -5326,6 +5328,7 @@ impl ExecError {
             ExecError::MarketStatusTransitionRefused { .. } => 132,
             ExecError::MarketBacksLiveEvent { .. } => 133,
             ExecError::MarketHalted { .. } => 134,
+            ExecError::OffCurveWithdrawalDestination => 135,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5342,6 +5345,7 @@ impl ExecError {
     /// fix, not just that something failed.
     pub fn meaning(&self) -> &'static str {
         match self {
+            ExecError::OffCurveWithdrawalDestination => "Withdrawal destination must be an on-curve Solana wallet owner; no funds were debited.",
             ExecError::DecodeError(_) => {
                 "Tx envelope or payload could not be decoded as MessagePack at the expected version. \
                  Indicates a malformed wire frame or a client/server version mismatch."
@@ -5840,6 +5844,7 @@ impl fmt::Display for ExecError {
                 write!(f, "withdrawal amount {amount} below minimum {min}")
             }
             ExecError::DuplicateDeposit => write!(f, "duplicate deposit signature"),
+            ExecError::OffCurveWithdrawalDestination => write!(f, "withdrawal destination is off curve"),
             ExecError::InvalidSignature => write!(f, "invalid Ed25519 signature"),
             ExecError::SignatureRequired => write!(f, "signed transaction required"),
             ExecError::AgentNotAuthorized => {
