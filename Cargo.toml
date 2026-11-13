@@ -318,7 +318,7 @@ name = "proof-wire"
 # exact per-interval FundingRate in 1e-8 units; the v2 Market view gains the
 # effective funding terms. Old bytes of those still decode, but a decoder
 # built before it rejects the longer arrays -> MAJOR.
-version = "11.0.0"
+version = "12.0.0"
 edition = "2021"
 
 [features]
