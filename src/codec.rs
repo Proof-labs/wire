@@ -2008,6 +2008,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn void_and_settle_event_wire_vectors_frozen() {
+        use crate::types::{EventId, Outcome, SettleEvent, VoidEvent};
+        for (action, expected) in [
+            (
+                AdminAction::VoidEvent(VoidEvent {
+                    event_id: EventId(42),
+                    yes_price: 400_000,
+                }),
+                "81a9566f69644576656e74922ace00061a80",
+            ),
+            (
+                AdminAction::SettleEvent(SettleEvent {
+                    event_id: EventId(42),
+                    outcome: Outcome::Yes,
+                }),
+                "81ab536574746c654576656e74922aa3596573",
+            ),
+        ] {
+            let canonical = canonical_admin_action_bytes(&action).unwrap();
+            assert_eq!(hex_string(&canonical), expected, "{action:?} drifted");
+            let (decoded, re_encoded) = canonicalize_admin_action(&canonical).unwrap();
+            assert_eq!(re_encoded, canonical);
+            assert_eq!(decoded.action_tag(), action.action_tag());
+        }
+    }
+
     /// Frozen wire vectors for the tag-13 `SetOracleGuards` inner action:
     /// both fields, and each field alone. The externally-tagged
     /// variant name plus positional payload must never drift, since the

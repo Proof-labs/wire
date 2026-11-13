@@ -251,6 +251,23 @@ fn folded_events() -> Vec<Event> {
             timestamp_ms: 1_767_229_200_000,
             signer: Some(SIGNER),
         },
+        Event::EventVoided {
+            event_id: EVENT,
+            yes_price: 400_000,
+            timestamp_ms: 1_800_000_000_000,
+            proposal_id: 17,
+        },
+        Event::ConditionalVoidSettled {
+            event_id: EVENT,
+            market: 100,
+            owner: [0x61; 20],
+            side: Side::Sell,
+            size: 1_313,
+            entry_price: 100_000_000,
+            settlement_price: 110_000_000,
+            branch_weight: 400_000,
+            realized_pnl: -52_520_000,
+        },
         Event::DepositConfirmed {
             owner: OWNER,
             amount: 5_000_000,
