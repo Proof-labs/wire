@@ -1,5 +1,11 @@
 [package]
 name = "proof-wire"
+# Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
+# PnL of a partial close and of the insurance fund's takeover netting; the
+# closed funding debt stays in FundingSettled. No bytes change; consumers that
+# read it as cash booked without a fill must stop adding it to PnL derived from
+# TradeExecuted -> MINOR.
+#
 # Unreleased: additive query_v2 insurance fund read views:
 # InsuranceFundDirectory, InsuranceFundState, InsuranceFundLedger,
 # InsuranceFundPosition, InsurancePositionNotional, NotionalMicroUsdc,
