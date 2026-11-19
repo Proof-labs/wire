@@ -870,6 +870,19 @@ pub enum AdminAction {
     /// Delisted. Delisting settles every open position at the last certified
     /// price and retires the market's oracle.
     SetMarketStatus(SetMarketStatus),
+    /// Pauses the bridge: payout-lease claims, payout reports and bridge
+    /// votes refuse while the stored halt flag is set. Risk-reducing and
+    /// reversible only by the quorum (`UnpauseBridge`); the flag is engine
+    /// state, so the pause binds every watcher, not just those that saw the
+    /// proposal.
+    PauseBridge,
+    /// Writes (or replaces) the bridge payout configuration: the Squads
+    /// vault withdrawals pay from and the wallet that collects its rent.
+    /// Payout reports refuse while it is unset or names a different vault.
+    SetBridgePayoutConfig(BridgePayoutConfig),
+    /// Writes the caps on what member votes may credit through `VoteDeposit`
+    /// (DEC-292), a ledger separate from `SetDepositLimit`.
+    SetDepositReceiptLimit(SetDepositReceiptLimit),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -974,6 +987,11 @@ pub struct SetOperatorReceiptRegistry {
     /// The *n* operator ed25519 verification keys, in registry index order.
     /// Must be non-empty and duplicate-free.
     pub operator_keys: Vec<[u8; 32]>,
+    /// The operators' engine signer addresses, in the same registry index
+    /// order as `operator_keys`. Must be the same length, duplicate-free and
+    /// all non-zero — the vote-model payout gates admit these and nothing
+    /// else.
+    pub operator_owners: Vec<[u8; 20]>,
 }
 
 /// Payload of [`AdminAction::SetWithdrawalLimit`]: the per-account fixed
@@ -989,6 +1007,24 @@ pub struct SetWithdrawalLimit {
     /// Fixed window length in seconds. Must be >= 1; production uses
     /// 86_400 (24 hours, CU-06).
     pub window_secs: u32,
+}
+
+/// Payload of [`AdminAction::SetBridgePayoutConfig`]: the Squads vault
+/// withdrawals pay from and the wallet that collects its rent. Absent
+/// configuration means no payout report can be recorded (the vault check
+/// fails closed), while claims and votes are unaffected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgePayoutConfig {
+    /// The Squads v4 vault withdrawals pay from — the multisig the operator
+    /// receipt registry members jointly control. Every watcher verifies the
+    /// on-chain multisig against this address before it proposes or approves.
+    #[serde(with = "crate::wire_bytes")]
+    pub payout_multisig: [u8; 32],
+    /// The vault's rent-refund collector (an ordinary ops wallet). Named in
+    /// engine config so the multisig's shape is fully checkable on chain;
+    /// must differ from `payout_multisig`.
+    #[serde(with = "crate::wire_bytes")]
+    pub ops_wallet: [u8; 32],
 }
 
 /// CU-06: one account's withdrawal-window usage, as a bounded rolling
@@ -1041,6 +1077,21 @@ pub struct SetDepositLimit {
     /// Most that all `ConfirmDeposit` and `Deposit` credits together may add
     /// inside any rolling span of `window_secs`, in microUSDC, across every
     /// account. 0 disables the window cap.
+    pub window_cap_micro_usdc: u64,
+    /// Rolling-window length in seconds. Must be >= 1.
+    pub window_secs: u32,
+}
+
+/// Payload of [`AdminAction::SetDepositReceiptLimit`]: bounds on what member
+/// votes may credit through `VoteDeposit`. The window is fixed once set.
+/// Each cap is independent and 0 turns it off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetDepositReceiptLimit {
+    /// Largest amount one vote-credited deposit may credit, in microUSDC.
+    /// 0 disables the per-deposit maximum.
+    pub per_receipt_max_micro_usdc: u64,
+    /// Most all vote-credited deposits together may add inside any rolling
+    /// span of `window_secs`, in microUSDC. 0 disables the window cap.
     pub window_cap_micro_usdc: u64,
     /// Rolling-window length in seconds. Must be >= 1.
     pub window_secs: u32,
@@ -1265,6 +1316,14 @@ pub enum AdminActionType {
     SettleEvent = 30,
     /// Moves a perpetual to ReduceOnly, back to Trading, or to Delisted.
     SetMarketStatus = 31,
+    /// Pauses the bridge (stored halt flag; cleared by `UnpauseBridge`).
+    /// Tags 0x16-0x18 are reserved for the partial-liquidation settings, so
+    /// the next free tags begin at 0x20.
+    PauseBridge = 32,
+    /// Writes the bridge payout configuration (Squads vault + ops wallet).
+    SetBridgePayoutConfig = 33,
+    /// Writes the vote-credited deposit limits (DEC-292).
+    SetDepositReceiptLimit = 34,
 }
 
 impl AdminAction {
@@ -1295,6 +1354,9 @@ impl AdminAction {
             Self::VoidEvent(_) => AdminActionType::VoidEvent,
             Self::SettleEvent(_) => AdminActionType::SettleEvent,
             Self::SetMarketStatus(_) => AdminActionType::SetMarketStatus,
+            Self::PauseBridge => AdminActionType::PauseBridge,
+            Self::SetBridgePayoutConfig(_) => AdminActionType::SetBridgePayoutConfig,
+            Self::SetDepositReceiptLimit(_) => AdminActionType::SetDepositReceiptLimit,
         }
     }
 
@@ -2605,97 +2667,17 @@ pub struct FailWithdrawal {
 }
 
 // ---------------------------------------------------------------------------
-// Bridge custody: receipt-gated terminal withdrawal actions
+// Bridge custody: withdrawal payout actions
 // ---------------------------------------------------------------------------
 //
-// Operator-multisig phase. The legacy relayer `ConfirmWithdrawal` (0x0A) /
-// `FailWithdrawal` (0x0B) trust an authorized-relayer assertion; these new
-// action_types carry a `bridge_core::BridgeReceiptV1` and its operator
-// ed25519 proof, and the engine verifies the quorum in consensus before
-// crediting/refunding — no trusted courier assertion. Additive: the legacy
-// actions stay decodable for the shadow/canary phase and rollback.
-
-/// Engine-side mirror of `bridge_core::BridgeReceiptV1` (fixed 327-byte wire
-/// form). Carried by the receipt-gated actions; the engine rebuilds the
-/// `BridgeReceiptV1`, re-encodes, and verifies the operator quorum signed
-/// exactly those bytes. Every field is signed, so tampering fails closed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeWithdrawalReceipt {
-    /// `bridge_core::DeploymentId` — pins Proof/Solana genesis, program, mint.
-    #[serde(with = "crate::wire_bytes")]
-    pub deployment_id: [u8; 32],
-    /// `SHA256(Borsh(WithdrawalAuthorizationV1))`.
-    #[serde(with = "crate::wire_bytes")]
-    pub authorization_digest: [u8; 32],
-    pub withdrawal_id: u64,
-    /// `1 = Paid`, `2 = Cancelled`.
-    pub terminal_state: u8,
-    /// `bridge_core::VaultTier` wire byte.
-    pub vault_tier: u8,
-    #[serde(with = "crate::wire_bytes")]
-    pub proof_owner: [u8; 20],
-    #[serde(with = "crate::wire_bytes")]
-    pub destination_owner: [u8; 32],
-    #[serde(with = "crate::wire_bytes")]
-    pub destination_token_acct: [u8; 32],
-    pub amount_micro_usdc: u64,
-    pub fee_micro_usdc: u64,
-    pub authorization_signer_epoch: u64,
-    /// Solana tx signature (64 bytes). `Vec<u8>` because serde has no `[u8; 64]`.
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub solana_tx_signature: Vec<u8>,
-    pub finalized_slot: u64,
-    #[serde(with = "crate::wire_bytes")]
-    pub finalized_blockhash: [u8; 32],
-    /// `1 = operator m-of-n`, `2 = validator stake`.
-    pub receipt_quorum_kind: u8,
-    pub receipt_authority_epoch: u64,
-}
-
-/// Operator ed25519 proof wrapper — mirrors
-/// `bridge_core::ReceiptProofV1::OperatorEd25519`. Bitmap plus one signature
-/// per set bit in ascending registry order; structure and every signature
-/// are checked by the quorum-proof verifier.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OperatorReceiptProof {
-    /// `ceil(registry_len / 8)` bytes; unused high bits zero.
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub signer_bitmap: Vec<u8>,
-    /// One 64-byte ed25519 signature per set bit, ascending set-bit order.
-    pub signatures: Vec<Vec<u8>>,
-}
-
-/// Receipt-gated confirmation: a finalized `Paid` `BridgeReceiptV1`. Replaces
-/// the relayer assertion in `ConfirmWithdrawal`. Permissionless to submit —
-/// the operator quorum in the receipt is the authority, not the envelope
-/// signer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConfirmWithdrawalReceipt {
-    pub receipt: BridgeWithdrawalReceipt,
-    pub proof: OperatorReceiptProof,
-}
-
-/// Receipt-gated failure: a finalized `Cancelled` `BridgeReceiptV1`. Replaces
-/// the free-text `FailWithdrawal`; refunds `amount` only against a positive
-/// on-chain cancellation proof, never a timeout.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FailWithdrawalReceipt {
-    pub receipt: BridgeWithdrawalReceipt,
-    pub proof: OperatorReceiptProof,
-}
-
-/// Records the operator-quorum-signed `WithdrawalAuthorizationV1` for a pending
-/// withdrawal, binding its digest to the record so a terminal receipt can only
-/// settle an authorization the quorum actually issued. Permissionless to submit
-/// — the operator quorum in `proof` is the authority, not the envelope signer.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AuthorizeWithdrawal {
-    /// The canonical `WithdrawalAuthorizationV1` bytes the quorum signed
-    /// (`bridge_core::WithdrawalAuthorizationV1::encode`, fixed 221 bytes).
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub authorization: Vec<u8>,
-    pub proof: OperatorReceiptProof,
-}
+// The vote model. The receipt-gated actions that once lived in this section
+// (`AuthorizeWithdrawal` 0x24, `ConfirmWithdrawalReceipt` 0x22,
+// `FailWithdrawalReceipt` 0x23) retired with wire 12: distinct operator
+// registry members now vote `VoteWithdrawalPaid` (0x30) / `VoteDeposit`
+// (0x32), the payout moves from a governed Squads vault the members control,
+// and the engine aggregates the signatures in consensus — no trusted courier
+// assertion, and no combined proof that would need a watcher-to-watcher
+// channel.
 
 /// Single-holder claim on a `Pending` withdrawal's Solana payout. The
 /// holder named here is the only watcher that may sign the
@@ -2715,35 +2697,29 @@ pub struct ClaimWithdrawalPayout {
     pub holder: [u8; 20],
 }
 
-/// Report the Solana signature of a payout-lease holder's transfer for one
-/// withdrawal, recorded before the holder broadcasts it, while its lease is
-/// live. The engine stores it as the withdrawal's payout record and never
-/// derives anything from it — peer watchers read the record and verify the
-/// signature against Solana themselves before re-signing a withdrawal whose
-/// lease has lapsed, so a recorded signature that never landed simply fails
-/// that check. Accepted only from the withdrawal's last payout-lease holder
-/// (the lease may already have lapsed — a report submitted at sign time can
-/// land after the lease expired, and refusing it would delete the only
-/// evidence the successor could check), while the withdrawal is still
-/// `Pending`. Every distinct signature is retained until settlement.
+/// Report the Squads vault payout a payout-lease holder proposed for one
+/// `Pending` withdrawal, naming it by (vault, transaction index).
+/// Trolls verify the payout's SPL memo carries this withdrawal id before approving.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecordWithdrawalPayout {
     pub withdrawal_id: u64,
     /// The reporting watcher's owner address, as in
     /// [`ClaimWithdrawalPayout::holder`]. Must equal the envelope signer's
-    /// owner and the payout lease's holder.
+    /// owner, the payout lease's holder, and a member of the operator
+    /// receipt registry.
     #[serde(with = "crate::wire_bytes")]
     pub holder: [u8; 20],
-    /// Solana transaction signature of the reported transfer, in the same
-    /// raw form as `ConfirmDeposit.solana_tx_sig`. Exactly 64 bytes: any other
-    /// length does not decode. Stored byte-exact; the content is not validated.
-    #[serde(with = "crate::wire_bytes::solana_signature")]
-    pub solana_signature: Vec<u8>,
-    /// The last Solana block height at which the reported transfer could
-    /// still be included. Expiry prevents future inclusion; it does not prove
-    /// the transfer never landed. Readers require a finalized height past
-    /// this bound and a subsequent successful historical status lookup.
-    pub last_valid_block_height: std::num::NonZeroU64,
+    /// The Squads vault the payout pays from. Must equal the governed
+    /// [`BridgePayoutConfig::payout_multisig`], so a report can never pin
+    /// payout evidence to a vault the quorum has not configured.
+    #[serde(with = "crate::wire_bytes")]
+    pub vault: [u8; 32],
+    /// The Squads vault-transaction index of the recorded payout proposal,
+    /// stored byte-exact as reported.
+    pub squads_transaction_index: u32,
+    /// The registry epoch the proposal was made under: at most the current
+    /// one, and judged by that epoch's roster while it is retained.
+    pub registry_epoch: u64,
 }
 
 /// Engine operator receipt registry: the epoch-pinned named
@@ -2763,6 +2739,255 @@ pub struct OperatorReceiptRegistry {
     pub threshold: u16,
     /// The *n* operator ed25519 verification keys, in registry index order.
     pub operator_keys: Vec<[u8; 32]>,
+    /// The *n* operators' engine signer addresses (keccak-256 of each
+    /// operator's engine key, last 20 bytes), in the SAME registry index
+    /// order as `operator_keys`: `operator_owners[i]` is the chain account
+    /// `operator_keys[i]` controls. The payout-lease and payout-record gates
+    /// admit an address only from here — the custody capability grant and
+    /// the legacy relayer allowlist do not apply to the vote-model payout
+    /// path. `#[serde(default)]`: registry rows stored before wire 12 decode
+    /// with an EMPTY roster, which fails closed — no address can claim a
+    /// payout lease until the next governed rotation states the owners.
+    #[serde(default)]
+    pub operator_owners: Vec<[u8; 20]>,
+}
+
+/// Domain separator absorbed into every bridge vote message. One constant
+/// domain means a vote signature can never verify as a receipt signature or
+/// vice versa, even over coincidentally equal bytes.
+pub const BRIDGE_VOTE_DOMAIN: &[u8] = b"PROOF_BRIDGE_VOTE_V1";
+
+/// Vote-message kind byte: settle one withdrawal as `Paid`.
+pub const BRIDGE_VOTE_KIND_WITHDRAWAL_PAID: u8 = 1;
+
+/// Vote-message kind byte: credit one observed deposit.
+pub const BRIDGE_VOTE_KIND_DEPOSIT_CREDIT: u8 = 2;
+
+/// Vote-message kind byte: a recorded payout is dead.
+pub const BRIDGE_VOTE_KIND_PAYOUT_DEAD: u8 = 4;
+
+/// One registry member's vote to settle one withdrawal as `Paid`.
+/// Individually submittable — no combined proof and no troll-to-troll
+/// channel: the engine aggregates distinct member signatures and settles at
+/// the roster's threshold. `signature` is a 64-byte ed25519 signature over
+/// [`Self::vote_message`], verified against the registry named by
+/// `registry_epoch`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteWithdrawalPaid {
+    pub withdrawal_id: u64,
+    /// The Squads vault of the recorded payout this vote attests.
+    #[serde(with = "crate::wire_bytes")]
+    pub vault: [u8; 32],
+    /// The recorded payout's Squads vault-transaction index.
+    pub squads_transaction_index: u32,
+    /// The bridge deployment, as the registry's; signed, so a vote cannot replay on another deployment.
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The envelope's chain id; signed, so a vote cannot replay on another chain.
+    #[serde(with = "crate::wire_bytes")]
+    pub chain_id: [u8; 32],
+    /// The registry epoch the vote is bound to; must be the current one, so
+    /// a rotation invalidates in-flight votes instead of mixing rosters.
+    pub registry_epoch: u64,
+    /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
+    /// length does not decode.
+    #[serde(with = "crate::wire_bytes::solana_signature")]
+    pub signature: Vec<u8>,
+}
+
+impl VoteWithdrawalPaid {
+    /// The canonical bytes every member signs: domain, kind, withdrawal id,
+    /// the payout's (vault, index), deployment, chain and epoch.
+    pub fn vote_message(&self) -> Vec<u8> {
+        let mut message = Vec::with_capacity(2 + 8 + 32 + 4 + 32 + 32 + 8);
+        message.extend_from_slice(BRIDGE_VOTE_DOMAIN);
+        message.push(BRIDGE_VOTE_KIND_WITHDRAWAL_PAID);
+        message.extend_from_slice(&self.withdrawal_id.to_be_bytes());
+        message.extend_from_slice(&self.vault);
+        message.extend_from_slice(&self.squads_transaction_index.to_be_bytes());
+        message.extend_from_slice(&self.deployment_id);
+        message.extend_from_slice(&self.chain_id);
+        message.extend_from_slice(&self.registry_epoch.to_be_bytes());
+        message
+    }
+}
+
+/// One registry member's vote to credit one observed Solana deposit, as the
+/// vote-model replacement for the bare relayer `ConfirmDeposit` assertion.
+/// Aggregated and settled exactly like [`VoteWithdrawalPaid`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteDeposit {
+    /// The receiving engine account the credit pays.
+    #[serde(with = "crate::wire_bytes")]
+    pub owner: [u8; 20],
+    /// The observed USDC amount in micro-USDC.
+    pub amount_micro_usdc: u64,
+    /// The observed Solana transfer signature — half of the deposit dedup
+    /// identity. Exactly 64 bytes.
+    #[serde(with = "crate::wire_bytes::solana_signature")]
+    pub solana_tx_sig: Vec<u8>,
+    /// Instruction locator, the other half of the dedup identity, as in
+    /// `ConfirmDeposit.locator`.
+    pub locator: Option<DepositLocator>,
+    /// The bridge deployment, as the registry's; signed, so a vote cannot replay on another deployment.
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The envelope's chain id; signed, so a vote cannot replay on another chain.
+    #[serde(with = "crate::wire_bytes")]
+    pub chain_id: [u8; 32],
+    /// The registry epoch the vote is bound to; must be the current one.
+    pub registry_epoch: u64,
+    /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
+    /// length does not decode.
+    #[serde(with = "crate::wire_bytes::solana_signature")]
+    pub signature: Vec<u8>,
+}
+
+impl VoteDeposit {
+    /// The canonical bytes every member signs for this vote: domain, kind,
+    /// and the full credit identity (owner, amount, signature, locator,
+    /// epoch). Two members voting on the same observation sign identical
+    /// bytes; a different observation for a transfer identity that already
+    /// has votes is an attributable conflict.
+    pub fn vote_message(&self) -> Vec<u8> {
+        let locator_suffix = self.locator.unwrap_or(DepositLocator::LEGACY).id_suffix();
+        let mut message = Vec::with_capacity(2 + 20 + 8 + 64 + 4 + 32 + 32 + 8);
+        message.extend_from_slice(BRIDGE_VOTE_DOMAIN);
+        message.push(BRIDGE_VOTE_KIND_DEPOSIT_CREDIT);
+        message.extend_from_slice(&self.owner);
+        message.extend_from_slice(&self.amount_micro_usdc.to_be_bytes());
+        message.extend_from_slice(&self.solana_tx_sig);
+        message.extend_from_slice(&locator_suffix);
+        message.extend_from_slice(&self.deployment_id);
+        message.extend_from_slice(&self.chain_id);
+        message.extend_from_slice(&self.registry_epoch.to_be_bytes());
+        message
+    }
+
+    /// The dedup identity this vote's credit would consume — the same
+    /// `(signature, locator)` pair a `ConfirmDeposit` credit records — so a
+    /// vote can never credit a transfer the legacy path already credited or
+    /// marked failed.
+    pub fn deposit_identity(&self) -> (Vec<u8>, Option<DepositLocator>) {
+        (self.solana_tx_sig.clone(), self.locator)
+    }
+}
+
+/// One registry member's vote that the recorded payout is dead (rejected on
+/// Squads); the roster threshold clears the withdrawal's payout slot.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VoteWithdrawalPayoutDead {
+    pub withdrawal_id: u64,
+    #[serde(with = "crate::wire_bytes")]
+    pub vault: [u8; 32],
+    pub squads_transaction_index: u32,
+    /// The bridge deployment, as the registry's; signed, so a vote cannot replay on another deployment.
+    #[serde(with = "crate::wire_bytes")]
+    pub deployment_id: [u8; 32],
+    /// The envelope's chain id; signed, so a vote cannot replay on another chain.
+    #[serde(with = "crate::wire_bytes")]
+    pub chain_id: [u8; 32],
+    /// Must be the current registry epoch.
+    pub registry_epoch: u64,
+    /// 64-byte ed25519 signature over [`Self::vote_message`].
+    #[serde(with = "crate::wire_bytes::solana_signature")]
+    pub signature: Vec<u8>,
+}
+
+impl VoteWithdrawalPayoutDead {
+    /// The canonical bytes every member signs: domain, kind, withdrawal id,
+    /// the payout's (vault, index), deployment, chain and epoch.
+    pub fn vote_message(&self) -> Vec<u8> {
+        let mut message = Vec::with_capacity(2 + 8 + 32 + 4 + 32 + 32 + 8);
+        message.extend_from_slice(BRIDGE_VOTE_DOMAIN);
+        message.push(BRIDGE_VOTE_KIND_PAYOUT_DEAD);
+        message.extend_from_slice(&self.withdrawal_id.to_be_bytes());
+        message.extend_from_slice(&self.vault);
+        message.extend_from_slice(&self.squads_transaction_index.to_be_bytes());
+        message.extend_from_slice(&self.deployment_id);
+        message.extend_from_slice(&self.chain_id);
+        message.extend_from_slice(&self.registry_epoch.to_be_bytes());
+        message
+    }
+}
+
+/// One registry member's vote to pause the bridge, signed by the member's
+/// own engine key; the roster threshold of votes pauses it.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VotePauseBridge {
+    /// The voting member's owner address; must equal the envelope signer.
+    #[serde(with = "crate::wire_bytes")]
+    pub voter: [u8; 20],
+    /// Must be the current registry epoch.
+    pub registry_epoch: u64,
+}
+
+/// One member's stored pause vote.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgePauseVote {
+    pub voter: [u8; 20],
+    pub registry_epoch: u64,
+    /// Block time the vote was cast; it stops counting a TTL later.
+    pub cast_at_ms: u64,
+}
+
+/// Every stored pause vote, in one row cleared on pause and unpause.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgePauseVotes {
+    pub votes: Vec<BridgePauseVote>,
+}
+
+/// What a member attests about the recorded payout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PayoutVerdict {
+    Paid,
+    Dead,
+}
+
+/// One member's vote on a withdrawal's recorded payout.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalMemberVote {
+    /// The member's ed25519 verification key.
+    pub voter: [u8; 32],
+    pub registry_epoch: u64,
+    pub verdict: PayoutVerdict,
+    pub vault: [u8; 32],
+    pub squads_transaction_index: u32,
+    #[serde(with = "crate::wire_bytes::vec")]
+    pub signature: Vec<u8>,
+    /// Block time the vote was cast; it stops counting a TTL later.
+    pub cast_at_ms: u64,
+}
+
+/// Every member's vote on one withdrawal, in one row deleted when it goes
+/// terminal.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalVoteRecord {
+    pub votes: Vec<WithdrawalMemberVote>,
+}
+
+/// One member's deposit vote: the credit it observed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositMemberVote {
+    /// The member's ed25519 verification key.
+    pub voter: [u8; 32],
+    pub registry_epoch: u64,
+    pub owner: [u8; 20],
+    pub amount_micro_usdc: u64,
+    #[serde(with = "crate::wire_bytes::vec")]
+    pub signature: Vec<u8>,
+    /// Block time the vote was cast; it stops counting a TTL later.
+    pub cast_at_ms: u64,
+}
+
+/// Every member's vote on one deposit, in one row deleted when the deposit
+/// credits or the legacy path confirms or fails it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositVoteRecord {
+    #[serde(with = "crate::wire_bytes::vec")]
+    pub solana_tx_sig: Vec<u8>,
+    pub locator: Option<DepositLocator>,
+    pub votes: Vec<DepositMemberVote>,
 }
 
 /// Why a Solana deposit was rejected by the relayer. Mirrors the small
@@ -3272,24 +3497,21 @@ pub struct WithdrawalPayoutLease {
     pub expires_at_height: u64,
 }
 
-/// The Solana payout signature one payout-lease holder reported for one
-/// withdrawal. Distinct signatures are retained separately; reporting an
-/// existing signature never changes its holder or bound. All entries clear
-/// when the withdrawal becomes terminal. Readers verify every signature
-/// before authorizing a different payout.
+/// A withdrawal's single payout slot: the Squads payout its lease holder
+/// recorded. Cleared by the terminal transition or a threshold of dead votes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithdrawalPayoutRecord {
     /// The reporting lease holder, as in [`ClaimWithdrawalPayout::holder`].
     #[serde(with = "crate::wire_bytes")]
     pub holder: [u8; 20],
-    /// Solana transaction signature, stored byte-exact as reported.
-    #[serde(with = "crate::wire_bytes::vec")]
-    pub solana_signature: Vec<u8>,
-    /// The reported transfer's last valid block height, as in
-    /// [`RecordWithdrawalPayout::last_valid_block_height`]. Every record
-    /// carries one. Passing the bound prevents future inclusion but does not
-    /// establish whether the transfer already landed.
-    pub last_valid_block_height: std::num::NonZeroU64,
+    /// The Squads vault the payout pays from, as in
+    /// [`RecordWithdrawalPayout::vault`].
+    #[serde(with = "crate::wire_bytes")]
+    pub vault: [u8; 32],
+    /// The recorded Squads vault-transaction index.
+    pub squads_transaction_index: u32,
+    /// The registry epoch the report bound to.
+    pub registry_epoch: u64,
 }
 
 /// Protocol withdrawal policy: the flat fee and the minimum net withdrawal.
@@ -3885,16 +4107,20 @@ pub enum Event {
         /// Exclusive expiry height, as in [`WithdrawalPayoutLease`].
         expires_at_height: u64,
     },
-    /// The withdrawal's last payout-lease holder recorded the signature of
-    /// its payout transfer for this withdrawal — before broadcasting it.
-    /// Peer watchers check the recorded signature on Solana before
-    /// re-signing a lapsed-lease withdrawal; the engine itself treats the
-    /// report as a claim to verify, not a fact.
+    /// The withdrawal's last payout-lease holder recorded the Squads vault
+    /// payout it created for this withdrawal — before peers approve it.
+    /// Peer members rebuild the exact transfer from the engine's withdrawal
+    /// record and approve the recorded proposal; the engine itself treats
+    /// the report as a claim to verify, not a fact.
     WithdrawalPayoutRecorded {
         withdrawal_id: u64,
         holder: [u8; 20],
-        /// Raw on-chain sig bytes, as in [`WithdrawalPayoutRecord`].
-        solana_signature: Vec<u8>,
+        /// The Squads vault the payout pays from, as in
+        /// [`RecordWithdrawalPayout::vault`].
+        #[serde(with = "crate::wire_bytes")]
+        vault: [u8; 32],
+        /// The recorded Squads vault-transaction index.
+        squads_transaction_index: u32,
     },
     DepositConfirmed {
         owner: [u8; 20],
@@ -3915,13 +4141,6 @@ pub enum Event {
         reason: FailDepositReason,
         signer: Option<[u8; 20]>,
     },
-    WithdrawalConfirmed {
-        withdrawal_id: u64,
-        solana_tx_sig: Vec<u8>,
-        /// Address that signed the action. `None` when confirmed via an
-        /// operator-quorum receipt, which has no single signer.
-        signer: Option<[u8; 20]>,
-    },
     WithdrawalFailed {
         withdrawal_id: u64,
         owner: [u8; 20],
@@ -3932,9 +4151,13 @@ pub enum Event {
         /// operator-quorum receipt, which has no single signer.
         signer: Option<[u8; 20]>,
     },
-    WithdrawalAuthorized {
+    WithdrawalConfirmed {
         withdrawal_id: u64,
-        authorization_digest: [u8; 32],
+        solana_tx_sig: Vec<u8>,
+        /// Address that signed the action. `None` when confirmed via an
+        /// operator-quorum receipt (receipt era) or a threshold of member
+        /// votes (the vote model).
+        signer: Option<[u8; 20]>,
     },
     AgentApproved {
         owner: [u8; 20],
@@ -4379,6 +4602,65 @@ pub enum Event {
         operator_count: u32,
         proposal_id: u64,
     },
+    /// A registry member voted to settle one withdrawal as `Paid`. Emitted
+    /// per accepted vote; the withdrawal itself settles at the threshold via
+    /// `WithdrawalConfirmed` (with no Solana signature — under the vote
+    /// model the payout is a governed Squads transaction the engine does not
+    /// see).
+    WithdrawalPaidVoteRecorded {
+        withdrawal_id: u64,
+        /// The voting member's ed25519 verification key.
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 32],
+        /// Distinct votes recorded after this one, and the threshold they
+        /// settle at.
+        distinct_votes: u16,
+        threshold: u16,
+    },
+    /// A registry member voted to credit one observed deposit. Emitted per
+    /// accepted vote; the credit itself lands at the threshold via
+    /// `DepositConfirmed` (signer `None` — a quorum, not a relayer).
+    DepositVoteRecorded {
+        /// The observed Solana transfer signature the votes are about.
+        solana_tx_sig: Vec<u8>,
+        /// The voting member's ed25519 verification key.
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 32],
+        distinct_votes: u16,
+        threshold: u16,
+    },
+    /// A bridge vote was refused because it conflicts with the votes already
+    /// recorded for its item within one registry epoch: a different
+    /// observation for a transfer identity that already has votes
+    /// (deposits), or any same-epoch divergence from the binding.
+    BridgeVoteConflict {
+        /// The voting member whose vote was refused.
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 32],
+        reason: String,
+    },
+    /// A threshold-reaching deposit credit is deferred because a governed
+    /// deposit limit refuses it. The votes are retained and the credit
+    /// re-attempts on the next vote once the limits allow it — a limit
+    /// refusal never consumes a deposit's votes.
+    DepositVoteHeld {
+        solana_tx_sig: Vec<u8>,
+        reason: String,
+    },
+    /// The admin quorum paused the bridge. The stored halt flag makes every
+    /// watcher refuse payout-lease claims, payout reports and bridge votes
+    /// until `BridgeUnpauseAuthorized` clears it — the inverse arm now both
+    /// emits its decision record and lifts the flag.
+    BridgePauseAuthorized { proposal_id: u64 },
+    /// The admin quorum wrote (or replaced) the bridge payout configuration.
+    /// Payout reports refuse while it is unset or names a different vault.
+    BridgePayoutConfigSet {
+        #[serde(with = "crate::wire_bytes")]
+        payout_multisig: [u8; 32],
+        #[serde(with = "crate::wire_bytes")]
+        ops_wallet: [u8; 32],
+        proposal_id: u64,
+    },
     /// An engine upgrade moved a resting order onto another book, keeping its
     /// id, owner, quantity and queue priority. A No order at `q` rests on the
     /// event's one book as the opposite side at `$1 − q`.
@@ -4609,6 +4891,37 @@ pub enum Event {
         balance_after: crate::resolution_balances::AccountCash,
         settlement_balance_before: crate::resolution_balances::AccountCash,
         settlement_balance_after: crate::resolution_balances::AccountCash,
+    },
+    /// A registry member voted to pause the bridge.
+    BridgePauseVoteRecorded {
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 20],
+        distinct_votes: u16,
+        threshold: u16,
+    },
+    /// The registry threshold of pause votes paused the bridge.
+    BridgePausedByVote { registry_epoch: u64 },
+    /// A registry member voted the recorded payout dead.
+    WithdrawalPayoutDeadVoteRecorded {
+        withdrawal_id: u64,
+        #[serde(with = "crate::wire_bytes")]
+        voter: [u8; 32],
+        distinct_votes: u16,
+        threshold: u16,
+    },
+    /// The threshold of dead votes cleared the withdrawal's payout slot.
+    WithdrawalPayoutCleared {
+        withdrawal_id: u64,
+        #[serde(with = "crate::wire_bytes")]
+        vault: [u8; 32],
+        squads_transaction_index: u32,
+    },
+    /// The admin quorum wrote the vote-credited deposit limits.
+    DepositReceiptLimitSet {
+        per_receipt_max_micro_usdc: u64,
+        window_cap_micro_usdc: u64,
+        window_secs: u32,
+        proposal_id: u64,
     },
 }
 
@@ -4841,6 +5154,52 @@ pub enum ExecError {
     /// deployment (id/owner/amount/destination/epoch/terminal-state
     /// mismatch). Names the field that diverged.
     BridgeReceiptMismatch(String),
+    /// The bridge is paused by the admin quorum: payout-lease claims,
+    /// payout reports and bridge votes refuse while the stored halt flag is
+    /// set, until `UnpauseBridge` clears it.
+    BridgePaused,
+    /// A bridge vote conflicted with the votes already recorded for its
+    /// item — a different observation for a transfer identity that already
+    /// has votes, or a same-epoch divergence. Names the divergence.
+    BridgeVoteConflict(String),
+    /// A bridge vote failed verification: the signature did not verify
+    /// against the named registry roster, or the vote names a non-current
+    /// epoch. Names the failure.
+    BridgeVoteInvalid(String),
+    /// The submitter is not a member of the operator receipt registry's
+    /// owner roster — the only addresses the vote-model payout gates admit.
+    BridgeUnauthorizedOperator,
+    /// A payout report failed its binding checks: the vault is not the
+    /// governed payout multisig, the epoch is not current, or the lease does
+    /// not name the submitter. Names the field that failed.
+    BridgePayoutReportInvalid(String),
+    /// The holder already has the most payout leases open.
+    PayoutLeaseLimitReached {
+        cap: u64,
+    },
+    /// A vote-credited deposit would pass the `SetDepositReceiptLimit` caps.
+    DepositReceiptLimitExceeded {
+        attempted: u64,
+        /// The per-deposit maximum, or the window cap when
+        /// `window_frees_at_ms` is set.
+        cap: u64,
+        /// For the window cap, the unix ms the oldest in-window credit ages out.
+        window_frees_at_ms: Option<u64>,
+    },
+    /// The withdrawal already has a recorded payout.
+    WithdrawalPayoutSlotOccupied,
+    /// The Squads payout is already recorded for another withdrawal.
+    PayoutRecordedForAnotherWithdrawal {
+        withdrawal_id: u64,
+    },
+    /// The pending withdrawal set is full; nothing was debited.
+    PendingWithdrawalsFull {
+        cap: u64,
+    },
+    /// The owner already has the most pending withdrawals one owner may hold; nothing was debited.
+    OwnerPendingWithdrawalsFull {
+        cap: u64,
+    },
     /// The net withdrawal `amount` is below the effective minimum (the
     /// configured `min_withdrawal`, floored at the flat fee), so the payout
     /// would be worth less than it costs to settle. Dust-griefing gate.
@@ -5071,8 +5430,6 @@ pub enum ExecError {
     /// never claimed. Only the last lease holder may report a payout
     /// signature.
     WithdrawalPayoutLeaseNotHeld,
-    /// The withdrawal already retains the maximum number of payout signatures.
-    WithdrawalPayoutRecordLimitReached,
     /// The order cannot carry the attached SL/TP limbs: trigger fields were
     /// sent on a reduce-only order, on a market kind the trigger contract
     /// does not admit, while the trigger feature is inactive at this height,
@@ -5360,7 +5717,6 @@ impl ExecError {
             // switch; never reassigned.
             ExecError::WithdrawalPayoutLeaseActive => 91,
             ExecError::WithdrawalPayoutLeaseNotHeld => 128,
-            ExecError::WithdrawalPayoutRecordLimitReached => 129,
             ExecError::EventAlreadyExists(_) => 92,
             ExecError::EventNotFound(_) => 93,
             ExecError::UnderlyingAlreadyAttached { .. } => 94,
@@ -5404,6 +5760,17 @@ impl ExecError {
             ExecError::SubAccountCapReached { .. } => 141,
             ExecError::WorkCapReached { .. } => 142,
             ExecError::UserImAboveNotional { .. } => 143,
+            ExecError::BridgePaused => 144,
+            ExecError::BridgeVoteConflict(_) => 145,
+            ExecError::BridgeVoteInvalid(_) => 146,
+            ExecError::BridgeUnauthorizedOperator => 147,
+            ExecError::BridgePayoutReportInvalid(_) => 148,
+            ExecError::PendingWithdrawalsFull { .. } => 149,
+            ExecError::WithdrawalPayoutSlotOccupied => 150,
+            ExecError::DepositReceiptLimitExceeded { .. } => 151,
+            ExecError::PayoutLeaseLimitReached { .. } => 152,
+            ExecError::OwnerPendingWithdrawalsFull { .. } => 153,
+            ExecError::PayoutRecordedForAnotherWithdrawal { .. } => 154,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5577,10 +5944,9 @@ impl ExecError {
                  moment the oldest in-window credit ages out are on the error's Display and log."
             }
             ExecError::WithdrawalTerminalGated(_) => {
-                "A retired legacy relayer withdrawal terminal (ConfirmWithdrawal / FailWithdrawal) \
-                 was submitted at or after the bridge receipt cutover. (An operator-receipt \
-                 terminal submitted before the cutover instead fails as a decode error, code 1, \
-                 byte-identically to the pre-upgrade binary.)"
+                "A retired single-signer bridge terminal (ConfirmWithdrawal / FailWithdrawal / \
+                 ConfirmDeposit / FailDeposit) was submitted; registry votes settle withdrawals \
+                 and credit deposits."
             }
             ExecError::SubAccountNotFound => {
                 "No sub-account exists in the registry for the given master address and sub-account id."
@@ -5754,9 +6120,6 @@ impl ExecError {
             ExecError::WithdrawalPayoutLeaseNotHeld => {
                 "The withdrawal's payout lease is not held by the submitter, so the payout-signature report is rejected; acquire the lease with a payout claim first."
             }
-            ExecError::WithdrawalPayoutRecordLimitReached => {
-                "The withdrawal's payout-signature record limit is reached; the rejected payout must not be broadcast."
-            }
             ExecError::TriggerOrderIncompatible => {
                 "Order cannot carry attached SL/TP (reduce-only order, ineligible market, or inactive feature)."
             }
@@ -5820,6 +6183,39 @@ impl ExecError {
             }
             ExecError::MarketHalted { .. } => {
                 "The market is halted and takes no orders or fills; cancels still work."
+            }
+            ExecError::BridgePaused => {
+                "The bridge is paused by the admin quorum; claims, payout reports and bridge votes refuse until UnpauseBridge clears the flag."
+            }
+            ExecError::BridgeVoteConflict(_) => {
+                "A bridge vote conflicts with the votes already recorded for its item: a different registry epoch, or a different observation for a transfer that already has votes."
+            }
+            ExecError::BridgeVoteInvalid(_) => {
+                "A bridge vote failed verification: bad signature, or a vote naming a non-current registry epoch."
+            }
+            ExecError::BridgeUnauthorizedOperator => {
+                "The submitter is not a member of the operator receipt registry's owner roster."
+            }
+            ExecError::BridgePayoutReportInvalid(_) => {
+                "A payout report failed its binding checks: wrong vault, non-current epoch, or the lease does not name the submitter."
+            }
+            ExecError::PayoutLeaseLimitReached { .. } => {
+                "The claimer already holds the maximum number of open payout leases; settle or release one first."
+            }
+            ExecError::DepositReceiptLimitExceeded { .. } => {
+                "The vote-credited deposit would pass the SetDepositReceiptLimit per-deposit maximum or rolling-window cap; the deposit stays pending and a later vote credits it once capacity returns."
+            }
+            ExecError::WithdrawalPayoutSlotOccupied => {
+                "The withdrawal already has a recorded payout; a new one needs the recorded payout voted dead first."
+            }
+            ExecError::PayoutRecordedForAnotherWithdrawal { .. } => {
+                "The Squads payout (vault, transaction index) is already recorded for another withdrawal; one payout settles one withdrawal."
+            }
+            ExecError::PendingWithdrawalsFull { .. } => {
+                "The pending withdrawal set is full; the request was refused before any debit. Retry once pending withdrawals settle."
+            }
+            ExecError::OwnerPendingWithdrawalsFull { .. } => {
+                "The owner already holds the most pending withdrawals one owner may; the request was refused before any debit. Retry once one settles."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -6147,9 +6543,6 @@ impl fmt::Display for ExecError {
             ExecError::WithdrawalPayoutLeaseNotHeld => {
                 write!(f, "payout lease not held by the submitter")
             }
-            ExecError::WithdrawalPayoutRecordLimitReached => {
-                write!(f, "withdrawal payout-signature record limit reached")
-            }
             ExecError::UserLeverageBelowMarketIm {
                 market,
                 user_im_bps,
@@ -6226,6 +6619,49 @@ impl fmt::Display for ExecError {
             }
             ExecError::BridgeReceiptInvalid(msg) => write!(f, "bridge receipt invalid: {msg}"),
             ExecError::BridgeReceiptMismatch(msg) => write!(f, "bridge receipt mismatch: {msg}"),
+            ExecError::BridgePaused => write!(f, "bridge is paused"),
+            ExecError::BridgeVoteConflict(msg) => write!(f, "bridge vote conflict: {msg}"),
+            ExecError::BridgeVoteInvalid(msg) => write!(f, "bridge vote invalid: {msg}"),
+            ExecError::BridgeUnauthorizedOperator => {
+                write!(f, "submitter is not an operator registry member")
+            }
+            ExecError::BridgePayoutReportInvalid(msg) => {
+                write!(f, "payout report invalid: {msg}")
+            }
+            ExecError::PayoutLeaseLimitReached { cap } => {
+                write!(f, "payout lease limit reached ({cap} open)")
+            }
+            ExecError::DepositReceiptLimitExceeded {
+                attempted,
+                cap,
+                window_frees_at_ms: None,
+            } => write!(
+                f,
+                "deposit receipt limit exceeded: {attempted} microUSDC is above the per-deposit \
+                 maximum of {cap}"
+            ),
+            ExecError::DepositReceiptLimitExceeded {
+                attempted,
+                cap,
+                window_frees_at_ms: Some(frees_at),
+            } => write!(
+                f,
+                "deposit receipt limit exceeded: {attempted} microUSDC would pass the \
+                 rolling-window cap of {cap}; the oldest in-window credit ages out at unix ms \
+                 {frees_at}"
+            ),
+            ExecError::WithdrawalPayoutSlotOccupied => {
+                write!(f, "withdrawal payout slot is occupied")
+            }
+            ExecError::PayoutRecordedForAnotherWithdrawal { withdrawal_id } => {
+                write!(f, "payout is already recorded for withdrawal {withdrawal_id}")
+            }
+            ExecError::PendingWithdrawalsFull { cap } => {
+                write!(f, "pending withdrawal set is full ({cap})")
+            }
+            ExecError::OwnerPendingWithdrawalsFull { cap } => {
+                write!(f, "owner holds the most pending withdrawals ({cap})")
+            }
             ExecError::WithdrawalTerminalGated(msg) => {
                 write!(f, "withdrawal terminal gated by receipt cutover: {msg}")
             }
@@ -6341,22 +6777,21 @@ impl fmt::Display for ExecError {
 pub mod prelude {
     pub use crate::types::{
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
-        AttachConditional, AttachedConditional, AuthorizeWithdrawal, Branch,
-        BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelOrder, CancelReason,
-        CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
-        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers,
-        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
-        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards,
-        MarketOrder, OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry,
-        OracleRejectReason, Order, OrderId, Outcome, PendingTriggerDiscardReason, PlaceOrder,
-        Position, ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side,
-        SubAccount, SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees,
-        Withdraw, WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar,
-        WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
-        DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
-        DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
-        PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,
+        AttachConditional, AttachedConditional, Branch, CancelAllOrders, CancelClientOrder,
+        CancelOrder, CancelReason, CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition,
+        ConfirmDeposit, ConfirmWithdrawal, CreateMarket, CreateSubAccount, Deposit, DepositLocator,
+        Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers, FailDeposit,
+        FailWithdrawal, FillId, FundingSkipReason, LiquidateAccounts, MarkSourceMode, MarketConfig,
+        MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
+        OperatorReceiptRegistry, OracleRejectReason, Order, OrderId, Outcome,
+        PendingTriggerDiscardReason, PlaceOrder, Position, ResolveEvent, RevokeAgent,
+        SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount, SubAccountTransfer,
+        TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw, WithdrawRequest,
+        WithdrawalPayoutLease, WithdrawalReceiptSidecar, WithdrawalRecord, WithdrawalStatus,
+        BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS, DEFAULT_MAX_MARK_SPREAD_BPS,
+        DEFAULT_MAX_ORACLE_DEVIATION_BPS, DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR,
+        MARK_MIN_BOOK_NOTIONAL_UUSDC, PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS,
+        PREDICTION_BINARY_TICK_SIZE,
     };
 }
 
