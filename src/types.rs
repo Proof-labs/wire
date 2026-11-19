@@ -3754,8 +3754,13 @@ pub enum Event {
         side: Side,
         entry_price: u64,
         size: u64,
-        /// PnL this update booked to cash without a fill: a gain realized in
-        /// place to pay a resolution deficit. Zero for every other update.
+        /// Gross PnL this update realized: the closed part of a partial close
+        /// or of an insurance-fund takeover netting (including one that flips
+        /// the fund's side), or a gain realized in place to pay a resolution
+        /// deficit. Its closed funding debt is reported in `FundingSettled`.
+        /// `PositionLiquidated.fund_realized` and
+        /// `PositionAutoDeleveraged.realized_pnl` repeat it. Zero when nothing
+        /// is closed.
         #[serde(default)]
         realized_pnl: i64,
     },
@@ -4825,6 +4830,20 @@ pub enum Event {
         realized_pnl: i64,
         deleveraged: u64,
     },
+    /// Cash at the ends of the blocks immediately before and after resolution.
+    /// Settlement balances isolate this resolution from other cash changes in
+    /// either block. Emitted in `after_height`, not in the resolution block.
+    ResolutionBalanceSnapshot {
+        event_id: EventId,
+        owner: [u8; 20],
+        resolution_height: crate::resolution_balances::BalanceHeight,
+        before_height: crate::resolution_balances::BalanceHeight,
+        after_height: crate::resolution_balances::BalanceHeight,
+        balance_before: crate::resolution_balances::AccountCash,
+        balance_after: crate::resolution_balances::AccountCash,
+        settlement_balance_before: crate::resolution_balances::AccountCash,
+        settlement_balance_after: crate::resolution_balances::AccountCash,
+    },
 }
 
 impl Event {
@@ -5414,6 +5433,8 @@ pub enum ExecError {
     MarketHalted {
         market: MarketId,
     },
+    /// The Solana withdrawal destination is not an on-curve wallet owner.
+    OffCurveWithdrawalDestination,
 }
 
 impl ExecError {
@@ -5557,11 +5578,12 @@ impl ExecError {
             ExecError::MarketStatusTransitionRefused { .. } => 132,
             ExecError::MarketBacksLiveEvent { .. } => 133,
             ExecError::MarketHalted { .. } => 134,
-            ExecError::BridgePaused => 135,
-            ExecError::BridgeVoteConflict(_) => 136,
-            ExecError::BridgeVoteInvalid(_) => 137,
-            ExecError::BridgeUnauthorizedOperator => 138,
-            ExecError::BridgePayoutReportInvalid(_) => 139,
+            ExecError::OffCurveWithdrawalDestination => 135,
+            ExecError::BridgePaused => 136,
+            ExecError::BridgeVoteConflict(_) => 137,
+            ExecError::BridgeVoteInvalid(_) => 138,
+            ExecError::BridgeUnauthorizedOperator => 139,
+            ExecError::BridgePayoutReportInvalid(_) => 140,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5578,6 +5600,7 @@ impl ExecError {
     /// fix, not just that something failed.
     pub fn meaning(&self) -> &'static str {
         match self {
+            ExecError::OffCurveWithdrawalDestination => "Withdrawal destination must be an on-curve Solana wallet owner; no funds were debited.",
             ExecError::DecodeError(_) => {
                 "Tx envelope or payload could not be decoded as MessagePack at the expected version. \
                  Indicates a malformed wire frame or a client/server version mismatch."
@@ -6091,6 +6114,7 @@ impl fmt::Display for ExecError {
                 write!(f, "withdrawal amount {amount} below minimum {min}")
             }
             ExecError::DuplicateDeposit => write!(f, "duplicate deposit signature"),
+            ExecError::OffCurveWithdrawalDestination => write!(f, "withdrawal destination is off curve"),
             ExecError::InvalidSignature => write!(f, "invalid Ed25519 signature"),
             ExecError::SignatureRequired => write!(f, "signed transaction required"),
             ExecError::AgentNotAuthorized => {

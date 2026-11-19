@@ -159,15 +159,19 @@ pub struct AccountInfo {
     /// accounts read 0. Trailing field (index 8); older clients may ignore it.
     #[serde(default)]
     pub volume_30d_micro_usdc: u64,
-    /// Mark-to-market account value in microUSDC for portfolio charts.
+    /// The account's value in microUSDC at current marks, for portfolio
+    /// charts: closing a position at its mark leaves it unchanged.
     ///
-    /// Unlike `equity`, this does not select a binding resolution scenario.
-    /// It uses oracle marks for perps and child-market marks for event books,
-    /// nets the perps' unsettled funding, and is intended for "what could I
-    /// cash out around now?" display surfaces.
-    /// Child marks are raw trade EWMAs, not the clamped scenario marks.
-    /// This display is neither guaranteed execution proceeds nor a
-    /// conservative bound on scenario equity.
+    /// Unlike `equity`, this is neither a resolution scenario nor a margin
+    /// value. It is the balance, each perp's PnL at its mark net of unsettled
+    /// funding, each prediction binary's PnL at its mark, and, per unresolved
+    /// event, the value of the account's conditionals if Yes times the Yes
+    /// probability plus their value if No times its complement, rounded
+    /// down. A conditional is worth its PnL at the margin engine's mark in
+    /// its own branch and zero in the other. The Yes probability is the
+    /// event's prediction binary at its mark; while the binary has no price
+    /// the event's conditionals and binaries count their worse branch.
+    /// This display is not guaranteed execution proceeds.
     /// Trailing field (index 9); older clients may ignore it.
     #[serde(default)]
     pub cashout_equity: i64,
