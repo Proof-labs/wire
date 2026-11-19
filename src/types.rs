@@ -5696,8 +5696,9 @@ impl ExecError {
                  or the order is on the position's side and would increase exposure. The log names which."
             }
             ExecError::PositionEpochMismatch { .. } => {
-                "expected_position_epoch is not the position's current epoch: the position was closed, \
-                 reopened or flipped since it was read. Re-read the position and resubmit."
+                "expected_position_epoch is not the position's current epoch: the position was reopened or \
+                 flipped since it was read (a now-flat position is refused with 139 on set and 137 on \
+                 cancel). Re-read the position and resubmit."
             }
             ExecError::TriggerBracketNotFound { .. } => {
                 "The account has no stop-loss/take-profit bracket on this market, so there is nothing to cancel."
@@ -5707,7 +5708,8 @@ impl ExecError {
                  a long's stop must sit below the reference price and its take-profit above, a short's the reverse."
             }
             ExecError::PositionNotFound { .. } => {
-                "The account holds no position on this market, so there is nothing to protect."
+                "The account holds no position on this market. A position opened by an order in the same \
+                 block does not exist yet when triggers run; resubmit in a later block."
             }
             ExecError::AccountPositionCapReached { .. } => {
                 "The account already holds positions on the maximum number of markets; close one before opening another."
