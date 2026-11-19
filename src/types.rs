@@ -2051,7 +2051,7 @@ impl fmt::Display for TriggerLimb {
 }
 
 /// Atomically replace the complete stop-loss/take-profit bracket for an
-/// existing standalone-perpetual position.
+/// existing position on a perpetual, conditional or prediction-binary market.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetPositionTriggers {
     pub market: MarketId,
@@ -2146,28 +2146,20 @@ pub struct ExecuteTriggers {
     pub triggers: Vec<TriggerRef>,
 }
 
-/// Pick a per-account override on the initial-margin ratio for one
-/// market. The engine uses `max(market.im_bps, user_im_bps)` on
-/// every IM-gated check (place order, withdraw post-trade margin
-/// review, scenario IM enumeration), so users can choose a more
-/// conservative IM but never circumvent the market's risk floor.
+/// An account's own, stricter initial-margin ratio on one market. Every
+/// initial-margin check reads `max(market.im_bps, user_im_bps)` at that
+/// moment, so a later market change can raise the requirement but never
+/// lower it below the account's choice. Maintenance margin is untouched.
 ///
-/// `user_im_bps == 0` clears the override (equivalent to "use the
-/// market default"). The engine validates `user_im_bps == 0 ||
-/// user_im_bps >= market.im_bps` at admission; otherwise rejects
-/// with `ExecError::UserLeverageBelowMarketIm`.
-///
-/// This is a user-signed action (not relayer-signed). Each owner
-/// can only set their own override — the dispatcher enforces
-/// `signer == owner` before the handler runs.
+/// Signed by the owner, or by the master of a registered sub-account; an
+/// agent is refused.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SetUserMarketLeverage {
     #[serde(with = "crate::wire_bytes")]
     pub owner: [u8; 20],
     pub market: MarketId,
-    /// Initial margin ratio in basis points the user wants to use
-    /// for this market. `0` clears the override; otherwise must be
-    /// `>= market.im_bps`.
+    /// Initial margin ratio in basis points: `0` clears it, otherwise
+    /// between the market's `im_bps` and 10_000.
     pub user_im_bps: u32,
 }
 
@@ -4708,13 +4700,40 @@ pub enum UnpricedReason {
     ThinBook,
 }
 
+/// A chain-wide bound on the state one block may scan or hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkCap {
+    /// Resting orders across every account.
+    RestingOrdersGlobal,
+    /// Live position rows across every account.
+    LivePositionRows,
+    /// Registered markets.
+    RegisteredMarkets,
+    /// Sub-account registry rows across every master.
+    SubAccountRegistryRows,
+    /// Sub-accounts created in one block.
+    SubAccountCreationsPerBlock,
+}
+
+impl fmt::Display for WorkCap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::RestingOrdersGlobal => "resting_orders_global",
+            Self::LivePositionRows => "live_position_rows",
+            Self::RegisteredMarkets => "registered_markets",
+            Self::SubAccountRegistryRows => "sub_account_registry_rows",
+            Self::SubAccountCreationsPerBlock => "sub_account_creations_per_block",
+        })
+    }
+}
+
 /// Transaction execution error. Each variant maps to a stable non-zero ABCI
 /// result code via [`ExecError::code()`] (see the `impl` block below). Codes
-/// are unique except for the deliberate code-21 nonce-error family. The
-/// historical code-50 collision between [`ExecError::SlippageExceeded`] and
-/// [`ExecError::OpenInterestLimitExceeded`] was removed before live OI-cap
-/// activation: basket slippage keeps its original code 50 and OI-cap rejection
-/// uses code 51.
+/// are unique except for the deliberate code-21 nonce-error family and the
+/// code-35 reduce-only family. The historical code-50 collision between
+/// [`ExecError::SlippageExceeded`] and [`ExecError::OpenInterestLimitExceeded`]
+/// was removed before live OI-cap activation: basket slippage keeps its
+/// original code 50 and OI-cap rejection uses code 51.
 #[derive(Debug)]
 pub enum ExecError {
     DecodeError(String),
@@ -4934,11 +4953,12 @@ pub enum ExecError {
     /// placement. Rejected without taking, so makers can guarantee
     /// maker-side fills.
     PostOnlyWouldCross,
-    /// `PlaceOrder` or `MarketOrder` with `reduce_only=true` was same-side
-    /// as the existing position (would increase exposure) or no position
-    /// existed at all. Reduce-only orders are required to actually reduce
-    /// or close a position.
+    /// A reduce-only order is on the same side as the owner's position, so
+    /// it would increase exposure.
     ReduceOnlyWouldIncrease,
+    /// A reduce-only order names a market where the owner holds no position.
+    /// Shares code 35 with [`ExecError::ReduceOnlyWouldIncrease`].
+    ReduceOnlyNoPosition,
     /// `SetAccountFeeOverride` rejected because a fee value is outside
     /// the legal `[0, 10_000]` basis-point range.
     FeeBpsOutOfRange {
@@ -5190,6 +5210,48 @@ pub enum ExecError {
     },
     /// The Solana withdrawal destination is not an on-curve wallet owner.
     OffCurveWithdrawalDestination,
+    /// The action's `expected_position_epoch` is not the position's (or its
+    /// trigger bracket's) current epoch.
+    PositionEpochMismatch {
+        market: MarketId,
+        expected: PositionEpoch,
+        current: PositionEpoch,
+    },
+    /// The owner has no trigger bracket on this market.
+    TriggerBracketNotFound {
+        market: MarketId,
+    },
+    /// A trigger limb's price is already crossed at placement: it would fire
+    /// at once against `reference` (the mark, or the order's limit price for
+    /// limbs attached to an order).
+    TriggerAlreadyCrossed {
+        trigger_price: u64,
+        reference: u64,
+    },
+    /// The owner holds no position on this market.
+    PositionNotFound {
+        market: MarketId,
+    },
+    /// The account already holds positions on the maximum number of markets.
+    AccountPositionCapReached {
+        max: u64,
+    },
+    /// The master already owns the maximum number of sub-accounts.
+    SubAccountCapReached {
+        max: u64,
+    },
+    /// A chain-wide bound on consensus work is full.
+    WorkCapReached {
+        resource: WorkCap,
+        limit: u64,
+    },
+    /// `SetUserMarketLeverage` asked for an initial margin ratio above
+    /// [`RATIO_ONE_BPS`](crate::liquidation_config::RATIO_ONE_BPS), which is
+    /// less than 1x leverage.
+    UserImAboveNotional {
+        market: MarketId,
+        user_im_bps: u32,
+    },
 }
 
 impl ExecError {
@@ -5241,7 +5303,7 @@ impl ExecError {
             ExecError::SettlementPriceMismatch { .. } => 32,
             ExecError::OracleNotApplicable { .. } => 33,
             ExecError::PostOnlyWouldCross => 34,
-            ExecError::ReduceOnlyWouldIncrease => 35,
+            ExecError::ReduceOnlyWouldIncrease | ExecError::ReduceOnlyNoPosition => 35,
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => 37,
                 UnpricedReason::NoVerdict(_) => 77,
@@ -5334,6 +5396,14 @@ impl ExecError {
             ExecError::MarketBacksLiveEvent { .. } => 133,
             ExecError::MarketHalted { .. } => 134,
             ExecError::OffCurveWithdrawalDestination => 135,
+            ExecError::PositionEpochMismatch { .. } => 136,
+            ExecError::TriggerBracketNotFound { .. } => 137,
+            ExecError::TriggerAlreadyCrossed { .. } => 138,
+            ExecError::PositionNotFound { .. } => 139,
+            ExecError::AccountPositionCapReached { .. } => 140,
+            ExecError::SubAccountCapReached { .. } => 141,
+            ExecError::WorkCapReached { .. } => 142,
+            ExecError::UserImAboveNotional { .. } => 143,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5625,9 +5695,38 @@ impl ExecError {
                 "PlaceOrder with post_only=true would have crossed the book. Rejected so makers retain \
                  maker-side fills."
             }
-            ExecError::ReduceOnlyWouldIncrease => {
-                "PlaceOrder/MarketOrder with reduce_only=true was same-side as the existing position (would \
-                 increase exposure) or no position existed."
+            ExecError::ReduceOnlyWouldIncrease | ExecError::ReduceOnlyNoPosition => {
+                "A reduce-only order has nothing to reduce: the account holds no position on the market, \
+                 or the order is on the position's side and would increase exposure. The log names which."
+            }
+            ExecError::PositionEpochMismatch { .. } => {
+                "expected_position_epoch is not the position's current epoch: the position was reopened or \
+                 flipped since it was read (a now-flat position is refused with 139 on set and 137 on \
+                 cancel). Re-read the position and resubmit."
+            }
+            ExecError::TriggerBracketNotFound { .. } => {
+                "The account has no stop-loss/take-profit bracket on this market, so there is nothing to cancel."
+            }
+            ExecError::TriggerAlreadyCrossed { .. } => {
+                "A stop-loss or take-profit price is already crossed at placement and would fire at once: \
+                 a long's stop must sit below the reference price and its take-profit above, a short's the reverse."
+            }
+            ExecError::PositionNotFound { .. } => {
+                "The account holds no position on this market. A position opened by an order in the same \
+                 block does not exist yet when triggers run; resubmit in a later block."
+            }
+            ExecError::AccountPositionCapReached { .. } => {
+                "The account already holds positions on the maximum number of markets; close one before opening another."
+            }
+            ExecError::SubAccountCapReached { .. } => {
+                "The master already owns the maximum number of sub-accounts; no sub-account was created."
+            }
+            ExecError::WorkCapReached { .. } => {
+                "A chain-wide bound on consensus work is full (resting orders, live positions, markets or \
+                 sub-accounts); the log names which. Retry once capacity frees."
+            }
+            ExecError::UserImAboveNotional { .. } => {
+                "User-selected initial margin is above 10000 bps (below 1x leverage); pick a ratio between the market's and 10000, or 0 to clear."
             }
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => {
@@ -5940,7 +6039,49 @@ impl fmt::Display for ExecError {
             ),
             ExecError::ReduceOnlyWouldIncrease => write!(
                 f,
-                "reduce-only order rejected: would increase exposure (same-side as position) or no position to reduce"
+                "reduce-only order rejected: would increase exposure (same side as position)"
+            ),
+            ExecError::ReduceOnlyNoPosition => {
+                write!(f, "reduce-only order rejected: no position to reduce")
+            }
+            ExecError::PositionEpochMismatch {
+                market,
+                expected,
+                current,
+            } => write!(
+                f,
+                "position epoch mismatch on market {market}: expected {}, current {}",
+                expected.0, current.0
+            ),
+            ExecError::TriggerBracketNotFound { market } => {
+                write!(f, "no active trigger bracket on market {market}")
+            }
+            ExecError::TriggerAlreadyCrossed {
+                trigger_price,
+                reference,
+            } => write!(
+                f,
+                "trigger price {trigger_price} is already crossed at reference {reference}"
+            ),
+            ExecError::PositionNotFound { market } => {
+                write!(f, "no position on market {market}")
+            }
+            ExecError::AccountPositionCapReached { max } => {
+                write!(f, "account cap positions_per_account reached: max {max}")
+            }
+            ExecError::SubAccountCapReached { max } => {
+                write!(f, "account cap sub_accounts_per_owner reached: max {max}")
+            }
+            ExecError::WorkCapReached { resource, limit } => {
+                write!(f, "chain-wide work cap {resource} reached: limit {limit}")
+            }
+            ExecError::UserImAboveNotional {
+                market,
+                user_im_bps,
+            } => write!(
+                f,
+                "user_im_bps {user_im_bps} on market {market} is above {} (below 1x leverage)",
+                crate::liquidation_config::RATIO_ONE_BPS
             ),
             ExecError::FeeBpsOutOfRange { bps } => {
                 write!(f, "fee out of range: {bps} bps (must be in [0, 10_000])")

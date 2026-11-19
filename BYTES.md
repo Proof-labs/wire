@@ -47,7 +47,7 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x13 | `SetAccountFeeOverride`             | planned  |
 | 0x14 | `OracleUpdateComposite`             | retired  |
 | 0x15 | `FailDeposit`                       | planned  |
-| 0x16 | `SetUserMarketLeverage`             | planned  |
+| 0x16 | `SetUserMarketLeverage`             | shipped  |
 | 0x17 | `ClosePosition`                     | shipped  |
 | 0x18 | `CancelClientOrder`                 | shipped  |
 | 0x19 | `CancelAllOrders`                   | shipped  |

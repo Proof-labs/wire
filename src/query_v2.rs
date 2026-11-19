@@ -406,6 +406,26 @@ pub struct AuthorizedAgents {
 
 pub const AUTHORIZED_AGENTS_LIMIT: usize = 100;
 
+/// An account's own initial-margin settings, one per market it has set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserMarketLeverage {
+    pub owner: Address,
+    pub finalized_height: u64,
+    /// Ascending market id; a market without a setting is absent and charges its own IM.
+    pub markets: Vec<MarketLeverage>,
+}
+
+/// One market's initial-margin ratios for an account, in bps of notional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketLeverage {
+    pub market: MarketId,
+    pub user_im_bps: u32,
+    pub market_im_bps: u32,
+    /// What initial-margin checks charge here: the stricter of the two,
+    /// capped at 10,000; a prediction binary always reports the market's.
+    pub effective_im_bps: u32,
+}
+
 /// An account's fee override; `None` on a side means the market's fee applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FeeOverride {
