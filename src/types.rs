@@ -4703,6 +4703,33 @@ pub enum UnpricedReason {
     ThinBook,
 }
 
+/// A chain-wide bound on the state one block may scan or hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkCap {
+    /// Resting orders across every account.
+    RestingOrdersGlobal,
+    /// Live position rows across every account.
+    LivePositionRows,
+    /// Registered markets.
+    RegisteredMarkets,
+    /// Sub-account registry rows across every master.
+    SubAccountRegistryRows,
+    /// Sub-accounts created in one block.
+    SubAccountCreationsPerBlock,
+}
+
+impl fmt::Display for WorkCap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::RestingOrdersGlobal => "resting_orders_global",
+            Self::LivePositionRows => "live_position_rows",
+            Self::RegisteredMarkets => "registered_markets",
+            Self::SubAccountRegistryRows => "sub_account_registry_rows",
+            Self::SubAccountCreationsPerBlock => "sub_account_creations_per_block",
+        })
+    }
+}
+
 /// Transaction execution error. Each variant maps to a stable non-zero ABCI
 /// result code via [`ExecError::code()`] (see the `impl` block below). Codes
 /// are unique except for the deliberate code-21 nonce-error family and the
@@ -5209,6 +5236,19 @@ pub enum ExecError {
     PositionNotFound {
         market: MarketId,
     },
+    /// The account already holds positions on the maximum number of markets.
+    AccountPositionCapReached {
+        max: u64,
+    },
+    /// The master already owns the maximum number of sub-accounts.
+    SubAccountCapReached {
+        max: u64,
+    },
+    /// A chain-wide bound on consensus work is full.
+    WorkCapReached {
+        resource: WorkCap,
+        limit: u64,
+    },
 }
 
 impl ExecError {
@@ -5353,11 +5393,13 @@ impl ExecError {
             ExecError::MarketBacksLiveEvent { .. } => 133,
             ExecError::MarketHalted { .. } => 134,
             ExecError::OffCurveWithdrawalDestination => 135,
-            // 136-144 are claimed by open exchange#1450; not assigned here.
-            ExecError::PositionEpochMismatch { .. } => 145,
-            ExecError::TriggerBracketNotFound { .. } => 146,
-            ExecError::TriggerAlreadyCrossed { .. } => 147,
-            ExecError::PositionNotFound { .. } => 148,
+            ExecError::PositionEpochMismatch { .. } => 136,
+            ExecError::TriggerBracketNotFound { .. } => 137,
+            ExecError::TriggerAlreadyCrossed { .. } => 138,
+            ExecError::PositionNotFound { .. } => 139,
+            ExecError::AccountPositionCapReached { .. } => 140,
+            ExecError::SubAccountCapReached { .. } => 141,
+            ExecError::WorkCapReached { .. } => 142,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5666,6 +5708,16 @@ impl ExecError {
             }
             ExecError::PositionNotFound { .. } => {
                 "The account holds no position on this market, so there is nothing to protect."
+            }
+            ExecError::AccountPositionCapReached { .. } => {
+                "The account already holds positions on the maximum number of markets; close one before opening another."
+            }
+            ExecError::SubAccountCapReached { .. } => {
+                "The master already owns the maximum number of sub-accounts; no sub-account was created."
+            }
+            ExecError::WorkCapReached { .. } => {
+                "A chain-wide bound on consensus work is full (resting orders, live positions, markets or \
+                 sub-accounts); the log names which. Retry once capacity frees."
             }
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => {
@@ -6004,6 +6056,15 @@ impl fmt::Display for ExecError {
             ),
             ExecError::PositionNotFound { market } => {
                 write!(f, "no position on market {market}")
+            }
+            ExecError::AccountPositionCapReached { max } => {
+                write!(f, "account holds positions on the maximum {max} markets")
+            }
+            ExecError::SubAccountCapReached { max } => {
+                write!(f, "master owns the maximum {max} sub-accounts")
+            }
+            ExecError::WorkCapReached { resource, limit } => {
+                write!(f, "chain-wide work cap {resource} reached: limit {limit}")
             }
             ExecError::FeeBpsOutOfRange { bps } => {
                 write!(f, "fee out of range: {bps} bps (must be in [0, 10_000])")
