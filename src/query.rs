@@ -50,9 +50,10 @@ pub struct PositionBrief {
     /// non-firing branch. Use `AccountInfo.total_mm` for the enforceable
     /// account requirement.
     pub mm_now: u64,
-    /// Stand-alone initial-margin anchor, with the same non-additive contract
-    /// as `mm_now`. Resting orders and the binding scenario live only in
-    /// `AccountInfo.total_im`.
+    /// Stand-alone initial-margin anchor at the effective IM rate, the
+    /// stricter of the market's and the account's own setting, with the same
+    /// non-additive contract as `mm_now`. Resting orders and the binding
+    /// scenario live only in `AccountInfo.total_im`.
     pub im_now: u64,
     /// V(p, s) when position's branch fires (μ = 1):
     ///     sign(side) × (settle × size − entry × size)
@@ -81,20 +82,20 @@ pub struct PositionBrief {
     /// Tier-3 Auto-Deleveraging queue to rank profitable counterparties.
     /// Higher score = closer to the front of the ADL queue.
     ///
-    /// Formula: `(positive_upnl × notional × 10_000) / im_now`, where
-    /// notional = settle_price × size and im_now = notional × im_bps
-    /// / 10_000. The notional cancels, so the score reduces to
+    /// Formula: `(positive_upnl × notional × 10_000) / market_im`, where
+    /// notional = settle_price × size and market_im = notional × the
+    /// market's im_bps / 10_000; the account's own IM setting does not
+    /// enter. The notional cancels, so the score reduces to
     /// `upnl × 10⁸ / im_bps`: within a market the queue is ordered by
     /// absolute unrealized profit; across markets, equal profits in a
     /// lower-IM market rank higher. The account's actual leverage
-    /// (notional / equity) does not enter the ranking. `im_now` is this
-    /// position's stand-alone current-mark anchor, so this per-position ADL
+    /// (notional / equity) does not enter the ranking. This per-position ADL
     /// heuristic does not encode resting-order reservations or the binding
     /// account scenario.
     ///
     /// Returned as 0 for losing positions (they're never ADL'd — only
     /// the cascading-counterparty's profitable opposites are at risk).
-    /// Returned as 0 when `im_now == 0` (for example prediction-binary
+    /// Returned as 0 when `market_im == 0` (for example prediction-binary
     /// positions, whose payoff lives in scenario equity), avoiding division
     /// by zero.
     ///

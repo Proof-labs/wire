@@ -47,7 +47,7 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x13 | `SetAccountFeeOverride`             | planned  |
 | 0x14 | `OracleUpdateComposite`             | retired  |
 | 0x15 | `FailDeposit`                       | planned  |
-| 0x16 | `SetUserMarketLeverage`             | planned  |
+| 0x16 | `SetUserMarketLeverage`             | shipped  |
 | 0x17 | `ClosePosition`                     | shipped  |
 | 0x18 | `CancelClientOrder`                 | shipped  |
 | 0x19 | `CancelAllOrders`                   | shipped  |
@@ -77,6 +77,8 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x30 | `VoteWithdrawalPaid`                | one operator-registry member's vote to settle a withdrawal as Paid; the engine aggregates to the threshold |
 | 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-approval report of its Squads vault payout proposal (wire 12 repurposed the payload from a Solana signature) |
 | 0x32 | `VoteDeposit`                       | one operator-registry member's vote to credit an observed deposit; the engine aggregates to the threshold |
+| 0x33 | `VotePauseBridge`                   | one operator-registry member's vote to pause the bridge; the threshold pauses |
+| 0x34 | `VoteWithdrawalPayoutDead`          | one operator-registry member's vote that the recorded payout is dead; the threshold clears the payout slot |
 | ...  | up to 0xFF                         | —        |
 
 ## Inner admin action types
@@ -120,6 +122,7 @@ are not outer transaction action bytes.
 | 0x1F | `SetMarketStatus`                 | governed; moves a perpetual Trading to ReduceOnly, back, or ReduceOnly to Delisted (settles its positions at the last certified price and retires its oracle) |
 | 0x20 | `PauseBridge`                     | governed; sets the stored bridge halt flag — claims, payout reports and bridge votes refuse until `UnpauseBridge` (0x06) clears it. Tags 0x16-0x18 stay reserved for the partial-liquidation settings |
 | 0x21 | `SetBridgePayoutConfig`           | governed; writes the Squads payout vault and the ops rent wallet payout reports are checked against |
+| 0x22 | `SetDepositReceiptLimit`          | governed; writes the caps on vote-credited deposits (DEC-292), a ledger separate from `SetDepositLimit` |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:

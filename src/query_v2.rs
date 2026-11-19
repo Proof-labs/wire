@@ -331,22 +331,28 @@ pub struct DepositLocator {
     pub inner_index: Option<u16>,
 }
 
-/// One member's vote on a pending bridge item: the verifying key that
-/// produced it and the signature itself, so a reader can re-verify without
-/// trusting the aggregation.
+/// One member's vote on a pending withdrawal's payout, re-verifiable by readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeVote {
+pub struct WithdrawalPaidVote {
     /// The member's ed25519 verification key.
     pub voter: Hash32,
+    pub registry_epoch: u64,
+    /// The member voted the payout dead rather than paid.
+    pub dead: bool,
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
     pub signature: Signature64,
 }
 
-/// The Paid votes on one pending withdrawal: the binding epoch and one entry
-/// per distinct member.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WithdrawalVotes {
+/// One member's vote on a pending deposit: the credit it observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositVote {
+    /// The member's ed25519 verification key.
+    pub voter: Hash32,
     pub registry_epoch: u64,
-    pub votes: Vec<BridgeVote>,
+    pub owner: Address,
+    pub amount_micro_usdc: u64,
+    pub signature: Signature64,
 }
 
 /// The Squads payout a lease holder reported for a pending withdrawal.
@@ -374,63 +380,39 @@ pub struct WithdrawalPayoutLease {
 pub struct PendingWithdrawal {
     pub withdrawal: Withdrawal,
     pub lease: Option<WithdrawalPayoutLease>,
-    pub payout_reports: Vec<WithdrawalPayoutReport>,
-    pub votes: Option<WithdrawalVotes>,
+    pub payout: Option<WithdrawalPayoutReport>,
+    pub votes: Vec<WithdrawalPaidVote>,
 }
 
-/// One (owner, amount) reading of a pending deposit, with the distinct
-/// member votes backing that reading.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingDepositObservation {
-    pub owner: Address,
-    pub amount_micro_usdc: u64,
-    pub votes: Vec<BridgeVote>,
-}
-
-/// A pending deposit: the voted readings of one transfer identity and the
-/// aggregation so far. The votes carry the credit identity
-/// `(solana_tx_sig, locator)`. Usually exactly one observation; more means
-/// members currently disagree, and the first reading to reach the roster
-/// threshold credits.
+/// A pending deposit: its transfer identity and every member's vote.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingDeposit {
     pub solana_tx_sig: Signature64,
-    /// Always present: the identity rides the store key, so every row
-    /// carries one. The LEGACY reading decodes with no inner index.
-    pub locator: DepositLocator,
-    pub registry_epoch: u64,
-    pub observations: Vec<PendingDepositObservation>,
+    pub locator: Option<DepositLocator>,
+    pub votes: Vec<DepositVote>,
 }
 
-/// One page of the pending-withdrawals read, with the cursor to resume from.
-/// `next_cursor` is absent once the read walked past the last pending
-/// withdrawal; pass it back as the route's `cursor` to continue.
+/// One page of pending withdrawals; `next_cursor` is the last scanned id, absent once exhausted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingWithdrawalPage {
     pub rows: Vec<PendingWithdrawal>,
-    /// The id to resume after — the last row's withdrawal id.
     pub next_cursor: Option<u64>,
 }
 
-/// One page of the pending-deposits read. `next_cursor` is the raw store
-/// key to resume after (the route hex-encodes it); absent once exhausted.
+/// One page of pending deposits; `next_cursor` is the last scanned raw store key, absent once exhausted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingDepositPage {
     pub rows: Vec<PendingDeposit>,
     pub next_cursor: Option<Vec<u8>>,
 }
 
-/// The bridge's governance state: the quorum's halt flag, the governed
-/// payout vault and the current operator roster facts. Payout configuration
-/// fields are absent while unset.
+/// The bridge's state: paused, refusing new withdrawals because the pending
+/// set is full, or active.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BridgeStatus {
-    pub halted: bool,
-    pub payout_multisig: Option<SolanaAddress>,
-    pub ops_wallet: Option<SolanaAddress>,
-    pub registry_epoch: Option<u64>,
-    pub registry_threshold: Option<u16>,
-    pub operator_count: Option<u32>,
+pub enum BridgeStatus {
+    Active,
+    Paused,
+    WithdrawalsFull,
 }
 
 /// One operator receipt registry member: its ed25519 verification key and
@@ -541,6 +523,26 @@ pub struct AuthorizedAgents {
 }
 
 pub const AUTHORIZED_AGENTS_LIMIT: usize = 100;
+
+/// An account's own initial-margin settings, one per market it has set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UserMarketLeverage {
+    pub owner: Address,
+    pub finalized_height: u64,
+    /// Ascending market id; a market without a setting is absent and charges its own IM.
+    pub markets: Vec<MarketLeverage>,
+}
+
+/// One market's initial-margin ratios for an account, in bps of notional.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarketLeverage {
+    pub market: MarketId,
+    pub user_im_bps: u32,
+    pub market_im_bps: u32,
+    /// What initial-margin checks charge here: the stricter of the two,
+    /// capped at 10,000; a prediction binary always reports the market's.
+    pub effective_im_bps: u32,
+}
 
 /// An account's fee override; `None` on a side means the market's fee applies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

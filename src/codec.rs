@@ -202,6 +202,8 @@ define_actions! {
     // for peer verification and successor handover.
     RecordWithdrawalPayout => 49, // 0x31 — record the Squads payout proposal on a Pending withdrawal
     VoteDeposit => 50,            // 0x32 — one member's vote to credit an observed deposit
+    VotePauseBridge => 51,        // 0x33 — one member's vote to pause the bridge
+    VoteWithdrawalPayoutDead => 52, // 0x34 — one member's vote that the recorded payout is dead
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
@@ -238,7 +240,9 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::ClaimWithdrawalPayout
         | ActionType::RecordWithdrawalPayout
         | ActionType::VoteWithdrawalPaid
-        | ActionType::VoteDeposit => BlockPhase::PriceCreditPrefix,
+        | ActionType::VoteDeposit
+        | ActionType::VotePauseBridge
+        | ActionType::VoteWithdrawalPayoutDead => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
         ActionType::CancelOrder
@@ -1598,12 +1602,14 @@ mod tests {
 
     /// Golden wire vectors for the two vote actions plus determinism and
     /// round-trip checks — the fixtures the resolved-vector inventory and
-    /// every SDK client pin. Domain, kind, item, deployment `[0x11; 32]`,
+    /// every SDK client pin. Domain, kind, item, payout, deployment `[0x11; 32]`,
     /// chain `[0x22; 32]`, epoch, signature `[0x07; 64]`.
     #[test]
     fn vote_golden_vectors() {
         let withdrawal = Action::VoteWithdrawalPaid(VoteWithdrawalPaid {
             withdrawal_id: 1,
+            vault: [0x07; 32],
+            squads_transaction_index: 1,
             deployment_id: [0x11; 32],
             chain_id: [0x22; 32],
             registry_epoch: 1,
@@ -1703,6 +1709,8 @@ mod tests {
         for len in [0usize, 63, 65, 88, 4096] {
             let withdrawal = Action::VoteWithdrawalPaid(VoteWithdrawalPaid {
                 withdrawal_id: 1,
+                vault: [0x07; 32],
+                squads_transaction_index: 1,
                 deployment_id: [0x11; 32],
                 chain_id: [0x22; 32],
                 registry_epoch: 1,
@@ -2468,7 +2476,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 27] = [
+        const ALL_INNER_TAGS: [AdminActionType; 28] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2496,6 +2504,7 @@ mod tests {
             AdminActionType::SetMarketStatus,
             AdminActionType::PauseBridge,
             AdminActionType::SetBridgePayoutConfig,
+            AdminActionType::SetDepositReceiptLimit,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2525,7 +2534,8 @@ mod tests {
                 | AdminActionType::SettleEvent
                 | AdminActionType::SetMarketStatus
                 | AdminActionType::PauseBridge
-                | AdminActionType::SetBridgePayoutConfig => {}
+                | AdminActionType::SetBridgePayoutConfig
+                | AdminActionType::SetDepositReceiptLimit => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket
@@ -3918,6 +3928,11 @@ mod tests {
                 BlockPhase::PriceCreditPrefix,
             ),
             (ActionType::VoteDeposit, BlockPhase::PriceCreditPrefix),
+            (ActionType::VotePauseBridge, BlockPhase::PriceCreditPrefix),
+            (
+                ActionType::VoteWithdrawalPayoutDead,
+                BlockPhase::PriceCreditPrefix,
+            ),
             (
                 ActionType::SubmitOracleObservation,
                 BlockPhase::PriceCreditPrefix,

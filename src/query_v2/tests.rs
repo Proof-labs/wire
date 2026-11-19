@@ -78,6 +78,25 @@ fn authorized_agents_maps_round_trip_without_stored_policy_fields() {
     assert!(matches!(bytes.first(), Some(0x80..=0x8f)), "view is a map");
 }
 
+#[test]
+fn user_market_leverage_is_a_map_of_maps() {
+    let view = UserMarketLeverage {
+        owner: Address([1; 20]),
+        finalized_height: 42,
+        markets: vec![MarketLeverage {
+            market: 3,
+            user_im_bps: 2_000,
+            market_im_bps: 1_000,
+            effective_im_bps: 2_000,
+        }],
+    };
+    round_trip(&view);
+    let bytes = encode(&view).expect("leverage view encodes");
+    assert_eq!(bytes.first(), Some(&fixmap(3)), "view is a map");
+    let entry = encode(&view.markets[0]).expect("entry encodes");
+    assert_eq!(entry.first(), Some(&fixmap(4)), "entry is a map");
+}
+
 fn round_trip<T>(view: &T)
 where
     T: Serialize + DeserializeOwned + PartialEq + core::fmt::Debug,
