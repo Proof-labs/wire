@@ -6058,10 +6058,10 @@ impl fmt::Display for ExecError {
                 write!(f, "no position on market {market}")
             }
             ExecError::AccountPositionCapReached { max } => {
-                write!(f, "account holds positions on the maximum {max} markets")
+                write!(f, "account cap positions_per_account reached: max {max}")
             }
             ExecError::SubAccountCapReached { max } => {
-                write!(f, "master owns the maximum {max} sub-accounts")
+                write!(f, "account cap sub_accounts_per_owner reached: max {max}")
             }
             ExecError::WorkCapReached { resource, limit } => {
                 write!(f, "chain-wide work cap {resource} reached: limit {limit}")
