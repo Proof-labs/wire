@@ -3601,8 +3601,13 @@ pub enum Event {
         side: Side,
         entry_price: u64,
         size: u64,
-        /// PnL this update booked to cash without a fill: a gain realized in
-        /// place to pay a resolution deficit. Zero for every other update.
+        /// Gross PnL this update realized: the closed part of a partial close
+        /// or of an insurance-fund takeover netting (including one that flips
+        /// the fund's side), or a gain realized in place to pay a resolution
+        /// deficit. Its closed funding debt is reported in `FundingSettled`.
+        /// `PositionLiquidated.fund_realized` and
+        /// `PositionAutoDeleveraged.realized_pnl` repeat it. Zero when nothing
+        /// is closed.
         #[serde(default)]
         realized_pnl: i64,
     },

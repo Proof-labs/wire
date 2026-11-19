@@ -1,5 +1,11 @@
 [package]
 name = "proof-wire"
+# Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
+# PnL of a partial close and of the insurance fund's takeover netting; the
+# closed funding debt stays in FundingSettled. No bytes change; consumers that
+# read it as cash booked without a fill must stop adding it to PnL derived from
+# TradeExecuted -> MINOR.
+#
 # Unreleased: additive query_v2 insurance fund read views:
 # InsuranceFundDirectory, InsuranceFundState, InsuranceFundLedger,
 # InsuranceFundPosition, InsurancePositionNotional, NotionalMicroUsdc,
@@ -318,7 +324,7 @@ name = "proof-wire"
 # exact per-interval FundingRate in 1e-8 units; the v2 Market view gains the
 # effective funding terms. Old bytes of those still decode, but a decoder
 # built before it rejects the longer arrays -> MAJOR.
-version = "12.0.0"
+version = "12.1.0"
 edition = "2021"
 
 [features]

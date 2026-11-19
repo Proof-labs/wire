@@ -1,4 +1,4 @@
-//! `PositionUpdated` names the PnL an update booked to cash without a fill.
+//! `PositionUpdated` names the gross PnL an update realized.
 //! Bytes written before the field existed decode with nothing booked.
 
 #![allow(clippy::expect_used, clippy::panic)]
