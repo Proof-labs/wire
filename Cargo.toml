@@ -346,7 +346,7 @@ name = "proof-wire"
 # Rust code that builds a query_v2::Market literal must add settings_sequence
 # (the api-gateway tests do). Every pre-existing message still decodes ->
 # MINOR.
-version = "12.1.0"
+version = "12.2.0"
 edition = "2021"
 
 [features]
