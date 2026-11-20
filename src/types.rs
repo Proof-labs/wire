@@ -24,6 +24,7 @@ use crate::margin_offsets::{
     SettlementReferenceMarket,
 };
 use crate::market_settings::{MarketSettingsSequence, QuorumUpdateMarketFees};
+use crate::oracle_verdict::{AttributeList, OracleAdmission, OracleStatus, SourceMask};
 use proof_wire_derive::AbciEvent;
 use serde::{Deserialize, Serialize};
 
@@ -2361,6 +2362,12 @@ pub struct OracleSourceId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OraclePolicyVersion(pub u64);
 
+impl fmt::Display for OraclePolicyVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// A normalized observation attested by the exact source key in its policy.
 /// The envelope signature authenticates the relay, not the external provider.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -4620,6 +4627,44 @@ pub enum Event {
         balance_after: crate::resolution_balances::AccountCash,
         settlement_balance_before: crate::resolution_balances::AccountCash,
         settlement_balance_after: crate::resolution_balances::AccountCash,
+    },
+    /// The oracle policy certified `market`'s price in this block. Every
+    /// policy market reports this or [`Self::OraclePriceUncertified`] once
+    /// per block, so these rows are the price history.
+    OraclePriceCertified {
+        market: MarketId,
+        price_micro: u64,
+        /// Source publish time of the certified price.
+        provider_time_ms: u64,
+        /// The sources that held a usable record: fewer than both means the
+        /// price stands on one source.
+        valid_sources: SourceMask,
+        /// Outcome of each observation the block admitted, in prefix order;
+        /// anything but `current` or `pending` is a refused observation.
+        admissions: AttributeList<OracleAdmission>,
+    },
+    /// The oracle policy left `market` unpriced in this block, and why.
+    OraclePriceUncertified {
+        market: MarketId,
+        status: OracleStatus,
+        reason: OracleReason,
+        /// Every other fault the classification found, in reason order.
+        secondary_reasons: AttributeList<OracleReason>,
+        valid_sources: SourceMask,
+        source_a_time_ms: Option<u64>,
+        source_b_time_ms: Option<u64>,
+        source_a_pending_ms: Option<u64>,
+        source_b_pending_ms: Option<u64>,
+        /// Outcome of each observation the block admitted, in prefix order.
+        admissions: AttributeList<OracleAdmission>,
+    },
+    /// `market`'s first verdict under this policy and calendar, ahead of
+    /// that verdict's price event.
+    OraclePolicyActivated {
+        market: MarketId,
+        policy_version: OraclePolicyVersion,
+        policy_hash: [u8; 32],
+        calendar_hash: [u8; 32],
     },
 }
 

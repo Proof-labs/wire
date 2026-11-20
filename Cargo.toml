@@ -15,6 +15,14 @@ name = "proof-wire"
 # additions change no existing bytes (MINOR).
 # This entry does not classify other changes included in the eventual release.
 #
+# Unreleased: additive. Event::OraclePriceCertified,
+# Event::OraclePriceUncertified and Event::OraclePolicyActivated appended
+# (event types oracle_price_certified, oracle_price_uncertified,
+# oracle_policy_activated); new oracle_verdict module with OracleStatus,
+# OracleAdmission and SourceMask (moved from exchange-core, encoding
+# unchanged) and AttributeList; Display for OracleReason and
+# OraclePolicyVersion. No existing bytes change (MINOR).
+#
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire
 # types, and the ExecError code table. Both the engine and the SDK compile ONE
