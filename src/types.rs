@@ -23,6 +23,7 @@ use crate::margin_offsets::{
     OffsetResolutionTreatment, PartialOffsetBps, PerpetualMarket, SetMarginOffsetPolicy,
     SettlementReferenceMarket,
 };
+use crate::market_settings::{MarketSettingsSequence, QuorumUpdateMarketFees};
 use proof_wire_derive::AbciEvent;
 use serde::{Deserialize, Serialize};
 
@@ -870,6 +871,11 @@ pub enum AdminAction {
     /// Delisted. Delisting settles every open position at the last certified
     /// price and retires the market's oracle.
     SetMarketStatus(SetMarketStatus),
+    /// Changes a live market's settings with the checks of the outer
+    /// `UpdateMarketFees` action. Executes only while the market is at the
+    /// settings sequence `predecessor` names. The quorum is the
+    /// authorization, so the change names no signer.
+    UpdateMarketFees(QuorumUpdateMarketFees),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1265,6 +1271,8 @@ pub enum AdminActionType {
     SettleEvent = 30,
     /// Moves a perpetual to ReduceOnly, back to Trading, or to Delisted.
     SetMarketStatus = 31,
+    /// Changes a live market's settings.
+    UpdateMarketFees = 35,
 }
 
 impl AdminAction {
@@ -1295,6 +1303,7 @@ impl AdminAction {
             Self::VoidEvent(_) => AdminActionType::VoidEvent,
             Self::SettleEvent(_) => AdminActionType::SettleEvent,
             Self::SetMarketStatus(_) => AdminActionType::SetMarketStatus,
+            Self::UpdateMarketFees(_) => AdminActionType::UpdateMarketFees,
         }
     }
 
@@ -2987,15 +2996,17 @@ pub struct ResolveEvent {
 /// seed-time `max_funding_rate_bps = 3000` cap and had no way to
 /// dampen it without wiping state.
 ///
-/// Requires relayer authorization. Fields that would violate an
-/// invariant of the existing market (e.g. `mm_bps > im_bps`) are
-/// rejected with `ExecError::InvalidMarketConfig`.
+/// Requires relayer authorization, or the admin quorum through
+/// [`AdminAction::UpdateMarketFees`], whose change carries every field here
+/// but `signer`. Fields that would violate an invariant of the existing
+/// market (e.g. `mm_bps > im_bps`) are rejected with
+/// `ExecError::InvalidMarketConfig`.
 ///
 /// Fields left intentionally immutable (not exposed here):
 ///   * `market` — identity
 ///   * `kind` — changing a market's kind would break the
 ///     book's accounting model (perp vs conditional perp vs binary).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UpdateMarketFees {
     pub market: MarketId,
     #[serde(with = "crate::wire_bytes")]
@@ -5252,6 +5263,16 @@ pub enum ExecError {
         market: MarketId,
         user_im_bps: u32,
     },
+    /// A quorum `UpdateMarketFees` names a settings sequence its market is
+    /// not at, as when the market's settings changed after the proposal was
+    /// made.
+    MarketSettingsChanged {
+        market: MarketId,
+        /// The settings sequence the proposal was made against.
+        predecessor: MarketSettingsSequence,
+        /// The market's settings sequence.
+        stored: MarketSettingsSequence,
+    },
 }
 
 impl ExecError {
@@ -5404,6 +5425,8 @@ impl ExecError {
             ExecError::SubAccountCapReached { .. } => 141,
             ExecError::WorkCapReached { .. } => 142,
             ExecError::UserImAboveNotional { .. } => 143,
+            // 144-154 are reserved for the bridge vote errors; not assigned here.
+            ExecError::MarketSettingsChanged { .. } => 155,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5820,6 +5843,9 @@ impl ExecError {
             }
             ExecError::MarketHalted { .. } => {
                 "The market is halted and takes no orders or fills; cancels still work."
+            }
+            ExecError::MarketSettingsChanged { .. } => {
+                "A quorum UpdateMarketFees names a settings sequence its market is not at, as when the settings changed after the proposal was made. Re-read the market's settings_sequence and propose the change again."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -6329,6 +6355,14 @@ impl fmt::Display for ExecError {
                 "market {market} backs a Conditional on unresolved event {event_id}"
             ),
             ExecError::MarketHalted { market } => write!(f, "market {market} is halted"),
+            ExecError::MarketSettingsChanged {
+                market,
+                predecessor,
+                stored,
+            } => write!(
+                f,
+                "market {market} is at settings sequence {stored}, the proposal names {predecessor}"
+            ),
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }

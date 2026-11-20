@@ -215,9 +215,8 @@ fn unknown_state_tags_decode_as_unknown() {
     );
 }
 
-#[test]
-fn market_round_trips() {
-    round_trip(&Market {
+fn market() -> Market {
+    Market {
         market: 42,
         ticker: Some("BTC-1-CPY".to_string()),
         kind: MarketKind::Conditional {
@@ -245,7 +244,32 @@ fn market_round_trips() {
         status: MarketStatus::Halted,
         funding_dead_band_bps: None,
         funding_interest_rate: None,
-    });
+        settings_sequence: MarketSettingsSequence(3),
+    }
+}
+
+#[test]
+fn market_round_trips() {
+    round_trip(&market());
+}
+
+#[test]
+fn a_market_without_a_settings_sequence_decodes_at_zero() {
+    let mut older = serde_json::to_value(market()).expect("the market converts to a map");
+    older
+        .as_object_mut()
+        .expect("a market is a map")
+        .remove("settings_sequence")
+        .expect("the market carries its settings sequence");
+    let bytes = encode(&older).expect("the older market encodes");
+    let decoded: Market = decode(&bytes).expect("a market without the key decodes");
+    assert_eq!(
+        decoded,
+        Market {
+            settings_sequence: MarketSettingsSequence(0),
+            ..market()
+        }
+    );
 }
 
 #[test]

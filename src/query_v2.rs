@@ -4,6 +4,7 @@
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+use crate::market_settings::MarketSettingsSequence;
 use crate::types::{
     ClientTriggerGroupId, ClientTriggerId, EventId, FundingRate, MarketId, OrderId, PositionEpoch,
     ProposalId, RegistryVersion, SignatureThreshold, TriggerSlippageBps,
@@ -128,6 +129,10 @@ pub struct Market {
     pub funding_dead_band_bps: Option<u32>,
     /// Effective funding interest leg per 8h in units of 1e-8; `None` when the market pays no funding.
     pub funding_interest_rate: Option<i32>,
+    /// Settings changes recorded for the market since the sequence was introduced, 0 when none;
+    /// a quorum `UpdateMarketFees` names it as its `predecessor`.
+    #[serde(default)]
+    pub settings_sequence: MarketSettingsSequence,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

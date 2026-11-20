@@ -116,6 +116,10 @@ are not outer transaction action bytes.
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |
 | 0x1E | `SettleEvent`                     | governed; settles a price event whose resolution window closed unresolved, on the quorum's Yes or No |
 | 0x1F | `SetMarketStatus`                 | governed; moves a perpetual Trading to ReduceOnly, back, or ReduceOnly to Delisted (settles its positions at the last certified price and retires its oracle) |
+| 0x20 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
+| 0x21 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
+| 0x22 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
+| 0x23 | `UpdateMarketFees`                | governed; `QuorumUpdateMarketFees`: `predecessor`, the `MarketSettingsSequence` the market was at when proposed (the v2 markets read serves it as `settings_sequence`), then `change`, a `MarketSettingsChange`: the outer `UpdateMarketFees` (0x10) payload without its `signer`, its other fields in the same order, since the quorum is the authorization. A proposal is refused with code 155 unless `predecessor` is the market's current sequence, and with code 9 (`UnknownMarket`) for a market that does not exist. Runs the checks of 0x10, and at execution fails with code 155 when the market's sequence has moved since the proposal. Every `UpdateMarketFees` that changes a setting, by a key (0x10) or by the quorum, moves the sequence up by one; `SetOracleGuards` does not. Vector `vectors/propose_update_market_fees.hex`: market 1, BTC on DevNet (`sz_decimals` 5), `max_open_interest` from 30,000 to 35,000 and every other field nil, so BTC keeps its other settings; `predecessor` 0, the sequence of a market with no settings change recorded |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:
@@ -188,6 +192,8 @@ that gives it behaviour.
 |---|---|---|---|
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
+| Inner admin tags | `0x20`–`0x22` | ledger rows only, no discriminant | held for the bridge vote model (exchange#1450) |
+| State prefixes | `0x72`–`0x7F` | a comment in `exchange-core/src/keys.rs`, no `Prefix` variant | held for the bridge vote model (exchange#1450) |
 
 ## Process for adding a new byte
 

@@ -853,6 +853,9 @@ mod tests {
     fn height(height: u64) -> BlockHeight {
         BlockHeight::new(height).unwrap()
     }
+    use crate::market_settings::{
+        MarketSettingsChange, MarketSettingsSequence, QuorumUpdateMarketFees,
+    };
     use crate::triggers::{
         SetTriggerMarketConfig, TriggerBracketLimit, TriggerConfigVersion, TriggerFutureSkewMs,
         TriggerMarkMaxAgeMs,
@@ -1071,6 +1074,8 @@ mod tests {
         const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
         const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
         const UPDATE_MARKET_FEES_HEX: &str = include_str!("../vectors/update_market_fees.hex");
+        const PROPOSE_UPDATE_MARKET_FEES_HEX: &str =
+            include_str!("../vectors/propose_update_market_fees.hex");
 
         let cases: Vec<(Action, u64, &str, u8, bool)> = vec![
             (
@@ -1159,6 +1164,27 @@ mod tests {
                 300,
                 UPDATE_MARKET_FEES_HEX.trim(),
                 UpdateMarketFees::ACTION_TYPE,
+                true,
+            ),
+            (
+                // DevNet's BTC (market 1): the open-interest cap from 30,000
+                // to 35,000, every other field nil so its setting stays,
+                // proposed against a market with no settings change recorded.
+                Action::ProposeAdminAction(ProposeAdminAction {
+                    proposer: SignerAddress([0xA1; 20]),
+                    registry_version: RegistryVersion(1),
+                    action: AdminAction::UpdateMarketFees(QuorumUpdateMarketFees {
+                        predecessor: MarketSettingsSequence(0),
+                        change: MarketSettingsChange {
+                            market: 1,
+                            max_open_interest: Some(35_000),
+                            ..Default::default()
+                        },
+                    }),
+                }),
+                400,
+                PROPOSE_UPDATE_MARKET_FEES_HEX.trim(),
+                ProposeAdminAction::ACTION_TYPE,
                 true,
             ),
         ];
@@ -2474,7 +2500,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 25] = [
+        const ALL_INNER_TAGS: [AdminActionType; 26] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2500,6 +2526,7 @@ mod tests {
             AdminActionType::VoidEvent,
             AdminActionType::SettleEvent,
             AdminActionType::SetMarketStatus,
+            AdminActionType::UpdateMarketFees,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2527,7 +2554,8 @@ mod tests {
                 | AdminActionType::SetDepositLimit
                 | AdminActionType::VoidEvent
                 | AdminActionType::SettleEvent
-                | AdminActionType::SetMarketStatus => {}
+                | AdminActionType::SetMarketStatus
+                | AdminActionType::UpdateMarketFees => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket

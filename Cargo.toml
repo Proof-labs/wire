@@ -324,6 +324,20 @@ name = "proof-wire"
 # exact per-interval FundingRate in 1e-8 units; the v2 Market view gains the
 # effective funding terms. Old bytes of those still decode, but a decoder
 # built before it rejects the longer arrays -> MAJOR.
+#
+# Unreleased: additive wire change (market settings through the admin
+# quorum). New AdminAction::UpdateMarketFees at inner tag 0x23, carrying
+# market_settings::QuorumUpdateMarketFees: a MarketSettingsSequence
+# predecessor, then a MarketSettingsChange, the UpdateMarketFees fields but
+# its signer, in their order (UpdateMarketFees::into_change splits one off).
+# UpdateMarketFees derives Default. The v2 Market view gains a trailing
+# defaulted settings_sequence, the MarketSettingsSequence a quorum change
+# names. ExecError appends MarketSettingsChanged (155). Tags 0x20-0x22 stay
+# reserved. v2 views are maps keyed by field name, so a reader built before
+# settings_sequence skips the key, and a Market without it decodes at 0.
+# Rust code that builds a query_v2::Market literal must add settings_sequence
+# (the api-gateway tests do). Every pre-existing message still decodes ->
+# MINOR.
 version = "12.1.0"
 edition = "2021"
 
