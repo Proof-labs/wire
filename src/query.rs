@@ -38,11 +38,8 @@ pub struct PositionBrief {
     pub last_funding_index: i64,
 
     // ── Response-enrichment fields (indices 6-11) ──
-    /// Unrealized P&L at the current mark, unconditional. For Perp + CP
-    /// this equals `pnl_if_fires` (the firing settle price is the same as
-    /// the current mark). For PredictionBinary there is no true
-    /// "current mark" — returned as 0 placeholder; use pnl_if_fires /
-    /// pnl_if_dies for the full payoff picture.
+    /// Unrealized P&L at the current mark of a perpetual or conditional.
+    /// Prediction binaries report zero here and their payoffs in the two branch fields.
     pub upnl_now: i64,
     /// Stand-alone maintenance-margin anchor at the position's own current
     /// mark. It does not include resting-order reservations or the binding
@@ -59,7 +56,8 @@ pub struct PositionBrief {
     ///     sign(side) × (settle × size − entry × size)
     /// Perp: always fires. CP: fires when event resolves to position's branch.
     /// Binary: fires and settles to BINARY_PRICE_MAX × size. This is a per-leg
-    /// payoff anchor; it excludes resting-order reservations.
+    /// payoff anchor. For a conditional whose underlying decides the event,
+    /// it uses the strike-adjusted scenario price.
     pub pnl_if_fires: i64,
     /// V(p, s) when position's branch does NOT fire (μ = 0). Per-kind:
     ///   * **ConditionalPerp**: 0 (voided side returns IM, no settlement
