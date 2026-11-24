@@ -896,6 +896,8 @@ pub struct ExecInsuranceFund {
 pub enum InsuranceActionRefusal {
     /// The bytes do not decode as an action.
     Undecodable,
+    /// The bytes name an action whose byte is retired.
+    Retired,
     /// The bytes decode but are not the action's canonical encoding.
     NotCanonical,
     /// The action is not one an insurance account may take.
@@ -908,6 +910,7 @@ impl core::fmt::Display for InsuranceActionRefusal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(match self {
             Self::Undecodable => "undecodable",
+            Self::Retired => "retired action",
             Self::NotCanonical => "not canonical",
             Self::NotPermitted => "not permitted",
             Self::WrongOwner => "wrong owner",
@@ -2034,6 +2037,11 @@ pub struct SocializedLossBlockAccum {
 /// single source of truth. Re-exported here to keep the
 /// `crate::types::Action` path stable for all callers.
 pub use crate::codec::Action;
+pub use crate::order_lists::{
+    CancelClientOrders, CancelOrders, CancelTarget, EntryList, ListSizeOutOfRange,
+    OrderCancellation, OrderCancellations, OrderEntry, OrderPlacement, OrderPlacements,
+    PlaceOrders, PlacementOutcome, MAX_LIST_ENTRIES,
+};
 
 /// One optional limb in a whole-position protection bracket.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -2238,7 +2246,8 @@ pub struct AtomicBasketOrder {
     pub max_slippage_bps: u32,
 }
 
-/// Place a resting limit order on the book. May partially fill immediately.
+/// One limit order and its owner, as the engine places it: one entry of a
+/// [`PlaceOrders`]. May partially fill immediately.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct PlaceOrder {
     pub market: MarketId,
@@ -2278,7 +2287,7 @@ pub struct PlaceOrder {
     pub take_profit: Option<TriggerLimb>,
 }
 
-/// Cancel a resting order. Only the owner (or an authorized agent) may cancel.
+/// One cancel by order id, as [`CancelOrders::one`] takes it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CancelOrder {
     pub order_id: OrderId,
@@ -2286,7 +2295,7 @@ pub struct CancelOrder {
     pub owner: [u8; 20],
 }
 
-/// Cancel a resting order by client-assigned order id.
+/// One cancel by client order id, as [`CancelClientOrders::one`] takes it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CancelClientOrder {
     #[serde(with = "crate::wire_bytes")]
@@ -3353,7 +3362,7 @@ impl fmt::Display for TradeReason {
 }
 
 /// Why an order was cancelled. Serialised as a string in ABCI events.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum CancelReason {
     UserRequested,
     Expired,
@@ -3498,6 +3507,8 @@ impl fmt::Display for ConversionFallbackReason {
 /// Encoded as CometBFT ABCI events for indexing and WebSocket streaming.
 #[derive(Clone, Debug, Serialize, Deserialize, AbciEvent)]
 pub enum Event {
+    /// Retired: no longer emitted, replaced by `OrdersPlaced`. Kept so stored
+    /// history decodes.
     OrderPlaced {
         order_id: OrderId,
         market: MarketId,
@@ -3514,6 +3525,8 @@ pub enum Event {
         post_only: bool,
         reduce_only: bool,
     },
+    /// Retired: no longer emitted, replaced by `OrdersCancelled`. Kept so
+    /// stored history decodes.
     OrderCancelled {
         order_id: OrderId,
         market: MarketId,
@@ -4427,6 +4440,7 @@ pub enum Event {
     /// liquidity, market state); `code` is its `ExecError` code. Not emitted
     /// when the transaction itself is rejected (signature, nonce,
     /// authorization) or on an engine fault. A basket reports each leg.
+    /// `PlaceOrders` reports its refused orders in `OrdersPlaced` instead.
     OrderRejected {
         owner: [u8; 20],
         market: MarketId,
@@ -4665,6 +4679,23 @@ pub enum Event {
         policy_version: OraclePolicyVersion,
         policy_hash: [u8; 32],
         calendar_hash: [u8; 32],
+    },
+    /// What one `PlaceOrders` did with each of its orders, in order: rested,
+    /// executed without resting, or rejected with its code. A cancel-replace
+    /// reports its replacement the same way. Fills and book levels keep their
+    /// own events.
+    OrdersPlaced {
+        owner: [u8; 20],
+        orders: crate::order_lists::OrderPlacements,
+    },
+    /// Orders that left `owner`'s book for `reason`: one event per owner and
+    /// reason per transaction or block step. A `CancelOrders` or
+    /// `CancelClientOrders` lists every entry in order, including each that
+    /// removed nothing, with its code.
+    OrdersCancelled {
+        owner: [u8; 20],
+        reason: CancelReason,
+        orders: crate::order_lists::OrderCancellations,
     },
 }
 
@@ -6421,18 +6452,20 @@ pub mod prelude {
     pub use crate::types::{
         AccountFeeOverride, Action, AmendOrder, ApproveAgent, AtomicBasketLeg, AtomicBasketOrder,
         AttachConditional, AttachedConditional, AuthorizeWithdrawal, Branch,
-        BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelOrder, CancelReason,
-        CancelReplaceOrder, ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit,
-        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
-        DepositLocator, Event, EventOracleSource, EventStatus, ExecError, ExecuteTriggers,
-        FailDeposit, FailWithdrawal, FailWithdrawalReceipt, FillId, FundingSkipReason,
-        LiquidateAccounts, MarkSourceMode, MarketConfig, MarketId, MarketKind, MarketOracleGuards,
-        MarketOrder, OpenInterest, OperatorReceiptProof, OperatorReceiptRegistry,
-        OracleRejectReason, Order, OrderId, Outcome, PendingTriggerDiscardReason, PlaceOrder,
-        Position, ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side,
-        SubAccount, SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees,
-        Withdraw, WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar,
-        WithdrawalRecord, WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
+        BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelClientOrders,
+        CancelOrder, CancelOrders, CancelReason, CancelReplaceOrder, CancelTarget,
+        ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit, ConfirmWithdrawal,
+        ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit, DepositLocator, Event,
+        EventOracleSource, EventStatus, ExecError, ExecuteTriggers, FailDeposit, FailWithdrawal,
+        FailWithdrawalReceipt, FillId, FundingSkipReason, LiquidateAccounts, MarkSourceMode,
+        MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
+        OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason, Order,
+        OrderCancellation, OrderCancellations, OrderId, OrderPlacement, OrderPlacements, Outcome,
+        PendingTriggerDiscardReason, PlaceOrder, PlaceOrders, PlacementOutcome, Position,
+        ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount,
+        SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw,
+        WithdrawRequest, WithdrawalPayoutLease, WithdrawalReceiptSidecar, WithdrawalRecord,
+        WithdrawalStatus, BINARY_PRICE_MAX, DEFAULT_CEX_COMPOSITE_STALENESS_MS,
         DEFAULT_MAX_MARK_SPREAD_BPS, DEFAULT_MAX_ORACLE_DEVIATION_BPS,
         DEFAULT_STALE_LAST_GOOD_HARD_CAP_FACTOR, MARK_MIN_BOOK_NOTIONAL_UUSDC,
         PREDICTION_BINARY_LOT_SIZE, PREDICTION_BINARY_SZ_DECIMALS, PREDICTION_BINARY_TICK_SIZE,

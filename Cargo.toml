@@ -1,5 +1,18 @@
 [package]
 name = "proof-wire"
+# Unreleased (BREAKING): order placement and cancels become lists on new
+# action bytes. PlaceOrders (0x35), CancelOrders (0x36) and
+# CancelClientOrders (0x37) carry 1..=MAX_LIST_ENTRIES entries for one owner,
+# always [owner, [entry, ...]] (OrderEntry, EntryList). The single-order
+# actions PlaceOrder (0x01), CancelOrder (0x02) and CancelClientOrder (0x18)
+# are retired: their bytes no longer decode. A stored ActionBlob naming one
+# is refused as InsuranceActionRefusal::Retired. Event::OrdersPlaced
+# (OrderPlacements; PlacementOutcome::Executed reports requested and filled
+# quantity and its UnfilledReason) and Event::OrdersCancelled
+# (OrderCancellations, one per owner and reason per step) are appended and
+# replace OrderPlaced and OrderCancelled, which are no longer emitted but
+# still decode. CancelReason derives Eq and Ord. MAJOR.
+#
 # Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
 # PnL of a partial close and of the insurance fund's takeover netting; the
 # closed funding debt stays in FundingSettled. No bytes change; consumers that

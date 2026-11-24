@@ -20,13 +20,14 @@ whose action has been removed is **retired**: its row stays, marked
 
 Byte 2 of the transaction envelope, assigned by `define_actions!`. Names are
 the engine's PascalCase identifiers, the canonical vocabulary every other
-spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
+spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 
 | Byte | Name                                | Status   |
 |------|-------------------------------------|----------|
-| 0x01 | `PlaceOrder`                        | shipped  |
-  ↳ proof-wire 2.1.0: `PlaceOrder` payload gains trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte and field order unchanged.
-| 0x02 | `CancelOrder`                       | shipped  |
+| 0x01 | `PlaceOrder`                        | retired  |
+  ↳ replaced by the list `PlaceOrders` (0x35); see "List actions" below.
+| 0x02 | `CancelOrder`                       | retired  |
+  ↳ replaced by the list `CancelOrders` (0x36).
 | 0x03 | `OracleUpdate`                      | retired  |
 | 0x04 | `MarketOrder`                       | shipped  |
   ↳ proof-wire 2.1.0: `MarketOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
@@ -49,7 +50,8 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x15 | `FailDeposit`                       | planned  |
 | 0x16 | `SetUserMarketLeverage`             | shipped  |
 | 0x17 | `ClosePosition`                     | shipped  |
-| 0x18 | `CancelClientOrder`                 | shipped  |
+| 0x18 | `CancelClientOrder`                 | retired  |
+  ↳ replaced by the list `CancelClientOrders` (0x37).
 | 0x19 | `CancelAllOrders`                   | shipped  |
 | 0x1A | `CancelReplaceOrder`                | shipped  |
   ↳ proof-wire 2.1.0: `CancelReplaceOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
@@ -75,7 +77,20 @@ spelling derives from (`PlaceOrder`; JSON type `placeOrder`).
 | 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
 | 0x2F | `ExecuteTriggers`                   | internal, proposer-injected trigger candidates |
 | 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-broadcast report of its payout signature |
+| 0x35 | `PlaceOrders`                       | shipped  |
+| 0x36 | `CancelOrders`                      | shipped  |
+| 0x37 | `CancelClientOrders`                | shipped  |
 | ...  | up to 0xFF                         | —        |
+
+### List actions
+
+`PlaceOrders` (0x35), `CancelOrders` (0x36) and `CancelClientOrders` (0x37)
+carry 1..=100 entries (`MAX_LIST_ENTRIES`) for one owner, always as a list:
+`[owner, [entry, ...]]`. A `PlaceOrders` entry is an `OrderEntry` (a limit
+order without its owner); a cancel entry is an order id or a client order id.
+A single order is a list of one. 0 or more than 100 entries do not decode.
+They replace the single-order actions on 0x01, 0x02 and 0x18, which are
+retired: transactions signed for those bytes no longer decode.
 
 ## Inner admin action types
 
