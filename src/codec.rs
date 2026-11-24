@@ -214,13 +214,51 @@ pub const RETIRED_ACTION_BYTES: &[u8] = &[0x01, 0x02, 0x03, 0x0E, 0x0F, 0x11, 0x
 /// with the Go proposer; changing a membership or ordering is a coordinated
 /// protocol change.
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockPhase {
     PriceCreditPrefix = 0,
     AgentAuthority = 1,
     BoundedLiquidation = 2,
     TriggerManagement = 3,
     Ordinary = 4,
+    Cancel = 5,
+    PostOnly = 6,
+}
+
+impl BlockPhase {
+    /// Phase used to validate a proposed block, including mixed maker and ordinary runs.
+    pub const fn validation_phase(self) -> Self {
+        match self {
+            Self::Cancel => Self::TriggerManagement,
+            Self::PostOnly => Self::Ordinary,
+            phase => phase,
+        }
+    }
+
+    /// Preferred proposal order within the five validation bands.
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::PriceCreditPrefix => 0,
+            Self::AgentAuthority => 1,
+            Self::BoundedLiquidation => 2,
+            Self::Cancel => 3,
+            Self::TriggerManagement => 4,
+            Self::PostOnly => 5,
+            Self::Ordinary => 6,
+        }
+    }
+}
+
+impl Ord for BlockPhase {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl PartialOrd for BlockPhase {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Classify one semantic action into the approved trigger-era block spine.
@@ -464,7 +502,7 @@ impl WireTxEnvelope {
 }
 
 /// Authentication data extracted from the wire envelope.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TxAuth {
     pub pubkey: [u8; 32],
     pub signature: [u8; 64],
@@ -473,7 +511,7 @@ pub struct TxAuth {
 }
 
 /// Result of decoding a transaction.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DecodedTx {
     pub action: Action,
     pub seq: u64,
@@ -808,8 +846,12 @@ fn read_msgpack_uint_prefix(bytes: &[u8]) -> Option<(u64, usize)> {
 /// (`seq != 0`). Which height is right depends on the block, so the proposal
 /// validator and execution compare the stamp with the block height.
 pub fn canonical_action_type(bytes: &[u8]) -> Option<ActionType> {
-    let raw_action_type = peek_fixarray_action_type(bytes)?;
-    let action_type = ActionType::try_from(raw_action_type).ok()?;
+    let decoded = canonical_transaction(bytes)?;
+    ActionType::try_from(decoded.auth.action_type).ok()
+}
+
+fn canonical_transaction(bytes: &[u8]) -> Option<DecodedTx> {
+    peek_fixarray_action_type(bytes)?;
     let decoded = decode_tx(bytes).ok()?;
     let canonical = match &decoded.action {
         Action::LiquidateAccounts(cmd) => {
@@ -826,7 +868,7 @@ pub fn canonical_action_type(bytes: &[u8]) -> Option<ActionType> {
         )
         .ok()?,
     };
-    (canonical == bytes).then_some(action_type)
+    (canonical == bytes).then_some(decoded)
 }
 
 /// Return the trigger-era block phase only for exact canonical transaction
@@ -835,6 +877,51 @@ pub fn canonical_action_type(bytes: &[u8]) -> Option<ActionType> {
 /// catch-all phase.
 pub fn canonical_block_phase(bytes: &[u8]) -> Option<BlockPhase> {
     canonical_action_type(bytes).map(action_block_phase)
+}
+
+/// Classify an exact canonical envelope, including the signed post-only flag.
+pub fn canonical_execution_phase(bytes: &[u8]) -> Option<BlockPhase> {
+    CanonicalTransaction::decode(bytes).map(|tx| tx.phase())
+}
+
+/// A decoded canonical envelope bound to the exact bytes used for admission.
+pub struct CanonicalTransaction<'a> {
+    bytes: &'a [u8],
+    decoded: DecodedTx,
+    phase: BlockPhase,
+}
+
+impl<'a> CanonicalTransaction<'a> {
+    pub fn decode(bytes: &'a [u8]) -> Option<Self> {
+        let decoded = canonical_transaction(bytes)?;
+        let phase = match &decoded.action {
+            Action::CancelOrders(_)
+            | Action::CancelAllOrders(_)
+            | Action::CancelClientOrders(_) => BlockPhase::Cancel,
+            Action::PlaceOrders(order) if order.orders.as_slice().iter().all(|e| e.post_only) => {
+                BlockPhase::PostOnly
+            }
+            Action::CancelReplaceOrder(order) if order.post_only => BlockPhase::PostOnly,
+            _ => action_block_phase(ActionType::try_from(decoded.auth.action_type).ok()?),
+        };
+        Some(Self {
+            bytes,
+            decoded,
+            phase,
+        })
+    }
+
+    pub fn phase(&self) -> BlockPhase {
+        self.phase
+    }
+
+    pub fn action(&self) -> &Action {
+        &self.decoded.action
+    }
+
+    pub fn into_parts(self) -> (&'a [u8], DecodedTx) {
+        (self.bytes, self.decoded)
+    }
 }
 
 /// Return the semantic Tier-2 action type only when `bytes` are the exact
@@ -3907,6 +3994,45 @@ mod tests {
         assert_eq!(expected.len(), ActionType::ALL.len());
         for (action_type, phase) in expected {
             assert_eq!(action_block_phase(action_type), phase, "{action_type:?}");
+        }
+    }
+
+    #[test]
+    fn maker_phase_uses_the_signed_order_flag_and_preserves_abi_values() {
+        use BlockPhase::*;
+        let phases = [
+            PriceCreditPrefix,
+            AgentAuthority,
+            BoundedLiquidation,
+            Cancel,
+            TriggerManagement,
+            PostOnly,
+            Ordinary,
+        ];
+        assert!(phases.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(phases.map(|phase| phase as u8), [0, 1, 2, 5, 3, 6, 4]);
+        assert!(phases.map(BlockPhase::validation_phase).is_sorted());
+        for post_only in [false, true] {
+            let action =
+                Action::PlaceOrders(crate::types::PlaceOrders::one(crate::types::PlaceOrder {
+                    post_only,
+                    ..Default::default()
+                }));
+            let bytes = sign_and_encode_with_chain(
+                &crate::crypto::UNBOUND_CHAIN_ID,
+                &action,
+                1,
+                &test_key(),
+            )
+            .expect("placement encodes canonically");
+            assert_eq!(canonical_block_phase(&bytes), Some(Ordinary));
+            assert_eq!(
+                canonical_execution_phase(&bytes),
+                Some(if post_only { PostOnly } else { Ordinary })
+            );
+            let mut trailing = bytes;
+            trailing.push(0);
+            assert_eq!(canonical_execution_phase(&trailing), None);
         }
     }
 
