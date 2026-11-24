@@ -26,13 +26,14 @@ trait EncodePayload: Serialize + DeserializeOwned {
 }
 
 macro_rules! define_actions {
-    ($($ty:ident => $code:expr),+ $(,)?) => {
+    ($($(#[$variant:meta])* $ty:ident => $code:expr),+ $(,)?) => {
         /// Tagged action to be decoded over the wire, using the `MessagePack` tag as discriminant.
         /// Each variant's behaviour is defined by the corresponding wrapped structure.
         #[derive(Clone, Debug, Serialize, Deserialize, derive_more::From)]
         pub enum Action {
             $(
                 #[doc = concat!("See [`", stringify!($ty), "`].")]
+                $(#[$variant])*
                 $ty($ty),
             )+
         }
@@ -149,9 +150,6 @@ macro_rules! define_actions {
 }
 
 define_actions! {
-    PlaceOrder => 1,             // 0x01
-    CancelOrder => 2,            // 0x02
-    MarketOrder => 4,            // 0x04
     Deposit => 5,                // 0x05
     Withdraw => 6,               // 0x06
     CreateMarket => 7,           // 0x07
@@ -161,14 +159,12 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    // 0x03, 0x0E, 0x0F, 0x11, 0x12 and 0x14 are retired: see
-    // `RETIRED_ACTION_BYTES`.
+    // 0x01, 0x02, 0x03, 0x04, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x17 and 0x18 are
+    // retired: see `RETIRED_ACTION_BYTES`.
     UpdateMarketFees => 16,      // 0x10
     SetAccountFeeOverride => 19, // 0x13
     FailDeposit => 21,           // 0x15
     SetUserMarketLeverage => 22, // 0x16
-    ClosePosition => 23,         // 0x17
-    CancelClientOrder => 24,     // 0x18
     CancelAllOrders => 25,       // 0x19
     CancelReplaceOrder => 26,    // 0x1A
     AmendOrder => 27,            // 0x1B
@@ -200,13 +196,18 @@ define_actions! {
     // broadcasting it, stored as the withdrawal's payout record for peer
     // checks.
     RecordWithdrawalPayout => 49, // 0x31 — record the payout signature on a Pending withdrawal, before the broadcast
+    PlaceOrders => 53,           // 0x35 — one or more limit or market orders
+    CancelOrders => 54,          // 0x36 — cancel one or more orders by id
+    CancelClientOrders => 55,    // 0x37 — cancel one or more orders by client id
 }
 
 /// Outer action bytes that once decoded and never will again. Signed
 /// transactions and chains that carried them still exist, so the values are
 /// never handed to a new action: `ActionType::try_from` rejects them and the
 /// byte ledger keeps their rows as `retired`.
-pub const RETIRED_ACTION_BYTES: &[u8] = &[0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14];
+pub const RETIRED_ACTION_BYTES: &[u8] = &[
+    0x01, 0x02, 0x03, 0x04, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x17, 0x18,
+];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -243,14 +244,13 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::RecordWithdrawalPayout => BlockPhase::PriceCreditPrefix,
         ActionType::ApproveAgent | ActionType::RevokeAgent => BlockPhase::AgentAuthority,
         ActionType::LiquidateAccounts => BlockPhase::BoundedLiquidation,
-        ActionType::CancelOrder
-        | ActionType::CancelClientOrder
+        ActionType::CancelOrders
+        | ActionType::CancelClientOrders
         | ActionType::CancelAllOrders
         | ActionType::SetPositionTriggers
         | ActionType::CancelPositionTriggers
         | ActionType::ExecuteTriggers => BlockPhase::TriggerManagement,
-        ActionType::PlaceOrder
-        | ActionType::MarketOrder
+        ActionType::PlaceOrders
         | ActionType::Withdraw
         | ActionType::CreateMarket
         | ActionType::WithdrawRequest
@@ -260,7 +260,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::SetAccountFeeOverride
         | ActionType::FailDeposit
         | ActionType::SetUserMarketLeverage
-        | ActionType::ClosePosition
         | ActionType::CancelReplaceOrder
         | ActionType::AmendOrder
         | ActionType::AtomicBasketOrder
@@ -349,17 +348,41 @@ impl crate::types::ActionBlob {
             .map_err(|e| ExecError::DecodeError(e.to_string()))
     }
 
-    /// Decode the action, refusing any encoding but the canonical one.
+    /// Decode the action, refusing any encoding but the canonical one. A
+    /// stored blob of a retired action is refused as retired.
     pub fn decode(&self) -> Result<Action, crate::types::InsuranceActionRefusal> {
         use crate::types::InsuranceActionRefusal;
-        let action: Action =
-            rmp_serde::from_slice(&self.0).map_err(|_| InsuranceActionRefusal::Undecodable)?;
+        let action: Action = rmp_serde::from_slice(&self.0).map_err(|_| {
+            let tagged = rmp_serde::from_slice::<
+                std::collections::BTreeMap<String, serde::de::IgnoredAny>,
+            >(&self.0);
+            match tagged {
+                Ok(tag)
+                    if tag
+                        .keys()
+                        .any(|name| RETIRED_ACTION_NAMES.contains(&name.as_str())) =>
+                {
+                    InsuranceActionRefusal::Retired
+                }
+                _ => InsuranceActionRefusal::Undecodable,
+            }
+        })?;
         match Self::encode(&action) {
             Ok(canonical) if canonical == *self => Ok(action),
             _ => Err(InsuranceActionRefusal::NotCanonical),
         }
     }
 }
+
+/// The serialized `Action` variant names of retired action bytes, which a
+/// stored proposal may still hold.
+const RETIRED_ACTION_NAMES: [&str; 5] = [
+    "PlaceOrder",        // vocabulary-lint: allow
+    "CancelOrder",       // vocabulary-lint: allow
+    "CancelClientOrder", // vocabulary-lint: allow
+    "MarketOrder",       // vocabulary-lint: allow
+    "ClosePosition",     // vocabulary-lint: allow
+];
 
 /// Byte buffer that always serializes as msgpack `bin` (0xc4/c5/c6),
 /// never as msgpack `array` (0xdc/0xdd). Used in `WireTxEnvelope` fields
@@ -864,8 +887,8 @@ mod tests {
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
         CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OperatorReceiptProof,
-        OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
+        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, OperatorReceiptProof, OrderEntry,
+        OrderKind, OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
         UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
@@ -890,11 +913,6 @@ mod tests {
     /// here.
     #[test]
     fn trigger_expansion_wire_vectors() {
-        const PLACE_WITH_TRIGGERS_HEX: &str =
-            include_str!("../vectors/place_order_with_triggers.hex");
-        const PLACE_NO_TRIGGERS_HEX: &str = include_str!("../vectors/place_order_no_triggers.hex");
-        const MARKET_WITH_TRIGGERS_HEX: &str =
-            include_str!("../vectors/market_order_with_triggers.hex");
         const CANCEL_REPLACE_WITH_TRIGGERS_HEX: &str =
             include_str!("../vectors/cancel_replace_with_triggers.hex");
         const SET_POSITION_TRIGGERS_2_1_HEX: &str =
@@ -914,36 +932,6 @@ mod tests {
         // Round-trip vector: decode → typed value → re-encode must be the
         // identical byte string, for every with-triggers vector.
         let round_trip_cases: Vec<(&str, u8, Action)> = vec![
-            (
-                PLACE_WITH_TRIGGERS_HEX.trim(),
-                PlaceOrder::ACTION_TYPE,
-                Action::PlaceOrder(PlaceOrder {
-                    market: 1,
-                    owner: [0x01; 20],
-                    side: Side::Buy,
-                    price: 100,
-                    quantity: 10,
-                    client_order_id: None,
-                    post_only: false,
-                    reduce_only: false,
-                    time_in_force: TimeInForce::Gtc,
-                    stop_loss: Some(stop_loss.clone()),
-                    take_profit: Some(take_profit.clone()),
-                }),
-            ),
-            (
-                MARKET_WITH_TRIGGERS_HEX.trim(),
-                MarketOrder::ACTION_TYPE,
-                Action::MarketOrder(MarketOrder {
-                    market: 1,
-                    owner: [0x01; 20],
-                    side: Side::Sell,
-                    quantity: 10,
-                    client_order_id: None,
-                    stop_loss: Some(stop_loss.clone()),
-                    take_profit: None,
-                }),
-            ),
             (
                 CANCEL_REPLACE_WITH_TRIGGERS_HEX.trim(),
                 CancelReplaceOrder::ACTION_TYPE,
@@ -997,80 +985,10 @@ mod tests {
                 "re-encoded bytes must equal the frozen vector"
             );
         }
-
-        // Old-bytes decode-compat pin: place_order_no_triggers.hex is the
-        // exact pre-2.1.0 byte string (fixarray(9) payload, no trailing
-        // nils). It must still decode, with both new limbs defaulting to
-        // None, and the 2.1.0 encoding of the same order must differ only by
-        // the two appended nils.
-        let old_bytes = hex::decode(PLACE_NO_TRIGGERS_HEX.trim()).expect("vector is valid hex");
-        let decoded = decode_tx(&old_bytes).expect("pre-2.1.0 bytes must still decode");
-        let expected = PlaceOrder {
-            market: 1,
-            owner: [0x01; 20],
-            side: Side::Buy,
-            price: 100,
-            quantity: 10,
-            client_order_id: None,
-            post_only: false,
-            reduce_only: false,
-            time_in_force: TimeInForce::Gtc,
-            stop_loss: None,
-            take_profit: None,
-        };
-        match &decoded.action {
-            Action::PlaceOrder(cmd) => {
-                assert_eq!(
-                    format!("{cmd:?}"),
-                    format!("{expected:?}"),
-                    "old bytes decode with defaulted new fields"
-                );
-            }
-            other => panic!("expected PlaceOrder, got {other:?}"),
-        }
-        let new_bytes = encode_tx(&decoded.action, decoded.seq).expect("re-encode works");
-        assert_ne!(
-            new_bytes, old_bytes,
-            "2.1.0 encoding must differ from the pre-2.1.0 byte string"
-        );
-        let old_payload = decode_envelope(&old_bytes)
-            .expect("pre-2.1.0 envelope parses")
-            .payload
-            .0;
-        let mut new_payload = decode_envelope(&new_bytes)
-            .expect("new envelope parses")
-            .payload
-            .0;
-        assert_eq!(
-            old_payload[0], 0x99,
-            "pre-2.1.0 payload is a fixarray(9) of 9 fields"
-        );
-        assert_eq!(
-            new_payload[new_payload.len() - 2..],
-            [0xC0, 0xC0],
-            "2.1.0 payload appends exactly two nils for the absent limbs"
-        );
-        new_payload.truncate(new_payload.len() - 2);
-        assert_eq!(
-            new_payload[0], 0x9B,
-            "2.1.0 payload is a fixarray(11) of 11 fields"
-        );
-        new_payload[0] = 0x99;
-        assert_eq!(
-            new_payload, old_payload,
-            "2.1.0 payload must be the old payload plus two appended nils, field order unchanged"
-        );
-
-        // The pre-existing 2.0.0 golden vector keeps decoding unchanged.
-        const LEGACY_PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
-        let legacy = hex::decode(LEGACY_PLACE_HEX.trim()).expect("place_order.hex is valid hex");
-        decode_tx(&legacy).expect("pre-existing place_order.hex still decodes");
     }
 
     #[test]
     fn test_golden_vectors() {
-        const PLACE_HEX: &str = include_str!("../vectors/place_order.hex");
-        const CANCEL_HEX: &str = include_str!("../vectors/cancel_order.hex");
         const CREATE_SUB_ACCOUNT_HEX: &str = include_str!("../vectors/create_sub_account.hex");
         const SUB_ACCOUNT_TRANSFER_HEX: &str = include_str!("../vectors/sub_account_transfer.hex");
         const UPDATE_MARKET_FEES_HEX: &str = include_str!("../vectors/update_market_fees.hex");
@@ -1078,40 +996,6 @@ mod tests {
             include_str!("../vectors/propose_update_market_fees.hex");
 
         let cases: Vec<(Action, u64, &str, u8, bool)> = vec![
-            (
-                Action::PlaceOrder(PlaceOrder {
-                    market: 1,
-                    owner: [0x01; 20],
-                    side: Side::Buy,
-                    price: 100,
-                    quantity: 10,
-                    client_order_id: None,
-                    post_only: false,
-                    reduce_only: false,
-                    time_in_force: TimeInForce::Gtc,
-                    stop_loss: None,
-                    take_profit: None,
-                }),
-                1,
-                PLACE_HEX.trim(),
-                PlaceOrder::ACTION_TYPE,
-                // proof-wire 2.1.0 appends the optional stop_loss/take_profit
-                // nils to the canonical encoding, so the frozen 2.0.0 byte
-                // string is a decode pin, not a re-encode pin (see
-                // `trigger_expansion_wire_vectors` for the exact byte
-                // relationship between the two).
-                false,
-            ),
-            (
-                Action::CancelOrder(CancelOrder {
-                    order_id: 42,
-                    owner: [0x02; 20],
-                }),
-                2,
-                CANCEL_HEX.trim(),
-                CancelOrder::ACTION_TYPE,
-                true,
-            ),
             (
                 Action::CreateSubAccount(CreateSubAccount {
                     owner: OwnerAddress::new([0xAA; 20]),
@@ -1254,7 +1138,7 @@ mod tests {
         for bad_version in [0u8, 1, 3, 255] {
             let bad_envelope = WireTxEnvelope {
                 version: bad_version,
-                action_type: PlaceOrder::ACTION_TYPE,
+                action_type: PlaceOrders::ACTION_TYPE,
                 seq: 0,
                 payload: WireBlob::from_test_payload(
                     rmp_serde::to_vec(&PlaceOrder {
@@ -1361,7 +1245,7 @@ mod tests {
                 owner: [0xA5; 20],
                 expected_position_epoch: PositionEpoch(3),
             }),
-            Action::PlaceOrder(PlaceOrder {
+            Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                 market: 1,
                 owner: [0xAA; 20],
                 side: Side::Buy,
@@ -1373,11 +1257,11 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
                 stop_loss: None,
                 take_profit: None,
-            }),
-            Action::CancelOrder(CancelOrder {
+            })),
+            Action::CancelOrders(CancelOrders::one(CancelOrder {
                 order_id: 42,
                 owner: [0xBB; 20],
-            }),
+            })),
             Action::CancelReplaceOrder(CancelReplaceOrder {
                 owner: [0xBC; 20],
                 cancel_order_id: Some(42),
@@ -1399,15 +1283,19 @@ mod tests {
                 new_price: Some(50_200),
                 new_quantity: Some(75),
             }),
-            Action::MarketOrder(MarketOrder {
-                market: 3,
-                owner: [0xDD; 20],
-                side: Side::Sell,
-                quantity: 250,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0xDD; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 3,
+                    side: Side::Sell,
+                    quantity: 250,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0x11; 20],
                 amount: 1_000_000,
@@ -2314,6 +2202,39 @@ mod tests {
             ActionBlob(vec![0xC1]).decode().map(|_| ()),
             Err(InsuranceActionRefusal::Undecodable)
         );
+        // A proposal stored before the order lists holds a retired
+        // single-order action: refused by its name.
+        // Variant names are the stored names the refusal matches.
+        #[allow(clippy::enum_variant_names)]
+        #[derive(Serialize)]
+        enum StoredAction {
+            PlaceOrder(PlaceOrder),
+            CancelOrder(CancelOrder), // vocabulary-lint: allow
+            CancelClientOrder(CancelClientOrder),
+        }
+        for stored in [
+            StoredAction::PlaceOrder(PlaceOrder {
+                market: 1,
+                owner: [0xAB; 20],
+                price: 100,
+                quantity: 1,
+                ..Default::default()
+            }),
+            StoredAction::CancelOrder(CancelOrder {
+                order_id: 7,
+                owner: [0xAB; 20],
+            }),
+            StoredAction::CancelClientOrder(CancelClientOrder {
+                owner: [0xAB; 20],
+                client_order_id: 7,
+            }),
+        ] {
+            let retired = rmp_serde::to_vec(&stored).expect("single-order action encodes");
+            assert_eq!(
+                ActionBlob(retired).decode().map(|_| ()),
+                Err(InsuranceActionRefusal::Retired)
+            );
+        }
         let mut padded = blob.0.clone();
         // A trailing byte still decodes the same action but is not canonical.
         padded.push(0xC0);
@@ -3455,7 +3376,7 @@ mod tests {
 
     fn max_value_actions() -> Vec<Action> {
         vec![
-            Action::PlaceOrder(PlaceOrder {
+            Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                 market: u32::MAX,
                 owner: [0xFF; 20],
                 side: Side::Sell,
@@ -3467,20 +3388,24 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
                 stop_loss: None,
                 take_profit: None,
-            }),
-            Action::CancelOrder(CancelOrder {
+            })),
+            Action::CancelOrders(CancelOrders::one(CancelOrder {
                 order_id: u64::MAX,
                 owner: [0xFF; 20],
-            }),
-            Action::MarketOrder(MarketOrder {
-                market: u32::MAX,
-                owner: [0xFF; 20],
-                side: Side::Buy,
-                quantity: u64::MAX,
-                client_order_id: Some(u64::MAX),
-                stop_loss: None,
-                take_profit: None,
-            }),
+            })),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0xFF; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: u32::MAX,
+                    side: Side::Buy,
+                    quantity: u64::MAX,
+                    client_order_id: Some(u64::MAX),
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0xFF; 20],
                 amount: u64::MAX,
@@ -3545,7 +3470,7 @@ mod tests {
 
     fn min_value_actions() -> Vec<Action> {
         vec![
-            Action::PlaceOrder(PlaceOrder {
+            Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                 market: 0,
                 owner: [0u8; 20],
                 side: Side::Buy,
@@ -3557,20 +3482,24 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
                 stop_loss: None,
                 take_profit: None,
-            }),
-            Action::CancelOrder(CancelOrder {
+            })),
+            Action::CancelOrders(CancelOrders::one(CancelOrder {
                 order_id: 0,
                 owner: [0u8; 20],
-            }),
-            Action::MarketOrder(MarketOrder {
-                market: 0,
-                owner: [0u8; 20],
-                side: Side::Buy,
-                quantity: 0,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            })),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0u8; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 0,
+                    side: Side::Buy,
+                    quantity: 0,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0u8; 20],
                 amount: 0,
@@ -3657,7 +3586,7 @@ mod tests {
             dest[0..8].copy_from_slice(&i.to_le_bytes());
 
             let actions: Vec<Action> = vec![
-                Action::PlaceOrder(PlaceOrder {
+                Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                     market,
                     owner,
                     side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
@@ -3669,17 +3598,19 @@ mod tests {
                     time_in_force: TimeInForce::Gtc,
                     stop_loss: None,
                     take_profit: None,
-                }),
-                Action::CancelOrder(CancelOrder { order_id: i, owner }),
-                Action::MarketOrder(MarketOrder {
-                    market,
+                })),
+                Action::CancelOrders(CancelOrders::one(CancelOrder { order_id: i, owner })),
+                Action::PlaceOrders(PlaceOrders::entry(
                     owner,
-                    side: if i % 2 == 0 { Side::Sell } else { Side::Buy },
-                    quantity: i + 10,
-                    client_order_id: if i % 5 == 0 { Some(i * 7) } else { None },
-                    stop_loss: None,
-                    take_profit: None,
-                }),
+                    OrderEntry {
+                        client_order_id: if i % 5 == 0 { Some(i * 7) } else { None },
+                        ..OrderEntry::market(
+                            market,
+                            if i % 2 == 0 { Side::Sell } else { Side::Buy },
+                            i + 10,
+                        )
+                    },
+                )),
                 Action::Deposit(Deposit {
                     owner,
                     amount: i * 1000,
@@ -3905,9 +3836,8 @@ mod tests {
     #[test]
     fn trigger_block_phase_table_is_explicit_and_exhaustive() {
         let expected = [
-            (ActionType::PlaceOrder, BlockPhase::Ordinary),
-            (ActionType::CancelOrder, BlockPhase::TriggerManagement),
-            (ActionType::MarketOrder, BlockPhase::Ordinary),
+            (ActionType::PlaceOrders, BlockPhase::Ordinary),
+            (ActionType::CancelOrders, BlockPhase::TriggerManagement),
             (ActionType::Deposit, BlockPhase::PriceCreditPrefix),
             (ActionType::Withdraw, BlockPhase::Ordinary),
             (ActionType::CreateMarket, BlockPhase::Ordinary),
@@ -3921,8 +3851,10 @@ mod tests {
             (ActionType::SetAccountFeeOverride, BlockPhase::Ordinary),
             (ActionType::FailDeposit, BlockPhase::Ordinary),
             (ActionType::SetUserMarketLeverage, BlockPhase::Ordinary),
-            (ActionType::ClosePosition, BlockPhase::Ordinary),
-            (ActionType::CancelClientOrder, BlockPhase::TriggerManagement),
+            (
+                ActionType::CancelClientOrders,
+                BlockPhase::TriggerManagement,
+            ),
             (ActionType::CancelAllOrders, BlockPhase::TriggerManagement),
             (ActionType::CancelReplaceOrder, BlockPhase::Ordinary),
             (ActionType::AmendOrder, BlockPhase::Ordinary),
@@ -4016,7 +3948,7 @@ mod tests {
 
     #[test]
     fn test_decode_truncated_bytes() {
-        let action = Action::PlaceOrder(PlaceOrder {
+        let action = Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
             market: 1,
             owner: [0xAA; 20],
             side: Side::Buy,
@@ -4028,7 +3960,7 @@ mod tests {
             time_in_force: TimeInForce::Gtc,
             stop_loss: None,
             take_profit: None,
-        });
+        }));
         let encoded = encode_tx(&action, 99).unwrap();
 
         // Try decoding every truncated prefix (skip len 0 since empty is
@@ -4075,7 +4007,7 @@ mod tests {
     fn test_v2_round_trip_all_action_types() {
         let key = test_signing_key();
         let actions: Vec<Action> = vec![
-            Action::PlaceOrder(PlaceOrder {
+            Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                 market: 1,
                 owner: [0; 20],
                 side: Side::Buy,
@@ -4087,20 +4019,24 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
                 stop_loss: None,
                 take_profit: None,
-            }),
-            Action::CancelOrder(CancelOrder {
+            })),
+            Action::CancelOrders(CancelOrders::one(CancelOrder {
                 order_id: 1,
                 owner: [0; 20],
-            }),
-            Action::MarketOrder(MarketOrder {
-                market: 1,
-                owner: [0; 20],
-                side: Side::Sell,
-                quantity: 1,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            })),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 1,
+                    side: Side::Sell,
+                    quantity: 1,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0; 20],
                 amount: 1,
@@ -4248,7 +4184,7 @@ mod tests {
         }
         let encoded = rmp_serde::to_vec(&BadEnvelope {
             version: 2,
-            action_type: PlaceOrder::ACTION_TYPE,
+            action_type: PlaceOrders::ACTION_TYPE,
             seq: 1,
             payload: rmp_serde::to_vec(&PlaceOrder {
                 market: 1,
@@ -4285,7 +4221,7 @@ mod tests {
         }
         let encoded = rmp_serde::to_vec(&BadEnvelope {
             version: 2,
-            action_type: PlaceOrder::ACTION_TYPE,
+            action_type: PlaceOrders::ACTION_TYPE,
             seq: 1,
             payload: rmp_serde::to_vec(&PlaceOrder {
                 market: 1,
@@ -4325,10 +4261,10 @@ mod tests {
     #[test]
     fn test_v2_encode_decode_deterministic() {
         let key = test_signing_key();
-        let action = Action::CancelOrder(CancelOrder {
+        let action = Action::CancelOrders(CancelOrders::one(CancelOrder {
             order_id: 42,
             owner: [0xDD; 20],
-        });
+        }));
         let a =
             sign_and_encode_with_chain(&crate::crypto::UNBOUND_CHAIN_ID, &action, 1, &key).unwrap();
         let b =
@@ -4347,7 +4283,7 @@ mod tests {
             seed[0..4].copy_from_slice(&i.to_le_bytes());
             let key = ed25519_dalek::SigningKey::from_bytes(&seed);
 
-            let action = Action::PlaceOrder(PlaceOrder {
+            let action = Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                 market: (i % 100) + 1,
                 owner: crate::crypto::pubkey_to_owner(&key.verifying_key().to_bytes()),
                 side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
@@ -4359,7 +4295,7 @@ mod tests {
                 time_in_force: TimeInForce::Gtc,
                 stop_loss: None,
                 take_profit: None,
-            });
+            }));
 
             let encoded = sign_and_encode_with_chain(
                 &crate::crypto::UNBOUND_CHAIN_ID,
@@ -4403,7 +4339,7 @@ mod tests {
 
             for seq in 0u64..100 {
                 let action = match action_idx {
-                    0 => Action::PlaceOrder(PlaceOrder {
+                    0 => Action::PlaceOrders(PlaceOrders::one(PlaceOrder {
                         market: 1,
                         owner,
                         side: Side::Buy,
@@ -4415,24 +4351,28 @@ mod tests {
                         time_in_force: TimeInForce::Gtc,
                         stop_loss: None,
                         take_profit: None,
-                    }),
-                    1 => Action::CancelOrder(CancelOrder {
+                    })),
+                    1 => Action::CancelOrders(CancelOrders::one(CancelOrder {
                         order_id: seq,
                         owner,
-                    }),
-                    2 => Action::CancelOrder(CancelOrder {
+                    })),
+                    2 => Action::CancelOrders(CancelOrders::one(CancelOrder {
                         order_id: seq + 1,
                         owner,
-                    }),
-                    3 => Action::MarketOrder(MarketOrder {
-                        market: 1,
+                    })),
+                    3 => Action::PlaceOrders(PlaceOrders::entry(
                         owner,
-                        side: Side::Sell,
-                        quantity: seq + 1,
-                        client_order_id: None,
-                        stop_loss: None,
-                        take_profit: None,
-                    }),
+                        OrderEntry {
+                            kind: OrderKind::Market { worst_price: None },
+                            reduce_only: false,
+                            market: 1,
+                            side: Side::Sell,
+                            quantity: seq + 1,
+                            client_order_id: None,
+                            stop_loss: None,
+                            take_profit: None,
+                        },
+                    )),
                     4 => Action::Deposit(Deposit {
                         owner,
                         amount: seq + 1,
@@ -4580,10 +4520,10 @@ mod tests {
     #[test]
     fn stress_boundary_seq_values() {
         let key = test_signing_key();
-        let action = Action::CancelOrder(CancelOrder {
+        let action = Action::CancelOrders(CancelOrders::one(CancelOrder {
             order_id: 1,
             owner: [0xAA; 20],
-        });
+        }));
 
         for seq in [
             0,

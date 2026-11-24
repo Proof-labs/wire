@@ -31,6 +31,8 @@ pub mod market_settings;
 #[cfg(feature = "full")]
 pub mod oracle_verdict;
 #[cfg(feature = "full")]
+pub mod order_lists;
+#[cfg(feature = "full")]
 pub mod query;
 #[cfg(feature = "full")]
 pub mod query_v2;

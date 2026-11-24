@@ -19,11 +19,12 @@ use proof_wire::query_v2::{
     InsurancePositionNotional, NotionalMicroUsdc, SettlementReferenceUnavailable,
 };
 use proof_wire::types::{
-    AttachedConditional, Branch, ClientTriggerId, ConversionFallbackReason, Event, EventId,
-    EventInfo, EventOracleSource, EventStatus, FeeTier, FundingDeadBandBps, FundingInterestRate,
-    FundingRate, MarkSourceMode, MarketConfig, MarketKind, Outcome, OwnerAddress,
-    PendingTriggerDiscardReason, PositionEpoch, PriceComparison, Side, TradeReason, TriggerLimb,
-    TriggerSlippageBps,
+    AttachedConditional, Branch, CancelReason, CancelTarget, ClientTriggerId,
+    ConversionFallbackReason, Event, EventId, EventInfo, EventOracleSource, EventStatus, FeeTier,
+    FundingDeadBandBps, FundingInterestRate, FundingRate, MarkSourceMode, MarketConfig, MarketKind,
+    OrderCancellation, OrderCancellations, OrderPlacement, OrderPlacements, Outcome, OwnerAddress,
+    PendingTriggerDiscardReason, PlacementOutcome, PositionEpoch, PriceComparison, Side,
+    TimeInForce, TradeReason, TriggerLimb, TriggerSlippageBps, UnfilledReason,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -398,6 +399,61 @@ fn folded_events() -> Vec<Event> {
             sub_account_id: 2,
             address: OwnerAddress::new(COUNTERPARTY),
             name: [0x61; 32],
+        },
+        Event::OrdersPlaced {
+            owner: OWNER,
+            orders: OrderPlacements(vec![
+                OrderPlacement {
+                    market: MARKET,
+                    client_order_id: Some(3001),
+                    outcome: PlacementOutcome::Resting {
+                        order_id: 2001,
+                        side: Side::Buy,
+                        price: 100_000_000,
+                        quantity: 5,
+                        time_in_force: TimeInForce::Gtc,
+                        post_only: true,
+                        reduce_only: false,
+                    },
+                },
+                OrderPlacement {
+                    market: MARKET,
+                    client_order_id: None,
+                    outcome: PlacementOutcome::Executed {
+                        order_id: 2002,
+                        requested_quantity: 4,
+                        filled_quantity: 1,
+                        unfilled: Some(UnfilledReason::NoLiquidity),
+                    },
+                },
+                OrderPlacement {
+                    market: MARKET,
+                    client_order_id: Some(3003),
+                    outcome: PlacementOutcome::Rejected { code: 22 },
+                },
+            ]),
+        },
+        Event::OrdersCancelled {
+            owner: OWNER,
+            reason: CancelReason::UserRequested,
+            orders: OrderCancellations(vec![
+                OrderCancellation::Cancelled {
+                    order_id: 2001,
+                    market: MARKET,
+                    client_order_id: Some(3001),
+                    original_quantity: 5,
+                    remaining_quantity: 3,
+                    filled_quantity: 2,
+                },
+                OrderCancellation::Refused {
+                    target: CancelTarget::OrderId(2004),
+                    code: 2,
+                },
+                OrderCancellation::Refused {
+                    target: CancelTarget::ClientOrderId(3005),
+                    code: 60,
+                },
+            ]),
         },
     ]
 }
