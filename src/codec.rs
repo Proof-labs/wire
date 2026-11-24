@@ -150,7 +150,6 @@ macro_rules! define_actions {
 }
 
 define_actions! {
-    MarketOrder => 4,            // 0x04
     Deposit => 5,                // 0x05
     Withdraw => 6,               // 0x06
     CreateMarket => 7,           // 0x07
@@ -160,13 +159,12 @@ define_actions! {
     FailWithdrawal => 11,        // 0x0B
     ApproveAgent => 12,          // 0x0C
     RevokeAgent => 13,           // 0x0D
-    // 0x01, 0x02, 0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14 and 0x18 are retired:
-    // see `RETIRED_ACTION_BYTES`.
+    // 0x01, 0x02, 0x03, 0x04, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x17 and 0x18 are
+    // retired: see `RETIRED_ACTION_BYTES`.
     UpdateMarketFees => 16,      // 0x10
     SetAccountFeeOverride => 19, // 0x13
     FailDeposit => 21,           // 0x15
     SetUserMarketLeverage => 22, // 0x16
-    ClosePosition => 23,         // 0x17
     CancelAllOrders => 25,       // 0x19
     CancelReplaceOrder => 26,    // 0x1A
     AmendOrder => 27,            // 0x1B
@@ -198,7 +196,7 @@ define_actions! {
     // broadcasting it, stored as the withdrawal's payout record for peer
     // checks.
     RecordWithdrawalPayout => 49, // 0x31 — record the payout signature on a Pending withdrawal, before the broadcast
-    PlaceOrders => 53,           // 0x35 — one or more limit orders
+    PlaceOrders => 53,           // 0x35 — one or more limit or market orders
     CancelOrders => 54,          // 0x36 — cancel one or more orders by id
     CancelClientOrders => 55,    // 0x37 — cancel one or more orders by client id
 }
@@ -207,7 +205,9 @@ define_actions! {
 /// transactions and chains that carried them still exist, so the values are
 /// never handed to a new action: `ActionType::try_from` rejects them and the
 /// byte ledger keeps their rows as `retired`.
-pub const RETIRED_ACTION_BYTES: &[u8] = &[0x01, 0x02, 0x03, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x18];
+pub const RETIRED_ACTION_BYTES: &[u8] = &[
+    0x01, 0x02, 0x03, 0x04, 0x0E, 0x0F, 0x11, 0x12, 0x14, 0x17, 0x18,
+];
 
 /// State-independent transaction phase enforced once position triggers are
 /// active. Numeric values are consensus-facing golden-table entries shared
@@ -289,7 +289,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::CancelPositionTriggers
         | ActionType::ExecuteTriggers => BlockPhase::TriggerManagement,
         ActionType::PlaceOrders
-        | ActionType::MarketOrder
         | ActionType::Withdraw
         | ActionType::CreateMarket
         | ActionType::WithdrawRequest
@@ -299,7 +298,6 @@ pub const fn action_block_phase(action_type: ActionType) -> BlockPhase {
         | ActionType::SetAccountFeeOverride
         | ActionType::FailDeposit
         | ActionType::SetUserMarketLeverage
-        | ActionType::ClosePosition
         | ActionType::CancelReplaceOrder
         | ActionType::AmendOrder
         | ActionType::AtomicBasketOrder
@@ -416,7 +414,13 @@ impl crate::types::ActionBlob {
 
 /// The serialized `Action` variant names of retired action bytes, which a
 /// stored proposal may still hold.
-const RETIRED_ACTION_NAMES: [&str; 3] = ["PlaceOrder", "CancelOrder", "CancelClientOrder"];
+const RETIRED_ACTION_NAMES: [&str; 5] = [
+    "PlaceOrder",        // vocabulary-lint: allow
+    "CancelOrder",       // vocabulary-lint: allow
+    "CancelClientOrder", // vocabulary-lint: allow
+    "MarketOrder",       // vocabulary-lint: allow
+    "ClosePosition",     // vocabulary-lint: allow
+];
 
 /// Byte buffer that always serializes as msgpack `bin` (0xc4/c5/c6),
 /// never as msgpack `array` (0xdc/0xdd). Used in `WireTxEnvelope` fields
@@ -898,7 +902,9 @@ impl<'a> CanonicalTransaction<'a> {
             Action::CancelOrders(_)
             | Action::CancelAllOrders(_)
             | Action::CancelClientOrders(_) => BlockPhase::Cancel,
-            Action::PlaceOrders(order) if order.orders.as_slice().iter().all(|e| e.post_only) => {
+            Action::PlaceOrders(order)
+                if order.orders.as_slice().iter().all(OrderEntry::is_post_only) =>
+            {
                 BlockPhase::PostOnly
             }
             Action::CancelReplaceOrder(order) if order.post_only => BlockPhase::PostOnly,
@@ -970,8 +976,8 @@ mod tests {
         AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
         CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
         CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, MarketOrder, OperatorReceiptProof,
-        OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
+        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, OperatorReceiptProof, OrderEntry,
+        OrderKind, OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
         UpdateMarketFees, Withdraw, WithdrawRequest,
     };
 
@@ -996,8 +1002,6 @@ mod tests {
     /// here.
     #[test]
     fn trigger_expansion_wire_vectors() {
-        const MARKET_WITH_TRIGGERS_HEX: &str =
-            include_str!("../vectors/market_order_with_triggers.hex");
         const CANCEL_REPLACE_WITH_TRIGGERS_HEX: &str =
             include_str!("../vectors/cancel_replace_with_triggers.hex");
         const SET_POSITION_TRIGGERS_2_1_HEX: &str =
@@ -1017,19 +1021,6 @@ mod tests {
         // Round-trip vector: decode → typed value → re-encode must be the
         // identical byte string, for every with-triggers vector.
         let round_trip_cases: Vec<(&str, u8, Action)> = vec![
-            (
-                MARKET_WITH_TRIGGERS_HEX.trim(),
-                MarketOrder::ACTION_TYPE,
-                Action::MarketOrder(MarketOrder {
-                    market: 1,
-                    owner: [0x01; 20],
-                    side: Side::Sell,
-                    quantity: 10,
-                    client_order_id: None,
-                    stop_loss: Some(stop_loss.clone()),
-                    take_profit: None,
-                }),
-            ),
             (
                 CANCEL_REPLACE_WITH_TRIGGERS_HEX.trim(),
                 CancelReplaceOrder::ACTION_TYPE,
@@ -1381,15 +1372,19 @@ mod tests {
                 new_price: Some(50_200),
                 new_quantity: Some(75),
             }),
-            Action::MarketOrder(MarketOrder {
-                market: 3,
-                owner: [0xDD; 20],
-                side: Side::Sell,
-                quantity: 250,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0xDD; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 3,
+                    side: Side::Sell,
+                    quantity: 250,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0x11; 20],
                 amount: 1_000_000,
@@ -3487,15 +3482,19 @@ mod tests {
                 order_id: u64::MAX,
                 owner: [0xFF; 20],
             })),
-            Action::MarketOrder(MarketOrder {
-                market: u32::MAX,
-                owner: [0xFF; 20],
-                side: Side::Buy,
-                quantity: u64::MAX,
-                client_order_id: Some(u64::MAX),
-                stop_loss: None,
-                take_profit: None,
-            }),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0xFF; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: u32::MAX,
+                    side: Side::Buy,
+                    quantity: u64::MAX,
+                    client_order_id: Some(u64::MAX),
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0xFF; 20],
                 amount: u64::MAX,
@@ -3577,15 +3576,19 @@ mod tests {
                 order_id: 0,
                 owner: [0u8; 20],
             })),
-            Action::MarketOrder(MarketOrder {
-                market: 0,
-                owner: [0u8; 20],
-                side: Side::Buy,
-                quantity: 0,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0u8; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 0,
+                    side: Side::Buy,
+                    quantity: 0,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0u8; 20],
                 amount: 0,
@@ -3686,15 +3689,17 @@ mod tests {
                     take_profit: None,
                 })),
                 Action::CancelOrders(CancelOrders::one(CancelOrder { order_id: i, owner })),
-                Action::MarketOrder(MarketOrder {
-                    market,
+                Action::PlaceOrders(PlaceOrders::entry(
                     owner,
-                    side: if i % 2 == 0 { Side::Sell } else { Side::Buy },
-                    quantity: i + 10,
-                    client_order_id: if i % 5 == 0 { Some(i * 7) } else { None },
-                    stop_loss: None,
-                    take_profit: None,
-                }),
+                    OrderEntry {
+                        client_order_id: if i % 5 == 0 { Some(i * 7) } else { None },
+                        ..OrderEntry::market(
+                            market,
+                            if i % 2 == 0 { Side::Sell } else { Side::Buy },
+                            i + 10,
+                        )
+                    },
+                )),
                 Action::Deposit(Deposit {
                     owner,
                     amount: i * 1000,
@@ -3922,7 +3927,6 @@ mod tests {
         let expected = [
             (ActionType::PlaceOrders, BlockPhase::Ordinary),
             (ActionType::CancelOrders, BlockPhase::TriggerManagement),
-            (ActionType::MarketOrder, BlockPhase::Ordinary),
             (ActionType::Deposit, BlockPhase::PriceCreditPrefix),
             (ActionType::Withdraw, BlockPhase::Ordinary),
             (ActionType::CreateMarket, BlockPhase::Ordinary),
@@ -3936,7 +3940,6 @@ mod tests {
             (ActionType::SetAccountFeeOverride, BlockPhase::Ordinary),
             (ActionType::FailDeposit, BlockPhase::Ordinary),
             (ActionType::SetUserMarketLeverage, BlockPhase::Ordinary),
-            (ActionType::ClosePosition, BlockPhase::Ordinary),
             (
                 ActionType::CancelClientOrders,
                 BlockPhase::TriggerManagement,
@@ -4149,15 +4152,19 @@ mod tests {
                 order_id: 1,
                 owner: [0; 20],
             })),
-            Action::MarketOrder(MarketOrder {
-                market: 1,
-                owner: [0; 20],
-                side: Side::Sell,
-                quantity: 1,
-                client_order_id: None,
-                stop_loss: None,
-                take_profit: None,
-            }),
+            Action::PlaceOrders(PlaceOrders::entry(
+                [0; 20],
+                OrderEntry {
+                    kind: OrderKind::Market { worst_price: None },
+                    reduce_only: false,
+                    market: 1,
+                    side: Side::Sell,
+                    quantity: 1,
+                    client_order_id: None,
+                    stop_loss: None,
+                    take_profit: None,
+                },
+            )),
             Action::Deposit(Deposit {
                 owner: [0; 20],
                 amount: 1,
@@ -4481,15 +4488,19 @@ mod tests {
                         order_id: seq + 1,
                         owner,
                     })),
-                    3 => Action::MarketOrder(MarketOrder {
-                        market: 1,
+                    3 => Action::PlaceOrders(PlaceOrders::entry(
                         owner,
-                        side: Side::Sell,
-                        quantity: seq + 1,
-                        client_order_id: None,
-                        stop_loss: None,
-                        take_profit: None,
-                    }),
+                        OrderEntry {
+                            kind: OrderKind::Market { worst_price: None },
+                            reduce_only: false,
+                            market: 1,
+                            side: Side::Sell,
+                            quantity: seq + 1,
+                            client_order_id: None,
+                            stop_loss: None,
+                            take_profit: None,
+                        },
+                    )),
                     4 => Action::Deposit(Deposit {
                         owner,
                         amount: seq + 1,

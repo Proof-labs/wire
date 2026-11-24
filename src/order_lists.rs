@@ -1,8 +1,9 @@
 //! Order placement and cancels as lists, like Hyperliquid's `order` and
 //! `cancel` actions: [`PlaceOrders`], [`CancelOrders`] and
 //! [`CancelClientOrders`] carry 1..=[`MAX_LIST_ENTRIES`] entries for one
-//! account under one signature, and a single order is a list of one. Also the
-//! list events that report every entry.
+//! account under one signature, and a single order is a list of one. A
+//! `PlaceOrders` entry is a limit or a market order. Also the list events that
+//! report every entry.
 
 use core::fmt;
 use core::marker::PhantomData;
@@ -96,8 +97,9 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for EntriesVisitor<T> {
     }
 }
 
-/// Place one or more limit orders for one account. Each order runs in turn as
-/// a single order would, and stands or is refused on its own.
+/// Place one or more orders for one account, like Hyperliquid's `order`
+/// action. Each order runs in turn as a single order would, and stands or is
+/// refused on its own.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PlaceOrders {
     #[serde(with = "crate::wire_bytes")]
@@ -106,51 +108,134 @@ pub struct PlaceOrders {
 }
 
 impl PlaceOrders {
-    /// A list of one order.
+    /// A list of one limit order.
     pub fn one(order: PlaceOrder) -> Self {
+        Self::entry(order.owner, OrderEntry::from(order))
+    }
+
+    /// A list of one entry of any kind.
+    pub fn entry(owner: [u8; 20], entry: OrderEntry) -> Self {
         Self {
-            owner: order.owner,
-            orders: EntryList::one(OrderEntry::from(order)),
+            owner,
+            orders: EntryList::one(entry),
         }
     }
 }
 
-/// One order of a [`PlaceOrders`]: every field of a [`PlaceOrder`] but the
-/// owner, with the same defaults.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+/// One order of a [`PlaceOrders`], like a Hyperliquid order: the fields every
+/// kind shares, and its kind. A close is a reduce-only market order on the
+/// opposite side for at least the position's size.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OrderEntry {
     pub market: MarketId,
     pub side: Side,
-    pub price: u64,
+    /// Order size in base-asset units.
     pub quantity: u64,
-    pub client_order_id: Option<u64>,
-    #[serde(default)]
-    pub post_only: bool,
-    #[serde(default)]
+    pub kind: OrderKind,
+    /// Only reduces the position: refused with no position or on its side,
+    /// clamped to the position's size.
     pub reduce_only: bool,
-    #[serde(default)]
-    pub time_in_force: TimeInForce,
-    #[serde(default)]
+    pub client_order_id: Option<u64>,
+    /// Installed on the position the first fill leaves; discarded if
+    /// nothing fills.
     pub stop_loss: Option<TriggerLimb>,
-    #[serde(default)]
     pub take_profit: Option<TriggerLimb>,
 }
 
+/// How an order prices and how long it lives, like Hyperliquid's order type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OrderKind {
+    /// Trades at `price` or better; what is left rests (`Gtc`), is dropped
+    /// (`Ioc`) or refuses the order (`Fok`).
+    Limit {
+        price: u64,
+        time_in_force: TimeInForce,
+        post_only: bool,
+    },
+    /// Immediate-or-cancel at the best available prices, sized level by
+    /// level to what the account can afford. `worst_price`, when set, stops
+    /// the walk at that price; it bounds fills, not admission.
+    Market { worst_price: Option<u64> },
+}
+
 impl OrderEntry {
-    /// This order as `owner` places it.
-    pub fn for_owner(&self, owner: [u8; 20]) -> PlaceOrder {
-        PlaceOrder {
-            market: self.market,
-            owner,
-            side: self.side,
-            price: self.price,
-            quantity: self.quantity,
-            client_order_id: self.client_order_id,
-            post_only: self.post_only,
-            reduce_only: self.reduce_only,
-            time_in_force: self.time_in_force,
-            stop_loss: self.stop_loss.clone(),
-            take_profit: self.take_profit.clone(),
+    /// A good-till-cancelled limit order with nothing else set.
+    pub fn limit(market: MarketId, side: Side, price: u64, quantity: u64) -> Self {
+        Self::of_kind(
+            market,
+            side,
+            quantity,
+            OrderKind::Limit {
+                price,
+                time_in_force: TimeInForce::Gtc,
+                post_only: false,
+            },
+        )
+    }
+
+    /// A market order with no worst price and nothing else set.
+    pub fn market(market: MarketId, side: Side, quantity: u64) -> Self {
+        Self::of_kind(
+            market,
+            side,
+            quantity,
+            OrderKind::Market { worst_price: None },
+        )
+    }
+
+    fn of_kind(market: MarketId, side: Side, quantity: u64, kind: OrderKind) -> Self {
+        Self {
+            market,
+            side,
+            quantity,
+            kind,
+            reduce_only: false,
+            client_order_id: None,
+            stop_loss: None,
+            take_profit: None,
+        }
+    }
+
+    /// A limit entry's price; a market entry has none.
+    pub fn limit_price(&self) -> Option<u64> {
+        match self.kind {
+            OrderKind::Limit { price, .. } => Some(price),
+            OrderKind::Market { .. } => None,
+        }
+    }
+
+    /// A post-only limit entry: it can only rest.
+    pub fn is_post_only(&self) -> bool {
+        matches!(
+            self.kind,
+            OrderKind::Limit {
+                post_only: true,
+                ..
+            }
+        )
+    }
+
+    /// This order as `owner` places it, if it is a limit order.
+    pub fn limit_for(&self, owner: [u8; 20]) -> Option<PlaceOrder> {
+        match self.kind {
+            OrderKind::Limit {
+                price,
+                time_in_force,
+                post_only,
+            } => Some(PlaceOrder {
+                market: self.market,
+                owner,
+                side: self.side,
+                price,
+                quantity: self.quantity,
+                client_order_id: self.client_order_id,
+                post_only,
+                reduce_only: self.reduce_only,
+                time_in_force,
+                stop_loss: self.stop_loss.clone(),
+                take_profit: self.take_profit.clone(),
+            }),
+            OrderKind::Market { .. } => None,
         }
     }
 }
@@ -160,12 +245,14 @@ impl From<PlaceOrder> for OrderEntry {
         Self {
             market: order.market,
             side: order.side,
-            price: order.price,
             quantity: order.quantity,
-            client_order_id: order.client_order_id,
-            post_only: order.post_only,
+            kind: OrderKind::Limit {
+                price: order.price,
+                time_in_force: order.time_in_force,
+                post_only: order.post_only,
+            },
             reduce_only: order.reduce_only,
-            time_in_force: order.time_in_force,
+            client_order_id: order.client_order_id,
             stop_loss: order.stop_loss,
             take_profit: order.take_profit,
         }
@@ -231,9 +318,9 @@ pub enum PlacementOutcome {
         post_only: bool,
         reduce_only: bool,
     },
-    /// Accepted and done without resting: filled in full, or an IOC whose
-    /// remainder was dropped. `filled_quantity` may be 0; `unfilled` says why
-    /// less than `requested_quantity` filled.
+    /// Accepted and done without resting: filled in full, or an IOC or
+    /// market order whose remainder was dropped. `filled_quantity` may be 0;
+    /// `unfilled` says why less than `requested_quantity` filled.
     Executed {
         order_id: OrderId,
         requested_quantity: u64,

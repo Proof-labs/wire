@@ -852,8 +852,8 @@ pub enum AdminAction {
     /// Transfers cash from each pool's insurance account to the named account.
     WithdrawInsuranceFund(WithdrawInsuranceFund),
     /// Executes one whitelisted action as a pool's insurance account:
-    /// ApproveAgent, RevokeAgent, SetUserMarketLeverage, ClosePosition or a
-    /// cancel.
+    /// ApproveAgent, RevokeAgent, SetUserMarketLeverage, a cancel, or a
+    /// `PlaceOrders` whose every entry is a reduce-only market order.
     ExecInsuranceFund(ExecInsuranceFund),
     /// Replace explicit partial-margin offset eligibility and rates.
     SetMarginOffsetPolicy(SetMarginOffsetPolicy),
@@ -904,6 +904,11 @@ pub enum InsuranceActionRefusal {
     NotPermitted,
     /// The action acts for an account other than the pool's insurance account.
     WrongOwner,
+    /// A `PlaceOrders` order is a limit order; the insurance account only
+    /// closes, with market orders.
+    LimitOrder,
+    /// A `PlaceOrders` market order is not reduce-only.
+    NotReduceOnly,
 }
 
 impl core::fmt::Display for InsuranceActionRefusal {
@@ -914,6 +919,8 @@ impl core::fmt::Display for InsuranceActionRefusal {
             Self::NotCanonical => "not canonical",
             Self::NotPermitted => "not permitted",
             Self::WrongOwner => "wrong owner",
+            Self::LimitOrder => "limit order",
+            Self::NotReduceOnly => "not reduce-only",
         })
     }
 }
@@ -1460,7 +1467,7 @@ pub enum TimeInForce {
     #[default]
     Gtc = 0,
     /// Immediate-Or-Cancel: unmatched quantity after crossing is dropped
-    /// (never rests on the book). Same IOC semantics as a `MarketOrder`
+    /// (never rests on the book). Same IOC semantics as a market order
     /// but with a price limit — will not cross beyond it.
     Ioc = 1,
     /// Fill-Or-Kill: the order must be fully filled immediately at or better
@@ -2039,7 +2046,7 @@ pub struct SocializedLossBlockAccum {
 pub use crate::codec::Action;
 pub use crate::order_lists::{
     CancelClientOrders, CancelOrders, CancelTarget, EntryList, ListSizeOutOfRange,
-    OrderCancellation, OrderCancellations, OrderEntry, OrderPlacement, OrderPlacements,
+    OrderCancellation, OrderCancellations, OrderEntry, OrderKind, OrderPlacement, OrderPlacements,
     PlaceOrders, PlacementOutcome, MAX_LIST_ENTRIES,
 };
 
@@ -2179,44 +2186,6 @@ pub struct SetUserMarketLeverage {
     /// Initial margin ratio in basis points: `0` clears it, otherwise
     /// between the market's `im_bps` and 10_000.
     pub user_im_bps: u32,
-}
-
-/// Close an entire position on a market by placing an opposite-side
-/// immediate-or-cancel order at oracle±spread. Idempotent on
-/// already-closed positions: calling on a zero position returns code=0
-/// without emitting events. Semantically equivalent to a high-priority
-/// market order but replaces the friction of opposite-side placement or
-/// order cancellation. User-signed (owner must match position owner).
-///
-/// Matches the Hyperliquid pattern.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ClosePosition {
-    pub market: MarketId,
-    #[serde(with = "crate::wire_bytes")]
-    pub owner: [u8; 20],
-}
-
-/// Immediate-or-cancel order that crosses the book at the best available price.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct MarketOrder {
-    pub market: MarketId,
-    #[serde(with = "crate::wire_bytes")]
-    pub owner: [u8; 20],
-    pub side: Side,
-    /// Desired fill quantity in base-asset units.
-    pub quantity: u64,
-    /// Optional client-assigned ID echoed in events for correlation.
-    /// Active resting orders are unique per owner/client_order_id; reusing
-    /// an ID while an earlier order is still live is rejected.
-    pub client_order_id: Option<u64>,
-    /// Optional whole-position SL/TP bracket attached at placement time.
-    /// Installed on the position resulting from this order's first fill;
-    /// discarded if the order terminates without filling. `serde(default)`
-    /// so pre-2.1.0 records decode with both limbs absent.
-    #[serde(default)]
-    pub stop_loss: Option<TriggerLimb>,
-    #[serde(default)]
-    pub take_profit: Option<TriggerLimb>,
 }
 
 /// One leg inside a native all-or-revert basket. The engine executes every leg
@@ -3415,7 +3384,7 @@ pub enum PendingTriggerDiscardReason {
 impl fmt::Display for PendingTriggerDiscardReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PendingTriggerDiscardReason::OrderCancelled => f.write_str("order_cancelled"),
+            PendingTriggerDiscardReason::OrderCancelled => f.write_str("order_cancelled"), // vocabulary-lint: allow (a discard reason)
             PendingTriggerDiscardReason::OrderExpired => f.write_str("order_expired"),
             PendingTriggerDiscardReason::OrderReplaced => f.write_str("order_replaced"),
             PendingTriggerDiscardReason::UnfilledTerminal => f.write_str("unfilled_terminal"),
@@ -3502,6 +3471,15 @@ impl fmt::Display for ConversionFallbackReason {
         }
     }
 }
+
+/// The [`Event`] variants that are no longer emitted, kept so stored history
+/// decodes.
+pub const RETIRED_EVENTS: [&str; 4] = [
+    "OrderPlaced",          // vocabulary-lint: allow
+    "OrderCancelled",       // vocabulary-lint: allow
+    "OrderRejected",        // vocabulary-lint: allow
+    "MarketOrderProcessed", // vocabulary-lint: allow
+];
 
 /// Engine output events, emitted during transaction execution and end-of-block processing.
 /// Encoded as CometBFT ABCI events for indexing and WebSocket streaming.
@@ -4015,13 +3993,9 @@ pub enum Event {
         equity: i64,
         maintenance_margin: u64,
     },
-    /// Emitted once for every accepted order that never rests: a market
-    /// order, a position close, or an IOC or FOK limit order. Any unfilled
-    /// remainder is dropped.
-    ///
-    ///   - `filled_quantity == requested_quantity` → fully filled
-    ///   - `0 < filled_quantity < requested_quantity` → partial fill, rest dropped
-    ///   - `filled_quantity == 0` → nothing filled; `unfilled_reason` says why
+    /// Retired: no longer emitted; an order that never rests is an
+    /// `Executed` entry of `OrdersPlaced`, with the same quantities and
+    /// reason. Kept so stored history decodes.
     MarketOrderProcessed {
         /// Engine-assigned id of this order, referenceable in fills and
         /// order history.
@@ -4436,11 +4410,8 @@ pub enum Event {
         size: u64,
         cash_delta: i64,
     },
-    /// The engine refused an order for a trading reason (margin, limits,
-    /// liquidity, market state); `code` is its `ExecError` code. Not emitted
-    /// when the transaction itself is rejected (signature, nonce,
-    /// authorization) or on an engine fault. A basket reports each leg.
-    /// `PlaceOrders` reports its refused orders in `OrdersPlaced` instead.
+    /// Retired: no longer emitted; a refused order is a `Rejected` entry of
+    /// `OrdersPlaced`. Kept so stored history decodes.
     OrderRejected {
         owner: [u8; 20],
         market: MarketId,
@@ -5040,6 +5011,9 @@ pub enum ExecError {
     /// placement. Rejected without taking, so makers can guarantee
     /// maker-side fills.
     PostOnlyWouldCross,
+    /// A post-only order with IOC or FOK: it may not take and may not rest,
+    /// so it can never fill.
+    PostOnlyNotResting,
     /// A reduce-only order is on the same side as the owner's position, so
     /// it would increase exposure.
     ReduceOnlyWouldIncrease,
@@ -5400,6 +5374,7 @@ impl ExecError {
             ExecError::SettlementPriceMismatch { .. } => 32,
             ExecError::OracleNotApplicable { .. } => 33,
             ExecError::PostOnlyWouldCross => 34,
+            ExecError::PostOnlyNotResting => 156,
             ExecError::ReduceOnlyWouldIncrease | ExecError::ReduceOnlyNoPosition => 35,
             ExecError::Unpriced { reason, .. } => match reason {
                 UnpricedReason::Stale { .. } => 37,
@@ -5794,6 +5769,10 @@ impl ExecError {
                 "PlaceOrder with post_only=true would have crossed the book. Rejected so makers retain \
                  maker-side fills."
             }
+            ExecError::PostOnlyNotResting => {
+                "A post-only order with IOC or FOK time in force: it may neither take nor rest, so it \
+                 could never fill."
+            }
             ExecError::ReduceOnlyWouldIncrease | ExecError::ReduceOnlyNoPosition => {
                 "A reduce-only order has nothing to reduce: the account holds no position on the market, \
                  or the order is on the position's side and would increase exposure. The log names which."
@@ -6139,6 +6118,9 @@ impl fmt::Display for ExecError {
                 f,
                 "post-only order would cross the book on placement; rejected"
             ),
+            ExecError::PostOnlyNotResting => {
+                write!(f, "post-only order must rest (GTC); IOC or FOK can never fill")
+            }
             ExecError::ReduceOnlyWouldIncrease => write!(
                 f,
                 "reduce-only order rejected: would increase exposure (same side as position)"
@@ -6454,13 +6436,13 @@ pub mod prelude {
         AttachConditional, AttachedConditional, AuthorizeWithdrawal, Branch,
         BridgeWithdrawalReceipt, CancelAllOrders, CancelClientOrder, CancelClientOrders,
         CancelOrder, CancelOrders, CancelReason, CancelReplaceOrder, CancelTarget,
-        ClaimWithdrawalPayout, ClosePosition, ConfirmDeposit, ConfirmWithdrawal,
-        ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit, DepositLocator, Event,
-        EventOracleSource, EventStatus, ExecError, ExecuteTriggers, FailDeposit, FailWithdrawal,
+        ClaimWithdrawalPayout, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
+        CreateMarket, CreateSubAccount, Deposit, DepositLocator, Event, EventOracleSource,
+        EventStatus, ExecError, ExecuteTriggers, FailDeposit, FailWithdrawal,
         FailWithdrawalReceipt, FillId, FundingSkipReason, LiquidateAccounts, MarkSourceMode,
-        MarketConfig, MarketId, MarketKind, MarketOracleGuards, MarketOrder, OpenInterest,
-        OperatorReceiptProof, OperatorReceiptRegistry, OracleRejectReason, Order,
-        OrderCancellation, OrderCancellations, OrderId, OrderPlacement, OrderPlacements, Outcome,
+        MarketConfig, MarketId, MarketKind, MarketOracleGuards, OpenInterest, OperatorReceiptProof,
+        OperatorReceiptRegistry, OracleRejectReason, Order, OrderCancellation, OrderCancellations,
+        OrderEntry, OrderId, OrderKind, OrderPlacement, OrderPlacements, Outcome,
         PendingTriggerDiscardReason, PlaceOrder, PlaceOrders, PlacementOutcome, Position,
         ResolveEvent, RevokeAgent, SetAccountFeeOverride, SetUserMarketLeverage, Side, SubAccount,
         SubAccountTransfer, TimeInForce, TriggerRef, TxContext, UpdateMarketFees, Withdraw,
@@ -6753,7 +6735,7 @@ mod tests {
         let cases = [
             (
                 PendingTriggerDiscardReason::OrderCancelled,
-                "order_cancelled",
+                "order_cancelled", // vocabulary-lint: allow (a discard reason)
             ),
             (PendingTriggerDiscardReason::OrderExpired, "order_expired"),
             (PendingTriggerDiscardReason::OrderReplaced, "order_replaced"),
@@ -6878,7 +6860,7 @@ mod tests {
         let bytes = writer.into_vec();
         let text = String::from_utf8_lossy(&bytes);
         assert!(
-            text.contains("order_cancelled"),
+            text.contains("order_cancelled"), // vocabulary-lint: allow (a discard reason)
             "discard reason must render its literal: {text}"
         );
     }

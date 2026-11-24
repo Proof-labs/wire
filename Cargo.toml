@@ -13,6 +13,16 @@ name = "proof-wire"
 # replace OrderPlaced and OrderCancelled, which are no longer emitted but
 # still decode. CancelReason derives Eq and Ord. MAJOR.
 #
+# Unreleased (BREAKING): a PlaceOrders entry carries its kind,
+# OrderKind::Limit { price, time_in_force, post_only } or
+# OrderKind::Market { worst_price }, with reduce_only shared by both. The
+# entry layout is [market, side, quantity, kind, reduce_only,
+# client_order_id, stop_loss, take_profit]. MarketOrder (0x04) and
+# ClosePosition (0x17) are retired with their payload types; a close is a
+# reduce-only market entry. MarketOrderProcessed and OrderRejected are no
+# longer emitted (an Executed or Rejected entry of OrdersPlaced reports the
+# same) but still decode. MAJOR.
+#
 # Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
 # PnL of a partial close and of the insurance fund's takeover netting; the
 # closed funding debt stays in FundingSettled. No bytes change; consumers that

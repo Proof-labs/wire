@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn snake_case_handles_normal_event_names() {
-        assert_eq!(to_snake_case("OrderPlaced"), "order_placed");
+        assert_eq!(to_snake_case("OrderPlaced"), "order_placed"); // vocabulary-lint: allow
         assert_eq!(
             to_snake_case("InsuranceFundUpdated"),
             "insurance_fund_updated"

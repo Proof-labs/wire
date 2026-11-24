@@ -29,8 +29,8 @@ spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 | 0x02 | `CancelOrder`                       | retired  |
   ↳ replaced by the list `CancelOrders` (0x36).
 | 0x03 | `OracleUpdate`                      | retired  |
-| 0x04 | `MarketOrder`                       | shipped  |
-  ↳ proof-wire 2.1.0: `MarketOrder` payload gains the same trailing optional `stop_loss` / `take_profit` limbs (`serde(default)`, nil when absent); byte unchanged.
+| 0x04 | `MarketOrder`                       | retired  |
+  ↳ replaced by a `PlaceOrders` market entry (0x35).
 | 0x05 | `Deposit`                           | shipped  |
 | 0x06 | `Withdraw`                          | shipped  |
 | 0x07 | `CreateMarket`                      | shipped  |
@@ -49,7 +49,8 @@ spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 | 0x14 | `OracleUpdateComposite`             | retired  |
 | 0x15 | `FailDeposit`                       | planned  |
 | 0x16 | `SetUserMarketLeverage`             | shipped  |
-| 0x17 | `ClosePosition`                     | shipped  |
+| 0x17 | `ClosePosition`                     | retired  |
+  ↳ replaced by a reduce-only `PlaceOrders` market entry on the opposite side (0x35).
 | 0x18 | `CancelClientOrder`                 | retired  |
   ↳ replaced by the list `CancelClientOrders` (0x37).
 | 0x19 | `CancelAllOrders`                   | shipped  |
@@ -86,11 +87,15 @@ spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 
 `PlaceOrders` (0x35), `CancelOrders` (0x36) and `CancelClientOrders` (0x37)
 carry 1..=100 entries (`MAX_LIST_ENTRIES`) for one owner, always as a list:
-`[owner, [entry, ...]]`. A `PlaceOrders` entry is an `OrderEntry` (a limit
-order without its owner); a cancel entry is an order id or a client order id.
+`[owner, [entry, ...]]`. A `PlaceOrders` entry is an `OrderEntry`: market,
+side, quantity, kind (`Limit { price, time_in_force, post_only }` or
+`Market { worst_price }`), reduce_only, client_order_id and the two trigger
+limbs. A cancel entry is an order id or a client order id.
 A single order is a list of one. 0 or more than 100 entries do not decode.
 They replace the single-order actions on 0x01, 0x02 and 0x18, which are
-retired: transactions signed for those bytes no longer decode.
+retired: transactions signed for those bytes no longer decode, and a stored
+proposal holding one is refused as retired. The market order and close on
+0x04 and 0x17 are retired the same way.
 
 ## Inner admin action types
 
@@ -125,7 +130,7 @@ are not outer transaction action bytes.
 | 0x17 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x18 | reserved                         | partial-liquidation settings; no behavior in this release |
 | 0x19 | `WithdrawInsuranceFund`           | quorum-authorized transfer from pool insurance accounts to a named account |
-| 0x1A | `ExecInsuranceFund`               | quorum executes one whitelisted action (agent approve/revoke, leverage, close position, cancels) as a pool's insurance account |
+| 0x1A | `ExecInsuranceFund`               | quorum executes one whitelisted action (agent approve/revoke, leverage, cancels, a `PlaceOrders` of reduce-only market orders) as a pool's insurance account |
 | 0x1B | `SetMarginOffsetPolicy`            | governed; replaces the explicit partial-margin offset policy (compare-and-set on its sequence) |
 | 0x1C | `SetDepositLimit`                 | governed; writes the `ConfirmDeposit` / `Deposit` per-deposit maximum and protocol-wide rolling-window cap (exchange#425); both off at 0 and when unset |
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |

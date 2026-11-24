@@ -18,22 +18,22 @@ fn decode<T: serde::de::DeserializeOwned>(hex_bytes: &str) -> T {
 }
 
 fn entry(market: MarketId, side: Side, price: u64) -> OrderEntry {
-    OrderEntry {
-        market,
-        side,
-        price,
-        quantity: 10,
-        ..Default::default()
-    }
+    OrderEntry::limit(market, side, price, 10)
 }
 
+/// A post-only limit buy with a stop-loss, and a reduce-only market sell
+/// that stops at a worst price.
 fn two_orders() -> PlaceOrders {
     PlaceOrders {
         owner: OWNER,
         orders: EntryList::try_from(vec![
             OrderEntry {
+                kind: OrderKind::Limit {
+                    price: 99_000_000,
+                    time_in_force: TimeInForce::Gtc,
+                    post_only: true,
+                },
                 client_order_id: Some(1),
-                post_only: true,
                 stop_loss: Some(TriggerLimb {
                     trigger_price: 95_000,
                     max_slippage_bps: TriggerSlippageBps(75),
@@ -42,9 +42,11 @@ fn two_orders() -> PlaceOrders {
                 ..entry(1, Side::Buy, 99_000_000)
             },
             OrderEntry {
+                kind: OrderKind::Market {
+                    worst_price: Some(101_000_000),
+                },
                 reduce_only: true,
-                time_in_force: TimeInForce::Ioc,
-                ..entry(2, Side::Sell, 101_000_000)
+                ..OrderEntry::market(2, Side::Sell, 10)
             },
         ])
         .expect("two orders are in range"),
@@ -52,7 +54,10 @@ fn two_orders() -> PlaceOrders {
 }
 
 /// Regenerate by encoding `two_orders()` and the cancels below with
-/// `rmp_serde::to_vec` and writing the hex to the named vectors.
+/// `rmp_serde::to_vec` and writing the hex to the named vectors. A limit
+/// entry is `[market, side, quantity, {"Limit": [price, time_in_force,
+/// post_only]}, reduce_only, client_order_id, stop_loss, take_profit]`; a
+/// market entry carries `{"Market": [worst_price]}` instead.
 #[test]
 fn list_shape_vectors_round_trip() {
     let place = include_str!("../vectors/place_orders_list.hex").trim();
@@ -87,7 +92,7 @@ fn list_shape_vectors_round_trip() {
 /// A list of one is a list like any other: `[owner, [entry]]`.
 #[test]
 fn a_list_of_one_is_a_list() {
-    let one = PlaceOrders::one(entry(1, Side::Buy, 100).for_owner(OWNER));
+    let one = PlaceOrders::entry(OWNER, entry(1, Side::Buy, 100));
     assert_eq!(
         payload_hex(&one),
         hex::encode(rmp_serde::to_vec(&(OWNER, [entry(1, Side::Buy, 100)])).expect("encodes")),
