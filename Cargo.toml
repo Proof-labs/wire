@@ -375,6 +375,12 @@ name = "proof-wire"
 # that names the retired composite-feeder or scheduled-operations list.
 # AuthorityDomain keeps both names. Every pre-existing message still decodes
 # -> MINOR.
+#
+# Unreleased: additive wire change (per-account fees through the admin
+# quorum). New AdminAction::SetAccountFeeOverride at inner tag 0x24, carrying
+# AccountFeeOverrideChange: the SetAccountFeeOverride fields but its signer,
+# in their order (SetAccountFeeOverride::into_change splits one off). No
+# existing bytes change -> MINOR.
 version = "13.0.0"
 edition = "2021"
 

@@ -877,6 +877,10 @@ pub enum AdminAction {
     /// settings sequence `predecessor` names. The quorum is the
     /// authorization, so the change names no signer.
     UpdateMarketFees(QuorumUpdateMarketFees),
+    /// Sets one account's taker and maker fee with the checks of the outer
+    /// `SetAccountFeeOverride` action, including its replay guard. The
+    /// quorum is the authorization, so the change names no signer.
+    SetAccountFeeOverride(AccountFeeOverrideChange),
 }
 
 /// The canonical MessagePack encoding of one [`crate::codec::Action`].
@@ -1284,6 +1288,8 @@ pub enum AdminActionType {
     SetMarketStatus = 31,
     /// Changes a live market's settings.
     UpdateMarketFees = 35,
+    /// Sets one account's taker and maker fee.
+    SetAccountFeeOverride = 36,
 }
 
 impl AdminAction {
@@ -1315,6 +1321,7 @@ impl AdminAction {
             Self::SettleEvent(_) => AdminActionType::SettleEvent,
             Self::SetMarketStatus(_) => AdminActionType::SetMarketStatus,
             Self::UpdateMarketFees(_) => AdminActionType::UpdateMarketFees,
+            Self::SetAccountFeeOverride(_) => AdminActionType::SetAccountFeeOverride,
         }
     }
 
@@ -3151,8 +3158,10 @@ pub struct AccountFeeOverride {
 }
 
 /// Set (or overwrite) an account's per-account fee override.
-/// Relayer-signed admin action — `signer` must be on the relayer
-/// allowlist or the engine returns `UnauthorizedRelayer`.
+/// Signed by one market-settings key, and only on a chain without an admin
+/// signer registry: once the registry exists it is refused with
+/// `AdminActionRequiresProposal`, and the change goes through the admin
+/// quorum's [`AdminAction::SetAccountFeeOverride`].
 ///
 /// Both `taker_fee_bps` and `maker_fee_bps` must be in
 /// `[0, 10_000]`, except for `FEE_OVERRIDE_REVERT_SENTINEL`
@@ -3192,6 +3201,44 @@ pub struct SetAccountFeeOverride {
     /// loudly rather than silently accepting them. This breaks the
     /// unreleased-branch wire format intentionally — landing the
     /// guard before mainnet is the whole point.
+    pub seq: u64,
+}
+
+impl SetAccountFeeOverride {
+    /// The change this action makes, without the key that signed it.
+    pub fn into_change(self) -> AccountFeeOverrideChange {
+        let SetAccountFeeOverride {
+            account,
+            taker_fee_bps,
+            maker_fee_bps,
+            signer: _,
+            seq,
+        } = self;
+        AccountFeeOverrideChange {
+            account,
+            taker_fee_bps,
+            maker_fee_bps,
+            seq,
+        }
+    }
+}
+
+/// Payload of [`AdminAction::SetAccountFeeOverride`]: every field of
+/// [`SetAccountFeeOverride`] but its `signer`, in the same order and with the
+/// same meaning, since the quorum is the authorization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountFeeOverrideChange {
+    /// Account whose fees change. 20-byte address.
+    #[serde(with = "crate::wire_bytes")]
+    pub account: [u8; 20],
+    /// New taker fee in basis points (0..10_000), or
+    /// `FEE_OVERRIDE_REVERT_SENTINEL` to revert taker fills to market base.
+    pub taker_fee_bps: u32,
+    /// New maker fee in basis points (0..10_000), or
+    /// `FEE_OVERRIDE_REVERT_SENTINEL` to revert maker fills to market base.
+    pub maker_fee_bps: u32,
+    /// Replay-guard sequence: must exceed the account's stored sequence,
+    /// at proposal and again at execution.
     pub seq: u64,
 }
 

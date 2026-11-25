@@ -973,12 +973,13 @@ mod tests {
         TriggerMarkMaxAgeMs,
     };
     use crate::types::{
-        AmendOrder, ApproveAgent, AuthorizeWithdrawal, BridgeWithdrawalReceipt, CancelOrder,
-        CancelReplaceOrder, ConfirmDeposit, ConfirmWithdrawal, ConfirmWithdrawalReceipt,
-        CreateMarket, CreateSubAccount, Deposit, FailWithdrawal, FailWithdrawalReceipt, FeeTier,
-        FundingDeadBandBps, FundingInterestRate, MarkSourceMode, OperatorReceiptProof, OrderEntry,
-        OrderKind, OwnerAddress, PlaceOrder, RevokeAgent, Side, SubAccountTransfer, TimeInForce,
-        UpdateMarketFees, Withdraw, WithdrawRequest,
+        AccountFeeOverrideChange, AmendOrder, ApproveAgent, AuthorizeWithdrawal,
+        BridgeWithdrawalReceipt, CancelOrder, CancelReplaceOrder, ConfirmDeposit,
+        ConfirmWithdrawal, ConfirmWithdrawalReceipt, CreateMarket, CreateSubAccount, Deposit,
+        FailWithdrawal, FailWithdrawalReceipt, FeeTier, FundingDeadBandBps, FundingInterestRate,
+        MarkSourceMode, OperatorReceiptProof, OrderEntry, OrderKind, OwnerAddress, PlaceOrder,
+        RevokeAgent, Side, SubAccountTransfer, TimeInForce, UpdateMarketFees, Withdraw,
+        WithdrawRequest,
     };
 
     fn test_key() -> ed25519_dalek::SigningKey {
@@ -1083,6 +1084,8 @@ mod tests {
         const UPDATE_MARKET_FEES_HEX: &str = include_str!("../vectors/update_market_fees.hex");
         const PROPOSE_UPDATE_MARKET_FEES_HEX: &str =
             include_str!("../vectors/propose_update_market_fees.hex");
+        const PROPOSE_SET_ACCOUNT_FEE_OVERRIDE_HEX: &str =
+            include_str!("../vectors/propose_set_account_fee_override.hex");
 
         let cases: Vec<(Action, u64, &str, u8, bool)> = vec![
             (
@@ -1157,6 +1160,24 @@ mod tests {
                 }),
                 400,
                 PROPOSE_UPDATE_MARKET_FEES_HEX.trim(),
+                ProposeAdminAction::ACTION_TYPE,
+                true,
+            ),
+            (
+                // A market maker's fee tier: taker 3 and maker 0 basis points
+                // for account 0xDD…DD, its first override (`seq` 1).
+                Action::ProposeAdminAction(ProposeAdminAction {
+                    proposer: SignerAddress([0xA1; 20]),
+                    registry_version: RegistryVersion(1),
+                    action: AdminAction::SetAccountFeeOverride(AccountFeeOverrideChange {
+                        account: [0xDD; 20],
+                        taker_fee_bps: 3,
+                        maker_fee_bps: 0,
+                        seq: 1,
+                    }),
+                }),
+                500,
+                PROPOSE_SET_ACCOUNT_FEE_OVERRIDE_HEX.trim(),
                 ProposeAdminAction::ACTION_TYPE,
                 true,
             ),
@@ -2510,7 +2531,7 @@ mod tests {
         // Exhaustive by construction: a new variant breaks this match until
         // it is added here, and this test then demands its BYTES.md row in
         // the same commit — the ledger's contract.
-        const ALL_INNER_TAGS: [AdminActionType; 26] = [
+        const ALL_INNER_TAGS: [AdminActionType; 27] = [
             AdminActionType::CreateMarket,
             AdminActionType::UpdateAdminSignerRegistry,
             AdminActionType::Batch,
@@ -2537,6 +2558,7 @@ mod tests {
             AdminActionType::SettleEvent,
             AdminActionType::SetMarketStatus,
             AdminActionType::UpdateMarketFees,
+            AdminActionType::SetAccountFeeOverride,
         ];
         for tag_type in ALL_INNER_TAGS {
             match tag_type {
@@ -2565,7 +2587,8 @@ mod tests {
                 | AdminActionType::VoidEvent
                 | AdminActionType::SettleEvent
                 | AdminActionType::SetMarketStatus
-                | AdminActionType::UpdateMarketFees => {}
+                | AdminActionType::UpdateMarketFees
+                | AdminActionType::SetAccountFeeOverride => {}
                 // Retired: a discriminant with no arm, never listed as assigned.
                 #[allow(deprecated)]
                 AdminActionType::CreateImpactMarket
