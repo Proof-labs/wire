@@ -865,8 +865,9 @@ pub enum AdminAction {
     /// Voids an event: every binary and conditional on it settles in cash at
     /// the Yes price the quorum names.
     VoidEvent(VoidEvent),
-    /// Settles a price event whose resolution window closed unresolved, on
-    /// the Yes or No the quorum names from deadline evidence.
+    /// Settles an event on the Yes or No the quorum names: a price event
+    /// once its resolution window closed unresolved, from deadline evidence;
+    /// an event with no oracle rule from its settlement time.
     SettleEvent(SettleEvent),
     /// Moves a perpetual through its lifecycle: Trading, ReduceOnly, then
     /// Delisted. Delisting settles every open position at the last certified
