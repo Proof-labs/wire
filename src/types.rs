@@ -4878,10 +4878,10 @@ pub enum ExecError {
     /// A registry-gated admin action was submitted directly while the
     /// signer registry exists: for those actions the legacy path is
     /// closed and the proposal path is the only way — even for an
-    /// authorized relayer. Raised by `CreateMarket` whenever a registry
-    /// exists; `CreateEvent` and `AttachConditional` have no direct path at
-    /// all. Other relayer-gated actions do not consult the registry and
-    /// never raise this.
+    /// authorized relayer. Raised by `CreateMarket` and `UpdateMarketFees`
+    /// whenever a registry exists; `CreateEvent` and `AttachConditional` have
+    /// no direct path at all. Other relayer-gated actions do not consult the
+    /// registry and never raise this.
     AdminActionRequiresProposal,
     /// A proposed or applied signer roster violates the registry
     /// invariants (threshold bounds, sorted duplicate-free members,
