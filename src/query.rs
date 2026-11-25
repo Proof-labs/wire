@@ -217,7 +217,9 @@ pub struct AccountStateInfo {
 }
 
 /// The operator-authorization sets as concatenated addresses (#422 / #318):
-/// the three genesis presence sets plus the three capability sets. Read-only
+/// the relayer and oracle presence sets and the custody and market-parameters
+/// capability sets; `cex_composite` and `scheduled_ops` are retired and always
+/// empty. Read-only
 /// audit surface — until now the allowlists could only be membership-tested,
 /// never enumerated.
 #[derive(Serialize, Deserialize)]

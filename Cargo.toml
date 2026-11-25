@@ -369,6 +369,12 @@ name = "proof-wire"
 # Rust code that builds a query_v2::Market literal must add settings_sequence
 # (the api-gateway tests do). Every pre-existing message still decodes ->
 # MINOR.
+#
+# Unreleased: additive wire change (retired authority lists). ExecError
+# appends AuthorityDomainRetired (157), the refusal of an UpdateAuthoritySet
+# that names the retired composite-feeder or scheduled-operations list.
+# AuthorityDomain keeps both names. Every pre-existing message still decodes
+# -> MINOR.
 version = "13.0.0"
 edition = "2021"
 

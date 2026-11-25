@@ -1133,10 +1133,10 @@ pub struct SetOracleGuards {
 /// domain is a serde variant *name* (externally tagged), so an unknown domain
 /// fails to decode rather than silently mis-targeting a set. The `#[repr(u8)]`
 /// discriminant is load-bearing for the presence-key bytes (`[prefix][cap]…`),
-/// not for the wire. `Oracle`/`CexComposite`/`Relayer` are the genesis-seeded
-/// presence sets; `Custody`/`MarketParams`/`ScheduledOps` are the capability
-/// sets the split activates — their discriminants ship here,
-/// dormant, so the wire has a single mixed-fleet decode boundary.
+/// not for the wire. `Oracle`/`Relayer` are the genesis-seeded presence sets;
+/// `Custody`/`MarketParams` are the capability sets. `CexComposite` and
+/// `ScheduledOps` are retired: they stay here for decoding, the engine refuses
+/// any change naming them, and neither discriminant (2, 6) is ever reused.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthorityDomain {
@@ -5323,6 +5323,12 @@ pub enum ExecError {
         /// The market's settings sequence.
         stored: MarketSettingsSequence,
     },
+    /// `UpdateAuthoritySet` names a retired authority list (the composite
+    /// feeder or scheduled operations). No action reads either list, so a
+    /// change to one is refused at proposal and at execution.
+    AuthorityDomainRetired {
+        domain: AuthorityDomain,
+    },
 }
 
 impl ExecError {
@@ -5478,6 +5484,7 @@ impl ExecError {
             ExecError::UserImAboveNotional { .. } => 143,
             // 144-154 are reserved for the bridge vote errors; not assigned here.
             ExecError::MarketSettingsChanged { .. } => 155,
+            ExecError::AuthorityDomainRetired { .. } => 157,
             ExecError::InternalError(_) => 255,
         }
     }
@@ -5901,6 +5908,9 @@ impl ExecError {
             }
             ExecError::MarketSettingsChanged { .. } => {
                 "A quorum UpdateMarketFees names a settings sequence its market is not at, as when the settings changed after the proposal was made. Re-read the market's settings_sequence and propose the change again."
+            }
+            ExecError::AuthorityDomainRetired { .. } => {
+                "UpdateAuthoritySet names a retired authority list (composite feeder or scheduled operations). No action reads either list; nothing was written."
             }
             ExecError::LiquidationRefused(_) => {
                 "A liquidation attempt was refused (a changed position, a malformed book or an unavailable reference) and kept no writes; the event's refusal names why."
@@ -6421,6 +6431,9 @@ impl fmt::Display for ExecError {
                 f,
                 "market {market} is at settings sequence {stored}, the proposal names {predecessor}"
             ),
+            ExecError::AuthorityDomainRetired { domain } => {
+                write!(f, "authority domain {domain:?} is retired")
+            }
             ExecError::InternalError(msg) => write!(f, "internal error: {msg}"),
         }
     }
