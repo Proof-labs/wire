@@ -22,6 +22,7 @@ fn config() -> LiquidationConfig {
         max_book_orders: LiquidationWorkCount(20),
         max_committed_fills: LiquidationWorkCount(10),
         takeover_discount_bps: TakeoverDiscountBps::INITIAL,
+        fund_limits: FundLimits::INITIAL,
     }
 }
 
@@ -43,7 +44,15 @@ fn set_liquidation_config_bytes_are_positional_and_canonical() {
     let action = AdminAction::SetLiquidationConfig(update(1, 2, config()));
     let bytes = canonical_admin_action_bytes(&action).expect("action encodes");
 
-    let config_fields = (10_500_u32, (2_u32, 3_u32), 100_u32, 20_u32, 10_u32, 50_u32);
+    let config_fields = (
+        10_500_u32,
+        (2_u32, 3_u32),
+        100_u32,
+        20_u32,
+        10_u32,
+        50_u32,
+        (10_000_u32, 5_000_u32),
+    );
     let tagged = BTreeMap::from([("SetLiquidationConfig", (1_u64, 2_u64, config_fields))]);
     assert_eq!(
         bytes,
@@ -54,8 +63,9 @@ fn set_liquidation_config_bytes_are_positional_and_canonical() {
         concat!(
             "81b45365744c69717569646174696f6e436f6e666967", // {"SetLiquidationConfig":
             "930102",                                       // [1, 2,
-            "96cd29049202036414",                           // [10500, [2, 3], 100, 20,
-            "0a32",                                         // 10, 50]]}
+            "97cd29049202036414",                           // [10500, [2, 3], 100, 20,
+            "0a32",                                         // 10, 50,
+            "92cd2710cd1388",                               // [10000, 5000]]]}
         )
     );
 
@@ -94,6 +104,25 @@ fn set_liquidation_config_without_the_discount_still_decodes() {
             .expect("action encodes"),
         "old bytes re-encode with the discount and caps"
     );
+}
+
+/// Bytes written before the fund's limits existed still decode, to their
+/// initial values: a minor wire change.
+#[test]
+fn set_liquidation_config_without_the_fund_limits_still_decodes() {
+    let old = hex::decode(concat!(
+        "81b45365744c69717569646174696f6e436f6e666967",
+        "930102",
+        "96cd29049202036414",
+        "0a32",
+    ))
+    .expect("frozen hex");
+    let (decoded, _) = canonicalize_admin_action(&old).expect("old bytes decode");
+    assert!(matches!(
+        decoded,
+        AdminAction::SetLiquidationConfig(cmd)
+            if cmd == update(1, 2, config()) && cmd.config.fund_limits == FundLimits::INITIAL
+    ));
 }
 
 /// The release-5 shape carried eight positional fields; with the fund caps
@@ -197,6 +226,32 @@ fn each_bound_refuses_with_the_rule_it_breaks() {
                 field: "max_committed_fills",
             },
         ),
+        (
+            LiquidationConfig {
+                fund_limits: FundLimits {
+                    gross_bps: FundLimitBps(10_000),
+                    market_bps: FundLimitBps(0),
+                },
+                ..config()
+            },
+            LiquidationConfigError::FundLimitsOutOfRange {
+                gross_bps: 10_000,
+                market_bps: 0,
+            },
+        ),
+        (
+            LiquidationConfig {
+                fund_limits: FundLimits {
+                    gross_bps: FundLimitBps(5_000),
+                    market_bps: FundLimitBps(5_001),
+                },
+                ..config()
+            },
+            LiquidationConfigError::FundLimitsOutOfRange {
+                gross_bps: 5_000,
+                market_bps: 5_001,
+            },
+        ),
     ];
     for (bad, expected) in cases {
         assert_eq!(bad.validate(), Err(expected));
@@ -225,6 +280,8 @@ fn liquidation_config_set_attributes_are_exact() {
         max_committed_fills: 10,
         proposal_id: 7,
         takeover_discount_bps: 50,
+        fund_gross_limit_bps: 10_000,
+        fund_market_limit_bps: 5_000,
     };
     let bytes = rmp_serde::to_vec(&event).expect("event encodes");
     let decoded: Event = rmp_serde::from_slice(&bytes).expect("event decodes");
@@ -236,7 +293,7 @@ fn liquidation_config_set_attributes_are_exact() {
     let mut actual = AbciEventWriter::new();
     event.encode_abci(&mut actual);
     let mut expected = AbciEventWriter::new();
-    expected.begin_event("liquidation_config_set", 9);
+    expected.begin_event("liquidation_config_set", 11);
     expected.write_attr_u64("sequence", 2);
     expected.write_attr_u64("target_ratio_bps", 10_500);
     expected.write_attr_u64("full_close_numerator", 2);
@@ -246,5 +303,7 @@ fn liquidation_config_set_attributes_are_exact() {
     expected.write_attr_u64("max_committed_fills", 10);
     expected.write_attr_u64("proposal_id", 7);
     expected.write_attr_u64("takeover_discount_bps", 50);
+    expected.write_attr_u64("fund_gross_limit_bps", 10_000);
+    expected.write_attr_u64("fund_market_limit_bps", 5_000);
     assert_eq!(actual.into_vec(), expected.into_vec());
 }

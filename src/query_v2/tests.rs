@@ -332,6 +332,37 @@ fn trigger_view_round_trips() {
     });
 }
 
+/// Bytes from a node that predates `totals_complete` decode as complete: that
+/// node refused an account it could not value whole.
+#[test]
+fn an_account_without_totals_complete_decodes_as_complete() {
+    let account = Account {
+        balance: 100,
+        equity: 90,
+        total_mm: 10,
+        total_im: 20,
+        margin_ratio_bps: Some(9_000),
+        binding_scenario: Vec::new(),
+        fees_accrued: 0,
+        volume_30d_micro_usdc: 0,
+        cashout_equity: 90,
+        positions: Vec::new(),
+        unpriced: Vec::new(),
+        totals_complete: true,
+    };
+    let mut older = serde_json::to_value(&account).expect("account maps");
+    older
+        .as_object_mut()
+        .expect("account is a map")
+        .remove("totals_complete")
+        .expect("the key is present");
+    let bytes = rmp_serde::to_vec_named(&older).expect("older account encodes");
+    assert_eq!(
+        decode::<Account>(&bytes).expect("older account decodes"),
+        account
+    );
+}
+
 #[test]
 fn account_views_round_trip() {
     round_trip(&Account {
@@ -360,7 +391,16 @@ fn account_views_round_trip() {
             pnl_if_dies: -3,
             funding_since: 0,
             adl_score: 0,
+            stale: Some(SettlementReferenceUnavailable::Stale),
         }],
+        unpriced: vec![UnpricedPosition {
+            market: 3,
+            side: Side::Sell,
+            entry_price: 7,
+            size: 1,
+            reason: SettlementReferenceUnavailable::NoMark,
+        }],
+        totals_complete: false,
     });
     round_trip(&PositionSummary {
         market: 2,
@@ -375,6 +415,7 @@ fn account_views_round_trip() {
         pnl_if_dies: 0,
         funding_since: 0,
         adl_score: 0,
+        stale: None,
     });
     round_trip(&FinancialState {
         format: FinancialFormat(3),
@@ -465,6 +506,35 @@ fn oracle_permissions_round_trip() {
 }
 
 #[test]
+fn config_views_distinguish_absent_fund_limits_from_zero() {
+    #[derive(serde::Serialize)]
+    struct PreviousConfig {
+        target_ratio_bps: u32,
+        full_close_threshold: Ratio,
+        partial_penalty_bps: u32,
+        takeover_discount_bps: u32,
+    }
+    let bytes = rmp_serde::to_vec_named(&PreviousConfig {
+        target_ratio_bps: 10_500,
+        full_close_threshold: Ratio {
+            numerator: 2,
+            denominator: 3,
+        },
+        partial_penalty_bps: 100,
+        takeover_discount_bps: 50,
+    })
+    .expect("previous config view encodes");
+    let previous: LiquidationConfig = rmp_serde::from_slice(&bytes).expect("previous view decodes");
+    assert_eq!(previous.fund_gross_limit_bps, None);
+    assert_eq!(previous.fund_market_limit_bps, None);
+    round_trip(&LiquidationConfig {
+        fund_gross_limit_bps: Some(0),
+        fund_market_limit_bps: Some(0),
+        ..previous
+    });
+}
+
+#[test]
 fn configuration_views_round_trip() {
     round_trip(&LiquidationConfig {
         target_ratio_bps: 10_500,
@@ -474,6 +544,8 @@ fn configuration_views_round_trip() {
         },
         partial_penalty_bps: 100,
         takeover_discount_bps: 50,
+        fund_gross_limit_bps: Some(10_000),
+        fund_market_limit_bps: Some(5_000),
     });
     round_trip(&Upgrades {
         upgrades: vec![

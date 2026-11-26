@@ -265,9 +265,9 @@ pub struct MarginOffsetPair {
 /// The only way to build one is [`TryFrom<Vec<MarginOffsetPair>>`], which
 /// enforces the bound and the order: conditionals strictly ascend and never
 /// repeat, and every pair names its own perpetual as the settlement
-/// reference. Ascending conditional id is the allocation priority when
-/// several pairs could match, so the order is part of the contract and a
-/// decoded list that is not canonical is refused.
+/// reference. Ascending conditional id breaks ties between pairs earning the
+/// same credit per unit, so the order is part of the contract and a decoded
+/// list that is not canonical is refused.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(into = "Vec<MarginOffsetPair>")]
 pub struct MarginOffsetPairs(Vec<MarginOffsetPair>);

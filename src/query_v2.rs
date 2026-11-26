@@ -353,6 +353,20 @@ pub struct PositionSummary {
     pub pnl_if_dies: i64,
     pub funding_since: i64,
     pub adl_score: i64,
+    /// Why the market's live price is unusable, when the position is valued
+    /// at its last accepted price instead.
+    #[serde(default)]
+    pub stale: Option<SettlementReferenceUnavailable>,
+}
+
+/// A position no price can value: listed, and left out of every total.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnpricedPosition {
+    pub market: MarketId,
+    pub side: Side,
+    pub entry_price: u64,
+    pub size: u64,
+    pub reason: SettlementReferenceUnavailable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,14 +380,28 @@ pub struct Account {
     pub balance: u64,
     pub equity: i64,
     pub total_mm: u64,
+    /// Leaves out resting orders on a market no price can value.
     pub total_im: u64,
-    /// Binding-scenario equity over maintenance margin; `None` when no scenario carries risk.
+    /// Binding-scenario equity over maintenance margin; `None` when no scenario
+    /// carries risk, or when `unpriced` holds a position the ratio would leave out.
     pub margin_ratio_bps: Option<u64>,
     pub binding_scenario: Vec<BindingOutcome>,
     pub fees_accrued: i64,
     pub volume_30d_micro_usdc: u64,
     pub cashout_equity: i64,
     pub positions: Vec<PositionSummary>,
+    #[serde(default)]
+    pub unpriced: Vec<UnpricedPosition>,
+    /// False while `unpriced` holds a position: `equity`, `cashout_equity`,
+    /// `total_mm` and `margin_ratio_bps` then leave it out, so they do not
+    /// describe the whole account. True when absent, as from a node that
+    /// refused such an account.
+    #[serde(default = "totals_complete_when_absent")]
+    pub totals_complete: bool,
+}
+
+fn totals_complete_when_absent() -> bool {
+    true
 }
 
 /// A position as the ledger holds it, with the funding it owes or is owed.
@@ -720,6 +748,11 @@ pub struct LiquidationConfig {
     pub full_close_threshold: Ratio,
     pub partial_penalty_bps: u32,
     pub takeover_discount_bps: u32,
+    /// The insurance fund's gross notional limits, in basis points of its equity.
+    #[serde(default)]
+    pub fund_gross_limit_bps: Option<u32>,
+    #[serde(default)]
+    pub fund_market_limit_bps: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

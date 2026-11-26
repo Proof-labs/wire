@@ -56,6 +56,33 @@ impl TakeoverDiscountBps {
     }
 }
 
+/// A pool insurance fund's gross notional limit as a share of its equity, in
+/// basis points (DEC-264).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct FundLimitBps(pub u32);
+
+/// The most gross notional a pool's insurance fund holds after a takeover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundLimits {
+    /// Over all its markets.
+    pub gross_bps: FundLimitBps,
+    /// On any one market.
+    pub market_bps: FundLimitBps,
+}
+
+impl FundLimits {
+    /// The limits a configuration written before the field existed takes:
+    /// 1.0 × equity over all markets, 0.5 × on one.
+    pub const INITIAL: Self = Self {
+        gross_bps: FundLimitBps(10_000),
+        market_bps: FundLimitBps(5_000),
+    };
+
+    fn initial() -> Self {
+        Self::INITIAL
+    }
+}
+
 /// A retired per-owner, per-block liquidation work count, kept so stored
 /// records decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -73,6 +100,8 @@ pub struct LiquidationConfig {
     pub max_committed_fills: LiquidationWorkCount,
     #[serde(default = "TakeoverDiscountBps::initial")]
     pub takeover_discount_bps: TakeoverDiscountBps,
+    #[serde(default = "FundLimits::initial")]
+    pub fund_limits: FundLimits,
 }
 
 /// The rule a configuration or an update breaks.
@@ -88,6 +117,8 @@ pub enum LiquidationConfigError {
     ZeroWorkLimit { field: &'static str },
     /// The takeover discount exceeds [`MAX_TAKEOVER_DISCOUNT_BPS`].
     TakeoverDiscountAboveMaximum { takeover_discount_bps: u32 },
+    /// A fund limit on one market is zero or above the limit over all markets.
+    FundLimitsOutOfRange { gross_bps: u32, market_bps: u32 },
     /// The update's sequence does not exceed the one it replaces.
     SequenceNotIncreasing {
         predecessor: LiquidationConfigSequence,
@@ -123,6 +154,13 @@ impl core::fmt::Display for LiquidationConfigError {
             } => write!(
                 f,
                 "takeover discount {takeover_discount_bps} bps exceeds {MAX_TAKEOVER_DISCOUNT_BPS} bps"
+            ),
+            Self::FundLimitsOutOfRange {
+                gross_bps,
+                market_bps,
+            } => write!(
+                f,
+                "fund limit on one market {market_bps} bps must be above zero and at most the limit over all markets {gross_bps} bps"
             ),
             Self::SequenceNotIncreasing {
                 predecessor,
@@ -168,6 +206,16 @@ impl LiquidationConfig {
         if self.takeover_discount_bps.0 > MAX_TAKEOVER_DISCOUNT_BPS {
             return Err(LiquidationConfigError::TakeoverDiscountAboveMaximum {
                 takeover_discount_bps: self.takeover_discount_bps.0,
+            });
+        }
+        let FundLimits {
+            gross_bps,
+            market_bps,
+        } = self.fund_limits;
+        if market_bps.0 == 0 || market_bps > gross_bps {
+            return Err(LiquidationConfigError::FundLimitsOutOfRange {
+                gross_bps: gross_bps.0,
+                market_bps: market_bps.0,
             });
         }
         Ok(())

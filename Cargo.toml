@@ -1,5 +1,13 @@
 [package]
 name = "proof-wire"
+# Unreleased: LiquidationConfig gains a trailing fund_limits (FundLimits:
+# gross_bps and market_bps, each a FundLimitBps), defaulting to
+# FundLimits::INITIAL (10,000 and 5,000) when absent. Event::LiquidationConfigSet
+# gains trailing fund_gross_limit_bps and fund_market_limit_bps (u32, serde
+# default 0 on records written before them), and the v2 liquidation config view
+# gains fund_gross_limit_bps and fund_market_limit_bps (Option<u32>). Old bytes
+# decode; no existing bytes change -> MINOR.
+#
 # Unreleased (BREAKING): order placement and cancels become lists on new
 # action bytes. PlaceOrders (0x35), CancelOrders (0x36) and
 # CancelClientOrders (0x37) carry 1..=MAX_LIST_ENTRIES entries for one owner,
@@ -29,6 +37,15 @@ name = "proof-wire"
 # closed funding debt stays in FundingSettled. No bytes change; consumers that
 # read it as cash booked without a fill must stop adding it to PnL derived from
 # TradeExecuted -> MINOR.
+#
+# Unreleased: the v2 account view gains PositionSummary.stale
+# (Option<SettlementReferenceUnavailable>, serde default) for a leg valued at
+# its last accepted price, and Account.unpriced (Vec<UnpricedPosition>, serde
+# default) for legs left out of every total; UnpricedPosition is new.
+# margin_ratio_bps is None while unpriced is not empty, and
+# Account.totals_complete (bool, true when absent) is false then. v2 views
+# are named maps, so old readers ignore the keys; v1 types are unchanged ->
+# MINOR.
 #
 # Unreleased: additive query_v2 insurance fund read views:
 # InsuranceFundDirectory, InsuranceFundState, InsuranceFundLedger,

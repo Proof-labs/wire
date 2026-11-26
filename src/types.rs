@@ -4491,6 +4491,10 @@ pub enum Event {
         proposal_id: u64,
         #[serde(default)]
         takeover_discount_bps: u32,
+        #[serde(default)]
+        fund_gross_limit_bps: u32,
+        #[serde(default)]
+        fund_market_limit_bps: u32,
     },
     /// The partial-liquidation penalty on one book fill that reduced
     /// `owner`'s position. `assessed` is the fill's notional times the
