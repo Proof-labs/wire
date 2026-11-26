@@ -610,6 +610,10 @@ impl EmergencyId {
     }
 }
 
+/// The fewest members a registry change may leave: a high-impact action's
+/// three approvals.
+pub const MIN_ADMIN_SIGNERS: usize = 3;
+
 /// The on-chain signer roster — the single source of who may approve
 /// admin actions. Registry presence is the activation switch: absent =
 /// multisig administration off, legacy admin paths unchanged; present =
@@ -618,7 +622,9 @@ impl EmergencyId {
 pub struct AdminSignerRegistry {
     /// Monotone, starts at 1, never reused (a rotation assigns +1).
     pub version: RegistryVersion,
-    /// Approvals required to execute a proposal.
+    /// The roster's approval count. A low- or high-impact proposal needs at
+    /// least this many approvals (more for high impact, never more than the
+    /// roster has members); a stopping action needs one.
     /// Invariant: `2 <= threshold <= members.len()`.
     pub threshold: SignatureThreshold,
     /// Canonically sorted, duplicate-free,
