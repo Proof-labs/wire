@@ -583,5 +583,6 @@ fn configuration_views_round_trip() {
         solana_destination: SolanaAddress([9; 32]),
         status: WithdrawalStatus::Pending,
         request_height: 4,
+        quarantined: true,
     });
 }

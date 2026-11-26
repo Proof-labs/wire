@@ -2,17 +2,29 @@
 //! so substitution fails to compile.
 
 use crate::bridge::hash::Hasher;
+#[cfg(feature = "bridge")]
 use borsh::{BorshDeserialize, BorshSerialize};
 
 /// Declare a fixed-width byte-array newtype with the shared accessors.
+///
+/// Borsh (the `bridge` feature) writes the raw bytes. Serde (the `full`
+/// feature) goes through [`crate::wire_bytes`]: a MessagePack `seq` of `u8`,
+/// byte-identical to the bare `[u8; N]` it replaces, and a byte string in
+/// human-readable formats. `Display` is lowercase hex, as the ABCI event
+/// attributes write a bare byte array.
 macro_rules! byte_newtype {
     ($(#[$meta:meta])* $name:ident, $len:literal) => {
         $(#[$meta])*
-        #[derive(
-            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash,
-            BorshSerialize, BorshDeserialize,
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[cfg_attr(feature = "bridge", derive(BorshSerialize, BorshDeserialize))]
+        #[cfg_attr(
+            feature = "full",
+            derive(serde::Serialize, serde::Deserialize),
+            serde(transparent)
         )]
-        pub struct $name([u8; $len]);
+        pub struct $name(
+            #[cfg_attr(feature = "full", serde(with = "crate::wire_bytes"))] [u8; $len],
+        );
 
         impl $name {
             /// Wrap raw bytes.
@@ -33,6 +45,15 @@ macro_rules! byte_newtype {
                 Self(bytes)
             }
         }
+
+        impl core::fmt::Display for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                for byte in self.0 {
+                    write!(f, "{byte:02x}")?;
+                }
+                Ok(())
+            }
+        }
     };
 }
 
@@ -48,6 +69,28 @@ byte_newtype!(
     /// transaction may carry several transfers.
     TxSignature,
     64
+);
+
+byte_newtype!(
+    /// A bridge operator's ed25519 verification key: the operator's only
+    /// identity in the operator receipt registry. It signs the operator's
+    /// votes, pause votes and payout records.
+    OperatorKey,
+    32
+);
+
+byte_newtype!(
+    /// A 64-byte ed25519 signature by an [`OperatorKey`] over one bridge
+    /// message (a vote, a pause vote or a payout record).
+    OperatorSignature,
+    64
+);
+
+byte_newtype!(
+    /// 32-byte atomic deployment identity. Decoded values are claims:
+    /// recompute from out-of-band identifiers and compare.
+    DeploymentId,
+    32
 );
 
 byte_newtype!(
@@ -75,9 +118,14 @@ impl ProofOwner {
 }
 
 /// Engine's monotonic withdrawal sequence number. Sequence half only — the
-/// cross-deployment identity needs `proof_genesis_hash` too.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
+/// cross-deployment identity needs `proof_genesis_hash` too. Serde-transparent:
+/// it encodes as the bare `u64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bridge", derive(BorshSerialize, BorshDeserialize))]
+#[cfg_attr(
+    feature = "full",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
 )]
 pub struct WithdrawalId(u64);
 
@@ -92,6 +140,12 @@ impl WithdrawalId {
     #[must_use]
     pub const fn to_u64(self) -> u64 {
         self.0
+    }
+}
+
+impl core::fmt::Display for WithdrawalId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
