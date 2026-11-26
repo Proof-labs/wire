@@ -1,5 +1,28 @@
 [package]
 name = "proof-wire"
+# Unreleased (BREAKING): order placement and cancels become lists on new
+# action bytes. PlaceOrders (0x35), CancelOrders (0x36) and
+# CancelClientOrders (0x37) carry 1..=MAX_LIST_ENTRIES entries for one owner,
+# always [owner, [entry, ...]] (OrderEntry, EntryList). The single-order
+# actions PlaceOrder (0x01), CancelOrder (0x02) and CancelClientOrder (0x18)
+# are retired: their bytes no longer decode. A stored ActionBlob naming one
+# is refused as InsuranceActionRefusal::Retired. Event::OrdersPlaced
+# (OrderPlacements; PlacementOutcome::Executed reports requested and filled
+# quantity and its UnfilledReason) and Event::OrdersCancelled
+# (OrderCancellations, one per owner and reason per step) are appended and
+# replace OrderPlaced and OrderCancelled, which are no longer emitted but
+# still decode. CancelReason derives Eq and Ord. MAJOR.
+#
+# Unreleased (BREAKING): a PlaceOrders entry carries its kind,
+# OrderKind::Limit { price, time_in_force, post_only } or
+# OrderKind::Market { worst_price }, with reduce_only shared by both. The
+# entry layout is [market, side, quantity, kind, reduce_only,
+# client_order_id, stop_loss, take_profit]. MarketOrder (0x04) and
+# ClosePosition (0x17) are retired with their payload types; a close is a
+# reduce-only market entry. MarketOrderProcessed and OrderRejected are no
+# longer emitted (an Executed or Rejected entry of OrdersPlaced reports the
+# same) but still decode. MAJOR.
+#
 # Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
 # PnL of a partial close and of the insurance fund's takeover netting; the
 # closed funding debt stays in FundingSettled. No bytes change; consumers that
@@ -14,6 +37,14 @@ name = "proof-wire"
 # SettlementReferenceUnavailable are frozen in the response vectors. These
 # additions change no existing bytes (MINOR).
 # This entry does not classify other changes included in the eventual release.
+#
+# Unreleased: additive. Event::OraclePriceCertified,
+# Event::OraclePriceUncertified and Event::OraclePolicyActivated appended
+# (event types oracle_price_certified, oracle_price_uncertified,
+# oracle_policy_activated); new oracle_verdict module with OracleStatus,
+# OracleAdmission and SourceMask (moved from exchange-core, encoding
+# unchanged) and AttributeList; Display for OracleReason and
+# OraclePolicyVersion. No existing bytes change (MINOR).
 #
 # The wire contract shared by exchange-core (engine) and proof-trading-sdk
 # (client SDK): MessagePack codec, Ed25519 signing preimage, action + wire
@@ -292,9 +323,7 @@ name = "proof-wire"
 # function; no bytes change -> MINOR.
 #
 # Unreleased: additive. New query_v2 module of version 2 read views, encoded
-# as MessagePack maps. No existing bytes change -> MINOR. The bridge views
-# (pending withdrawals/deposits, pages with continuation cursors, registry,
-# status) land with this module before its first release.
+# as MessagePack maps. No existing bytes change -> MINOR.
 #
 # Unreleased: CreateMarket gains trailing defaulted tick_size and lot_size,
 # always encoded, so the action is a 14-element array and governance creates a
@@ -327,35 +356,101 @@ name = "proof-wire"
 # effective funding terms. Old bytes of those still decode, but a decoder
 # built before it rejects the longer arrays -> MAJOR.
 #
-# Unreleased: the receipt era retires. Actions ConfirmWithdrawalReceipt
-# (0x22), FailWithdrawalReceipt (0x23) and AuthorizeWithdrawal (0x24) joined
-# RETIRED_ACTION_BYTES: a wire-13 decoder refuses them and their payload
-# structs are gone, so old bytes decode only on a pre-13 decoder — MAJOR.
-# The vote actions and the bridge status above replace the whole path; the
-# Event::WithdrawalAuthorized variant left with its emitter. Approval
-# re-encodes a proposal's stored action, so drain or re-propose any pending
-# proposal holding one of the retired actions before rollout.
+# Unreleased: additive wire change (market settings through the admin
+# quorum). New AdminAction::UpdateMarketFees at inner tag 0x23, carrying
+# market_settings::QuorumUpdateMarketFees: a MarketSettingsSequence
+# predecessor, then a MarketSettingsChange, the UpdateMarketFees fields but
+# its signer, in their order (UpdateMarketFees::into_change splits one off).
+# UpdateMarketFees derives Default. The v2 Market view gains a trailing
+# defaulted settings_sequence, the MarketSettingsSequence a quorum change
+# names. ExecError appends MarketSettingsChanged (155). Tags 0x20-0x22 stay
+# reserved. v2 views are maps keyed by field name, so a reader built before
+# settings_sequence skips the key, and a Market without it decodes at 0.
+# Rust code that builds a query_v2::Market literal must add settings_sequence
+# (the api-gateway tests do). Every pre-existing message still decodes ->
+# MINOR.
 #
-# Unreleased: the bridge vote model. OperatorReceiptRegistry gains
-# operator_owners (the members' engine signer addresses, parallel to
-# operator_keys; #[serde(default)] on the STORED registry — pre-12 rows
-# decode with an empty roster and fail closed until the next rotation),
-# SetOperatorReceiptRegistry requires it. RecordWithdrawalPayout (0x31) is
-# repurposed: the payload now carries the Squads vault payout (vault, vault
-# transaction index, epoch) instead of a Solana signature — old bytes do not
-# decode. New actions VoteWithdrawalPaid (0x30) and VoteDeposit (0x32) carry
-# one member signature each over domain-, kind-, item-, deployment- and
-# chain-bound canonical bytes; the engine aggregates. New admin tags
-# PauseBridge (0x20) and SetBridgePayoutConfig (0x21) — tags 0x16-0x18 stay
-# reserved for the partial-liquidation settings. ExecError appends
-# BridgePaused (136), BridgeVoteConflict (137), BridgeVoteInvalid (138),
-# BridgeUnauthorizedOperator (139) and BridgePayoutReportInvalid (140). Old
-# bytes decode except the two payload changes above, but a decoder built
-# before this rejects the new actions and the longer registry -> MAJOR.
-# Approval re-encodes a proposal's stored action, so drain or re-propose
-# pending SetOperatorReceiptRegistry / RecordWithdrawalPayout proposals (and
-# batches, which carry neither) before rollout.
-version = "13.0.0"
+# Unreleased: additive wire change (retired authority lists). ExecError
+# appends AuthorityDomainRetired (157), the refusal of an UpdateAuthoritySet
+# that names the retired composite-feeder or scheduled-operations list.
+# AuthorityDomain keeps both names. Every pre-existing message still decodes
+# -> MINOR.
+#
+# Unreleased: additive wire change (per-account fees through the admin
+# quorum). New AdminAction::SetAccountFeeOverride at inner tag 0x24, carrying
+# AccountFeeOverrideChange: the SetAccountFeeOverride fields but its signer,
+# in their order (SetAccountFeeOverride::into_change splits one off). No
+# existing bytes change -> MINOR.
+#
+# 14.0.0 (BREAKING, against 13.0.0): the bridge vote model.
+# - Actions: ConfirmWithdrawalReceipt (0x22), FailWithdrawalReceipt (0x23),
+#   AuthorizeWithdrawal (0x24) and ClaimWithdrawalPayout (0x2E) are retired
+#   into RETIRED_ACTION_BYTES with their payloads, BridgeWithdrawalReceipt and
+#   OperatorReceiptProof. New VoteWithdrawalPaid (0x30), VoteDeposit (0x32),
+#   VotePauseBridge (0x33) and VoteWithdrawalPayoutDead (0x34).
+#   RecordWithdrawalPayout (0x31) names a Squads payout (vault,
+#   squads_transaction_index) and carries deployment_id, chain_id,
+#   registry_epoch and a 64-byte operator signature in place of the holder
+#   and Solana signature. Every bridge message is BRIDGE_VOTE_DOMAIN, a kind
+#   byte (BRIDGE_VOTE_KIND_*: 1 paid, 2 deposit, 4 payout dead, 5 payout
+#   record, 6 pause) and the item's fields; any envelope signer may submit.
+# - Admin actions: PauseBridge (0x20), SetBridgePayoutConfig (0x21),
+#   SetDepositReceiptLimit (0x22) and SetWithdrawalPolicy (0x25), carrying
+#   BridgePayoutConfig, SetDepositReceiptLimit and WithdrawalPolicy.
+# - OperatorReceiptRegistry and SetOperatorReceiptRegistry drop
+#   operator_owners. The WithdrawalPayoutLease record is removed;
+#   WithdrawalPayoutRecord names the signing registry key as recorder.
+#   New stored records BridgePauseVote(s), WithdrawalMemberVote,
+#   WithdrawalVoteRecord, DepositMemberVote, DepositVoteRecord, PayoutVerdict,
+#   AgreedDeposit, ParkedDeposit, DepositHoldCause (window_full,
+#   over_per_receipt_max, limits_unset, over_window_cap), ParkCause
+#   (over_per_receipt_max, over_window_cap: a parked deposit's and
+#   AgreedDepositParked's cause) and BridgePauseState (Active
+#   { unpaused_at_ms } or Paused: the bridge's one pause row, at 0x74).
+# - Events: WithdrawalPayoutLeaseAcquired and WithdrawalAuthorized are
+#   removed; WithdrawalPayoutRecorded names recorder. New
+#   WithdrawalPaidVoteRecorded, DepositVoteRecorded, BridgeVoteConflict,
+#   DepositVoteHeld, BridgePauseAuthorized, BridgePayoutConfigSet,
+#   BridgePauseVoteRecorded, BridgePausedByVote,
+#   WithdrawalPayoutDeadVoteRecorded, WithdrawalPayoutCleared,
+#   WithdrawalPolicySet, DepositReceiptLimitSet, AgreedDepositQueued,
+#   AgreedDepositParked, AgreedDepositPassFailed and WithdrawalQuarantined.
+# - ExecError: WithdrawalPayoutLeaseActive (91), WithdrawalPayoutLeaseNotHeld
+#   (128) and WithdrawalPayoutRecordLimitReached (129) are retired, never
+#   reassigned. New BridgePaused (144), WithdrawalPayoutCleared (145),
+#   BridgeVoteInvalid (146), BridgeUnauthorizedOperator (147),
+#   BridgePayoutReportInvalid (148), WithdrawalQuarantined (149),
+#   WithdrawalPayoutSlotOccupied (150), DepositReceiptLimitExceeded (151),
+#   OwnerPendingWithdrawalsFull (153) and PayoutRecordedForAnotherWithdrawal
+#   (154); 152 is unassigned.
+# - Typed fields: the bridge actions, records, events, new ExecError variants
+#   and v2 views carry the bridge newtypes (WithdrawalId, RegistryEpoch,
+#   MicroUsdc, SolanaPubkey, DeploymentId, TxSignature, and the new
+#   OperatorKey and OperatorSignature) and SignatureThreshold for the roster
+#   threshold. The newtypes encode exactly as the bare values they replace
+#   (frozen vectors unchanged); the bridge module's identity, epoch and unit
+#   types now also build under `full`, with serde.
+# - Typed refusals: BridgeVoteInvalid carries a BridgeVoteRefusal and
+#   BridgePayoutReportInvalid a PayoutRecordRefusal (codes unchanged);
+#   BridgeVoteConflict.reason is a BridgeVoteConflictReason
+#   (payout_voted_otherwise, deposit_observation_differs on the event
+#   surface). WithdrawalPolicy, SetDepositReceiptLimit and BridgePayoutConfig
+#   gain validate(self) with WithdrawalPolicyError, DepositReceiptLimitError
+#   and BridgePayoutConfigError; the engine refuses them as
+#   InvalidAdminAction (61) with the typed error as the reason.
+# - query_v2 adds the bridge views: OperatorKey, OperatorSignature,
+#   TxSignature, DepositLocator, WithdrawalPaidVote (verdict: PayoutVerdict,
+#   paid or dead), DepositVote, WithdrawalPayoutReport,
+#   PendingWithdrawal(Page), PendingDeposit(Page) (next_cursor: a
+#   DepositCursor, the last scanned transfer identity, which the route takes
+#   back as the hex of solana_tx_sig, top_index and inner_index),
+#   AgreedDeposit, QueuedDeposit(Page), ParkedDeposit(Page) (cause:
+#   ParkCause), BridgeStatus (Active, Paused, or WithdrawalBacklog: an alert,
+#   never a refusal), BridgePayoutConfig, OperatorMember and
+#   OperatorRegistry. The existing
+#   Withdrawal view gains a trailing defaulted quarantined; a reader built
+#   before it skips the key, and a view without it decodes as false.
+version = "14.0.0"
 edition = "2021"
 
 [features]

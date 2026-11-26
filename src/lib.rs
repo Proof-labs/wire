@@ -12,7 +12,7 @@
 
 #[cfg(feature = "full")]
 pub mod abci_event;
-#[cfg(feature = "bridge")]
+#[cfg(any(feature = "bridge", feature = "full"))]
 pub mod bridge;
 #[cfg(feature = "full")]
 pub mod codec;
@@ -26,6 +26,12 @@ pub mod liquidation_progress;
 pub mod liquidation_report;
 #[cfg(feature = "full")]
 pub mod margin_offsets;
+#[cfg(feature = "full")]
+pub mod market_settings;
+#[cfg(feature = "full")]
+pub mod oracle_verdict;
+#[cfg(feature = "full")]
+pub mod order_lists;
 #[cfg(feature = "full")]
 pub mod query;
 #[cfg(feature = "full")]

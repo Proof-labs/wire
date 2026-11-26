@@ -7,6 +7,7 @@
 
 use crate::bridge::epoch::RegistryEpoch;
 use crate::bridge::hash::Hasher;
+pub use crate::bridge::ids::DeploymentId;
 use crate::bridge::ids::{ProofOwner, SolanaPubkey, TxSignature, WithdrawalId};
 use crate::bridge::tier::VaultTier;
 use crate::bridge::units::MicroUsdc;
@@ -130,27 +131,6 @@ impl ReceiptQuorumKind {
             2 => Ok(Self::ValidatorStake),
             _ => Err(PayloadError::UnknownQuorumKind),
         }
-    }
-}
-
-/// 32-byte atomic deployment identity. Decoded values are claims: recompute
-/// from out-of-band identifiers and compare.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
-)]
-pub struct DeploymentId([u8; 32]);
-
-impl DeploymentId {
-    /// Wrap raw bytes decoded off the wire.
-    #[must_use]
-    pub const fn new(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// The raw bytes, for hashing and wire encoding.
-    #[must_use]
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
     }
 }
 
