@@ -361,6 +361,8 @@ pub struct WithdrawalPaidVote {
     pub verdict: PayoutVerdict,
     pub vault: SolanaAddress,
     pub squads_transaction_index: u32,
+    /// The signing time the signature covers.
+    pub signed_at_ms: u64,
     pub signature: OperatorSignature,
 }
 
@@ -372,6 +374,8 @@ pub struct DepositVote {
     pub registry_epoch: RegistryEpoch,
     pub owner: Address,
     pub amount_micro_usdc: MicroUsdc,
+    /// The signing time the signature covers.
+    pub signed_at_ms: u64,
     pub signature: OperatorSignature,
 }
 
@@ -395,6 +399,16 @@ pub struct PendingWithdrawal {
     pub withdrawal: Withdrawal,
     pub payout: Option<WithdrawalPayoutReport>,
     pub votes: Vec<WithdrawalPaidVote>,
+    /// Payouts a Dead threshold cleared; members still vote Paid on one that executed.
+    #[serde(default)]
+    pub cleared_payouts: Vec<ClearedPayout>,
+}
+
+/// A Squads payout a Dead threshold cleared from a withdrawal's slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearedPayout {
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
 }
 
 /// A pending deposit: its transfer identity and every member's vote.
@@ -466,6 +480,7 @@ pub struct QueuedDeposit {
 pub enum ParkCause {
     OverPerReceiptMax,
     OverWindowCap,
+    BalanceOverflow,
     #[serde(other)]
     Unknown,
 }

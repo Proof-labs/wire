@@ -1588,6 +1588,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(4),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         });
         assert_eq!(RecordWithdrawalPayout::ACTION_TYPE, 0x31);
@@ -1648,6 +1649,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         assert_eq!(VoteWithdrawalPaid::ACTION_TYPE, 0x30);
@@ -1665,6 +1667,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         assert_eq!(VoteDeposit::ACTION_TYPE, 0x32);
@@ -1675,10 +1678,10 @@ mod tests {
         );
 
         let pause = VotePauseBridge {
-            signed_at_ms: 1_777_200_000_000,
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         assert_eq!(VotePauseBridge::ACTION_TYPE, 0x33);
@@ -1700,6 +1703,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         assert_eq!(VoteWithdrawalPayoutDead::ACTION_TYPE, 0x34);
@@ -1716,10 +1720,10 @@ mod tests {
     }
 
     /// The signed bytes of the `vote_golden_vectors` pause vote.
-    const PAUSE_VOTE_MESSAGE_HEX: &str = "50524f4f465f4252494447455f564f54455f5631060000019dc95fec00111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222220000000000000001";
+    const PAUSE_VOTE_MESSAGE_HEX: &str = "50524f4f465f4252494447455f564f54455f5631061111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222200000000000000010000019dc95fec00";
 
     /// The signed bytes of the `vote_golden_vectors` payout-dead vote.
-    const PAYOUT_DEAD_VOTE_MESSAGE_HEX: &str = "50524f4f465f4252494447455f564f54455f5631040000000000000001070707070707070707070707070707070707070707070707070707070707070700000001111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222220000000000000001";
+    const PAYOUT_DEAD_VOTE_MESSAGE_HEX: &str = "50524f4f465f4252494447455f564f54455f56310400000000000000010707070707070707070707070707070707070707070707070707070707070707000000011111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222200000000000000010000019dc95fec00";
 
     /// Wire 12 repurposed 0x31: the pre-12 payload (a 64-byte Solana
     /// signature plus a non-zero bound) must NOT decode as the new payout
@@ -1770,6 +1774,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         let paid = VoteWithdrawalPaid {
@@ -1779,6 +1784,7 @@ mod tests {
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(1),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         let message = record.record_message();
@@ -1801,18 +1807,18 @@ mod tests {
     #[test]
     fn the_pause_vote_message_and_shape() {
         let vote = VotePauseBridge {
-            signed_at_ms: 1_777_200_000_000,
             deployment_id: DeploymentId::new([0x11; 32]),
             chain_id: [0x22; 32],
             registry_epoch: RegistryEpoch::new(3),
+            signed_at_ms: 1_777_200_000_000,
             signature: OperatorSignature::new([0x07; 64]),
         };
         let mut expected = crate::types::BRIDGE_VOTE_DOMAIN.to_vec();
         expected.push(crate::types::BRIDGE_VOTE_KIND_PAUSE);
-        expected.extend_from_slice(&vote.signed_at_ms.to_be_bytes());
         expected.extend_from_slice(vote.deployment_id.as_bytes());
         expected.extend_from_slice(&vote.chain_id);
         expected.extend_from_slice(&vote.registry_epoch.to_u64().to_be_bytes());
+        expected.extend_from_slice(&vote.signed_at_ms.to_be_bytes());
         assert_eq!(vote.vote_message(), expected);
 
         let action = Action::VotePauseBridge(vote);
@@ -1883,6 +1889,7 @@ mod tests {
                 [0x11u8; 32],
                 [0x22u8; 32],
                 1u64,
+                1_777_200_000_000u64,
                 &signature,
             ))
             .expect("the payout vote shape encodes");
@@ -1894,11 +1901,18 @@ mod tests {
                 [0x11u8; 32],
                 [0x22u8; 32],
                 1u64,
+                1_777_200_000_000u64,
                 &signature,
             ))
             .expect("the deposit vote shape encodes");
-            let pause = rmp_serde::to_vec(&(1u64, [0x11u8; 32], [0x22u8; 32], 1u64, &signature))
-                .expect("the pause vote shape encodes");
+            let pause = rmp_serde::to_vec(&(
+                [0x11u8; 32],
+                [0x22u8; 32],
+                1u64,
+                1_777_200_000_000u64,
+                &signature,
+            ))
+            .expect("the pause vote shape encodes");
             let decodes = len == 64;
             assert_eq!(
                 decode_action(VoteWithdrawalPaid::ACTION_TYPE, &payout).is_ok(),

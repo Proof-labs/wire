@@ -622,6 +622,10 @@ impl EmergencyId {
     }
 }
 
+/// The fewest members a registry change may leave: a high-impact action's
+/// three approvals.
+pub const MIN_ADMIN_SIGNERS: usize = 3;
+
 /// The on-chain signer roster — the single source of who may approve
 /// admin actions. Registry presence is the activation switch: absent =
 /// multisig administration off, legacy admin paths unchanged; present =
@@ -630,7 +634,9 @@ impl EmergencyId {
 pub struct AdminSignerRegistry {
     /// Monotone, starts at 1, never reused (a rotation assigns +1).
     pub version: RegistryVersion,
-    /// Approvals required to execute a proposal.
+    /// The roster's approval count. A low- or high-impact proposal needs at
+    /// least this many approvals (more for high impact, never more than the
+    /// roster has members); a stopping action needs one.
     /// Invariant: `2 <= threshold <= members.len()`.
     pub threshold: SignatureThreshold,
     /// Canonically sorted, duplicate-free,
@@ -2722,6 +2728,9 @@ pub struct RecordWithdrawalPayout {
     /// The registry epoch the proposal was made under: at most the current
     /// one, and judged by that epoch's roster while it is retained.
     pub registry_epoch: RegistryEpoch,
+    /// Unix ms the recording operator signed at, held to the same bounds
+    /// as a vote's.
+    pub signed_at_ms: u64,
     /// 64-byte ed25519 signature over [`Self::record_message`]; any other
     /// length does not decode.
     pub signature: OperatorSignature,
@@ -2729,17 +2738,20 @@ pub struct RecordWithdrawalPayout {
 
 impl RecordWithdrawalPayout {
     /// The canonical bytes the recording operator signs: domain, kind,
-    /// withdrawal id, the payout's (vault, index), deployment, chain and
-    /// epoch.
+    /// withdrawal id, the payout's (vault, index), deployment, chain, epoch
+    /// and signing time.
     pub fn record_message(&self) -> Vec<u8> {
         payout_message(
             BRIDGE_VOTE_KIND_PAYOUT_RECORD,
             self.withdrawal_id,
             &self.vault,
             self.squads_transaction_index,
-            &self.deployment_id,
-            &self.chain_id,
-            self.registry_epoch,
+            BridgeMessageTail {
+                deployment_id: &self.deployment_id,
+                chain_id: &self.chain_id,
+                registry_epoch: self.registry_epoch,
+                signed_at_ms: self.signed_at_ms,
+            },
         )
     }
 }
@@ -2786,21 +2798,25 @@ pub const BRIDGE_VOTE_KIND_PAYOUT_RECORD: u8 = 5;
 /// the bridge.
 pub const BRIDGE_VOTE_KIND_PAUSE: u8 = 6;
 
-/// The canonical bytes of one bridge-operator message of `kind`: the domain,
-/// the kind, the `body` parts in order, then the deployment, chain and
-/// registry epoch every message binds. Every vote, payout record and pause
-/// vote is built here.
-fn bridge_message(
-    kind: u8,
-    body: &[&[u8]],
-    deployment_id: &DeploymentId,
-    chain_id: &[u8; 32],
+/// The fields every bridge-operator message signs after its body.
+#[derive(Clone, Copy)]
+struct BridgeMessageTail<'a> {
+    deployment_id: &'a DeploymentId,
+    chain_id: &'a [u8; 32],
     registry_epoch: RegistryEpoch,
-) -> Vec<u8> {
-    // The kind byte, deployment, chain and epoch take 1 + 32 + 32 + 8 bytes.
+    signed_at_ms: u64,
+}
+
+/// The canonical bytes of one bridge-operator message of `kind`: the domain,
+/// the kind, the `body` parts in order, then the deployment, chain, registry
+/// epoch and signing time every message binds. Every vote, payout record and
+/// pause vote is built here.
+fn bridge_message(kind: u8, body: &[&[u8]], tail: BridgeMessageTail<'_>) -> Vec<u8> {
+    // The kind byte, deployment, chain, epoch and signing time take
+    // 1 + 32 + 32 + 8 + 8 bytes.
     let capacity = body
         .iter()
-        .fold(BRIDGE_VOTE_DOMAIN.len().saturating_add(73), |len, part| {
+        .fold(BRIDGE_VOTE_DOMAIN.len().saturating_add(81), |len, part| {
             len.saturating_add(part.len())
         });
     let mut message = Vec::with_capacity(capacity);
@@ -2809,9 +2825,10 @@ fn bridge_message(
     for part in body {
         message.extend_from_slice(part);
     }
-    message.extend_from_slice(deployment_id.as_bytes());
-    message.extend_from_slice(chain_id);
-    message.extend_from_slice(&registry_epoch.to_u64().to_be_bytes());
+    message.extend_from_slice(tail.deployment_id.as_bytes());
+    message.extend_from_slice(tail.chain_id);
+    message.extend_from_slice(&tail.registry_epoch.to_u64().to_be_bytes());
+    message.extend_from_slice(&tail.signed_at_ms.to_be_bytes());
     message
 }
 
@@ -2822,9 +2839,7 @@ fn payout_message(
     withdrawal_id: WithdrawalId,
     vault: &SolanaPubkey,
     squads_transaction_index: u32,
-    deployment_id: &DeploymentId,
-    chain_id: &[u8; 32],
-    registry_epoch: RegistryEpoch,
+    tail: BridgeMessageTail<'_>,
 ) -> Vec<u8> {
     bridge_message(
         kind,
@@ -2833,9 +2848,7 @@ fn payout_message(
             vault.as_bytes(),
             &squads_transaction_index.to_be_bytes(),
         ],
-        deployment_id,
-        chain_id,
-        registry_epoch,
+        tail,
     )
 }
 
@@ -2860,6 +2873,11 @@ pub struct VoteWithdrawalPaid {
     /// The registry epoch the vote is bound to; must be the current one, so
     /// a rotation invalidates in-flight votes instead of mixing rosters.
     pub registry_epoch: RegistryEpoch,
+    /// Unix ms the member signed at: no later than the executing block's
+    /// time, after the bridge's last unpause, and counted for the vote TTL
+    /// from here, so a signature cannot be replayed once it expires or into
+    /// a later unpause.
+    pub signed_at_ms: u64,
     /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
     /// length does not decode.
     pub signature: OperatorSignature,
@@ -2867,16 +2885,20 @@ pub struct VoteWithdrawalPaid {
 
 impl VoteWithdrawalPaid {
     /// The canonical bytes every member signs: domain, kind, withdrawal id,
-    /// the payout's (vault, index), deployment, chain and epoch.
+    /// the payout's (vault, index), deployment, chain, epoch and signing
+    /// time.
     pub fn vote_message(&self) -> Vec<u8> {
         payout_message(
             BRIDGE_VOTE_KIND_WITHDRAWAL_PAID,
             self.withdrawal_id,
             &self.vault,
             self.squads_transaction_index,
-            &self.deployment_id,
-            &self.chain_id,
-            self.registry_epoch,
+            BridgeMessageTail {
+                deployment_id: &self.deployment_id,
+                chain_id: &self.chain_id,
+                registry_epoch: self.registry_epoch,
+                signed_at_ms: self.signed_at_ms,
+            },
         )
     }
 }
@@ -2903,6 +2925,11 @@ pub struct VoteDeposit {
     pub chain_id: [u8; 32],
     /// The registry epoch the vote is bound to; must be the current one.
     pub registry_epoch: RegistryEpoch,
+    /// Unix ms the member signed at: no later than the executing block's
+    /// time, after the bridge's last unpause, and counted for the vote TTL
+    /// from here, so a signature cannot be replayed once it expires or into
+    /// a later unpause.
+    pub signed_at_ms: u64,
     /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
     /// length does not decode.
     pub signature: OperatorSignature,
@@ -2910,10 +2937,11 @@ pub struct VoteDeposit {
 
 impl VoteDeposit {
     /// The canonical bytes every member signs for this vote: domain, kind,
-    /// and the full credit identity (owner, amount, signature, locator,
-    /// epoch). Two members voting on the same observation sign identical
-    /// bytes; a different observation for a transfer identity that already
-    /// has votes is an attributable conflict.
+    /// the full credit identity (owner, amount, signature, locator), then
+    /// deployment, chain, epoch and signing time. Members voting on the same
+    /// observation sign the same credit identity; a different observation for
+    /// a transfer identity that already has votes is an attributable
+    /// conflict.
     pub fn vote_message(&self) -> Vec<u8> {
         let locator_suffix = self.locator.unwrap_or(DepositLocator::LEGACY).id_suffix();
         bridge_message(
@@ -2924,9 +2952,12 @@ impl VoteDeposit {
                 self.solana_tx_sig.as_bytes(),
                 &locator_suffix,
             ],
-            &self.deployment_id,
-            &self.chain_id,
-            self.registry_epoch,
+            BridgeMessageTail {
+                deployment_id: &self.deployment_id,
+                chain_id: &self.chain_id,
+                registry_epoch: self.registry_epoch,
+                signed_at_ms: self.signed_at_ms,
+            },
         )
     }
 }
@@ -2945,22 +2976,31 @@ pub struct VoteWithdrawalPayoutDead {
     pub chain_id: [u8; 32],
     /// Must be the current registry epoch.
     pub registry_epoch: RegistryEpoch,
+    /// Unix ms the member signed at: no later than the executing block's
+    /// time, after the bridge's last unpause, and counted for the vote TTL
+    /// from here, so a signature cannot be replayed once it expires or into
+    /// a later unpause.
+    pub signed_at_ms: u64,
     /// 64-byte ed25519 signature over [`Self::vote_message`].
     pub signature: OperatorSignature,
 }
 
 impl VoteWithdrawalPayoutDead {
     /// The canonical bytes every member signs: domain, kind, withdrawal id,
-    /// the payout's (vault, index), deployment, chain and epoch.
+    /// the payout's (vault, index), deployment, chain, epoch and signing
+    /// time.
     pub fn vote_message(&self) -> Vec<u8> {
         payout_message(
             BRIDGE_VOTE_KIND_PAYOUT_DEAD,
             self.withdrawal_id,
             &self.vault,
             self.squads_transaction_index,
-            &self.deployment_id,
-            &self.chain_id,
-            self.registry_epoch,
+            BridgeMessageTail {
+                deployment_id: &self.deployment_id,
+                chain_id: &self.chain_id,
+                registry_epoch: self.registry_epoch,
+                signed_at_ms: self.signed_at_ms,
+            },
         )
     }
 }
@@ -2971,10 +3011,6 @@ impl VoteWithdrawalPayoutDead {
 /// authority, so any envelope signer may submit it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VotePauseBridge {
-    /// Unix ms the member signed at: no later than the executing block's
-    /// time, after the bridge's last unpause, and counted for the vote TTL
-    /// from here, so a vote cannot be replayed into a later pause.
-    pub signed_at_ms: u64,
     /// The bridge deployment, as the registry's; signed, so a vote cannot replay on another deployment.
     pub deployment_id: DeploymentId,
     /// The envelope's chain id; signed, so a vote cannot replay on another chain.
@@ -2982,21 +3018,29 @@ pub struct VotePauseBridge {
     pub chain_id: [u8; 32],
     /// Must be the current registry epoch.
     pub registry_epoch: RegistryEpoch,
+    /// Unix ms the member signed at: no later than the executing block's
+    /// time, after the bridge's last unpause, and counted for the vote TTL
+    /// from here, so a signature cannot be replayed once it expires or into
+    /// a later unpause.
+    pub signed_at_ms: u64,
     /// 64-byte ed25519 signature over [`Self::vote_message`]; any other
     /// length does not decode.
     pub signature: OperatorSignature,
 }
 
 impl VotePauseBridge {
-    /// The canonical bytes the member signs: domain, kind, signing time,
-    /// deployment, chain and epoch.
+    /// The canonical bytes the member signs: domain, kind, deployment,
+    /// chain, epoch and signing time.
     pub fn vote_message(&self) -> Vec<u8> {
         bridge_message(
             BRIDGE_VOTE_KIND_PAUSE,
-            &[&self.signed_at_ms.to_be_bytes()],
-            &self.deployment_id,
-            &self.chain_id,
-            self.registry_epoch,
+            &[],
+            BridgeMessageTail {
+                deployment_id: &self.deployment_id,
+                chain_id: &self.chain_id,
+                registry_epoch: self.registry_epoch,
+                signed_at_ms: self.signed_at_ms,
+            },
         )
     }
 }
@@ -3018,18 +3062,57 @@ pub enum BridgeVoteRefusal {
     SignerNotOnRoster,
     /// The vote names a payout that is not the withdrawal's recorded one.
     PayoutNotRecorded,
-    /// A pause vote signed after the executing block's time.
-    SignedAfterBlock {
+    /// The vote's signing time is out of bounds.
+    SignedTime(SignedTimeRefusal),
+}
+
+/// Why a bridge-operator message's `signed_at_ms` is refused. Every vote
+/// kind and the payout record share these bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignedTimeRefusal {
+    /// Signed after the executing block's time.
+    AfterBlock {
         signed_at_ms: u64,
         block_time_ms: u64,
     },
-    /// A pause vote whose time to live has passed.
-    Expired { signed_at_ms: u64 },
-    /// A pause vote signed at or before the bridge's last unpause.
-    SignedBeforeUnpause {
+    /// Signed a vote TTL or more before the executing block's time.
+    Expired {
+        signed_at_ms: u64,
+        block_time_ms: u64,
+    },
+    /// Signed at or before the bridge's last unpause.
+    BeforeUnpause {
         signed_at_ms: u64,
         unpaused_at_ms: u64,
     },
+}
+
+impl fmt::Display for SignedTimeRefusal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AfterBlock {
+                signed_at_ms,
+                block_time_ms,
+            } => write!(
+                f,
+                "signed at {signed_at_ms}, after the block time {block_time_ms}"
+            ),
+            Self::Expired {
+                signed_at_ms,
+                block_time_ms,
+            } => write!(
+                f,
+                "signed at {signed_at_ms}, expired by the block time {block_time_ms}"
+            ),
+            Self::BeforeUnpause {
+                signed_at_ms,
+                unpaused_at_ms,
+            } => write!(
+                f,
+                "signed at {signed_at_ms}, not after the last unpause at {unpaused_at_ms}"
+            ),
+        }
+    }
 }
 
 impl fmt::Display for BridgeVoteRefusal {
@@ -3051,24 +3134,7 @@ impl fmt::Display for BridgeVoteRefusal {
             Self::PayoutNotRecorded => {
                 write!(f, "vote names a payout not recorded for this withdrawal")
             }
-            Self::SignedAfterBlock {
-                signed_at_ms,
-                block_time_ms,
-            } => write!(
-                f,
-                "pause vote signed at {signed_at_ms} is after the block time {block_time_ms}"
-            ),
-            Self::Expired { signed_at_ms } => {
-                write!(f, "pause vote signed at {signed_at_ms} has expired")
-            }
-            Self::SignedBeforeUnpause {
-                signed_at_ms,
-                unpaused_at_ms,
-            } => write!(
-                f,
-                "pause vote signed at {signed_at_ms} is not after the last unpause at \
-                 {unpaused_at_ms}"
-            ),
+            Self::SignedTime(refusal) => write!(f, "vote {refusal}"),
         }
     }
 }
@@ -3092,6 +3158,11 @@ pub enum PayoutRecordRefusal {
     VaultNotConfigured,
     /// The record's vault is not the governed payout multisig.
     VaultNotPayoutMultisig,
+    /// The record's signing time is out of bounds.
+    SignedTime(SignedTimeRefusal),
+    /// The dead votes already cleared the most payouts one withdrawal may
+    /// have cleared; it takes no new record.
+    ClearedPayoutLimitReached { limit: u16 },
 }
 
 impl fmt::Display for PayoutRecordRefusal {
@@ -3114,6 +3185,10 @@ impl fmt::Display for PayoutRecordRefusal {
             Self::VaultNotPayoutMultisig => {
                 write!(f, "vault is not the governed payout multisig")
             }
+            Self::SignedTime(refusal) => write!(f, "record {refusal}"),
+            Self::ClearedPayoutLimitReached { limit } => {
+                write!(f, "the withdrawal already has {limit} cleared payouts")
+            }
         }
     }
 }
@@ -3131,6 +3206,10 @@ pub enum BridgeVoteConflictReason {
     /// this deposit's transfer identity.
     #[display("deposit_observation_differs")]
     DepositObservationDiffers,
+    /// Another member voted this payout Paid, so a Dead threshold does not
+    /// clear it.
+    #[display("payout_voted_paid")]
+    PayoutVotedPaid,
 }
 
 /// Why a [`WithdrawalPolicy`] payload is refused.
@@ -3262,8 +3341,8 @@ pub enum BridgePauseState {
     /// Payout records and bridge votes are accepted.
     Active {
         /// Block time of the last admin unpause, if the bridge was ever
-        /// unpaused: a pause vote must be signed after it, so a vote cannot
-        /// be replayed into a later pause.
+        /// unpaused: a bridge vote or payout record must be signed after
+        /// it, and a stored vote signed at or before it no longer counts.
         unpaused_at_ms: Option<u64>,
     },
     /// Payout records and bridge votes refuse (`BridgePaused`) until the
@@ -3319,7 +3398,7 @@ pub struct WithdrawalMemberVote {
     pub vault: SolanaPubkey,
     pub squads_transaction_index: u32,
     pub signature: OperatorSignature,
-    /// Block time the vote was cast; it stops counting a TTL later.
+    /// The vote's signing time; it stops counting a TTL later.
     pub cast_at_ms: u64,
 }
 
@@ -3339,7 +3418,7 @@ pub struct DepositMemberVote {
     pub owner: [u8; 20],
     pub amount_micro_usdc: MicroUsdc,
     pub signature: OperatorSignature,
-    /// Block time the vote was cast; it stops counting a TTL later.
+    /// The vote's signing time; it stops counting a TTL later.
     pub cast_at_ms: u64,
 }
 
@@ -3369,6 +3448,9 @@ pub enum DepositHoldCause {
     /// The amount is above the receipt window cap, so no window can admit it.
     #[display("over_window_cap")]
     OverWindowCap,
+    /// The owner's balance cannot hold the amount.
+    #[display("balance_overflow")]
+    BalanceOverflow,
 }
 
 impl DepositHoldCause {
@@ -3378,13 +3460,15 @@ impl DepositHoldCause {
         match self {
             Self::OverPerReceiptMax => Some(ParkCause::OverPerReceiptMax),
             Self::OverWindowCap => Some(ParkCause::OverWindowCap),
+            Self::BalanceOverflow => Some(ParkCause::BalanceOverflow),
             Self::WindowFull | Self::LimitsUnset => None,
         }
     }
 }
 
-/// Why an agreed deposit is parked: an amount no receipt window can admit.
-/// The variants share their names and encoding with [`DepositHoldCause`].
+/// Why an agreed deposit is parked: an amount no receipt window can admit,
+/// or one its owner's balance cannot hold. The variants share their names
+/// and encoding with [`DepositHoldCause`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, derive_more::Display)]
 pub enum ParkCause {
     /// The amount is above the receipt limits' per-deposit maximum.
@@ -3393,6 +3477,9 @@ pub enum ParkCause {
     /// The amount is above the receipt window cap.
     #[display("over_window_cap")]
     OverWindowCap,
+    /// The owner's balance cannot hold the amount.
+    #[display("balance_overflow")]
+    BalanceOverflow,
 }
 
 impl From<ParkCause> for DepositHoldCause {
@@ -3400,6 +3487,7 @@ impl From<ParkCause> for DepositHoldCause {
         match cause {
             ParkCause::OverPerReceiptMax => Self::OverPerReceiptMax,
             ParkCause::OverWindowCap => Self::OverWindowCap,
+            ParkCause::BalanceOverflow => Self::BalanceOverflow,
         }
     }
 }
