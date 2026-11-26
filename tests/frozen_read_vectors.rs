@@ -197,6 +197,7 @@ fn folded_events() -> Vec<Event> {
             realized_pnl: 16_000_000,
             converted_size: 0,
             fallback_reason: Some(ConversionFallbackReason::MaintenanceMargin),
+            fund_charged: 0,
         },
         Event::ConditionNotMet {
             event_id: EVENT,
@@ -213,6 +214,7 @@ fn folded_events() -> Vec<Event> {
             size: 10,
             payoff_per_share: 1_000_000,
             cash_delta: 3_600_000,
+            fund_charged: 0,
         },
         Event::OrderbookLevelUpdated {
             market: MARKET,
@@ -268,6 +270,7 @@ fn folded_events() -> Vec<Event> {
             settlement_price: 110_000_000,
             branch_weight: 400_000,
             realized_pnl: -52_520_000,
+            fund_charged: 2_520_000,
         },
         Event::DepositConfirmed {
             owner: OWNER,

@@ -24,7 +24,8 @@ name = "proof-wire"
 # same) but still decode. MAJOR.
 #
 # Unreleased: Event::PositionUpdated.realized_pnl now also carries the gross
-# PnL of a partial close and of the insurance fund's takeover netting; the
+# PnL of a partial close (a binary a resolution conversion nets included) and
+# of the insurance fund's takeover netting; the
 # closed funding debt stays in FundingSettled. No bytes change; consumers that
 # read it as cash booked without a fill must stop adding it to PnL derived from
 # TradeExecuted -> MINOR.
@@ -37,6 +38,17 @@ name = "proof-wire"
 # SettlementReferenceUnavailable are frozen in the response vectors. These
 # additions change no existing bytes (MINOR).
 # This entry does not classify other changes included in the eventual release.
+#
+# Unreleased (BREAKING): PredictionSettled, ConditionMet and
+# ConditionalVoidSettled gain a trailing defaulted `fund_charged`, the part of
+# the settlement loss the pool's insurance fund paid for the owner (0 when
+# absent). Old bytes still decode, but a decoder built before it rejects the
+# longer arrays -> MAJOR.
+#
+# Unreleased (BREAKING): Event::ResolutionBalanceSnapshot is removed, with the
+# resolution_balances module types it carried. Releases 2.25.0 to 2.28.0
+# emitted it (DevNet only); stored blocks that carry it no longer decode.
+# Other variants keep their bytes, because events are tagged by name -> MAJOR.
 #
 # Unreleased: additive. Event::OraclePriceCertified,
 # Event::OraclePriceUncertified and Event::OraclePolicyActivated appended
@@ -422,6 +434,10 @@ required-features = ["full"]
 
 [[test]]
 name = "condition_met_conversion"
+required-features = ["full"]
+
+[[test]]
+name = "settlement_fund_charged"
 required-features = ["full"]
 
 [[test]]

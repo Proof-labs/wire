@@ -53,6 +53,7 @@ fn settled(converted_size: u64, fallback_reason: Option<ConversionFallbackReason
         realized_pnl: 50_000_000,
         converted_size,
         fallback_reason,
+        fund_charged: 0,
     }
 }
 
@@ -127,27 +128,30 @@ fn conversion_fields_round_trip_byte_stable() {
 }
 
 #[test]
-fn existing_attributes_render_unchanged_and_the_new_two_append() {
+fn existing_attributes_render_unchanged_and_the_new_ones_append() {
     let mut expected = AbciEventWriter::new();
-    legacy_attributes(&mut expected, 10);
+    legacy_attributes(&mut expected, 11);
     expected.write_attr_u64("converted_size", 0);
     expected.write_attr("fallback_reason", "");
+    expected.write_attr_u64("fund_charged", 0);
     assert_eq!(
         render(&settled(0, None)),
         expected.into_vec(),
-        "a value built without the fields keeps the eight attributes it rendered, then appends two"
+        "a value built without the fields keeps the eight attributes it rendered, then appends three"
     );
 
     let mut converted = AbciEventWriter::new();
-    legacy_attributes(&mut converted, 10);
+    legacy_attributes(&mut converted, 11);
     converted.write_attr_u64("converted_size", 10);
     converted.write_attr("fallback_reason", "");
+    converted.write_attr_u64("fund_charged", 0);
     assert_eq!(render(&settled(10, None)), converted.into_vec());
 
     let mut fell_back = AbciEventWriter::new();
-    legacy_attributes(&mut fell_back, 10);
+    legacy_attributes(&mut fell_back, 11);
     fell_back.write_attr_u64("converted_size", 0);
     fell_back.write_attr("fallback_reason", "maintenance_margin");
+    fell_back.write_attr_u64("fund_charged", 0);
     assert_eq!(
         render(&settled(
             0,

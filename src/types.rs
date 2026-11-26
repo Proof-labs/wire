@@ -3836,6 +3836,9 @@ pub enum Event {
         converted_size: u64,
         #[serde(default)]
         fallback_reason: Option<ConversionFallbackReason>,
+        /// Part of this loss the pool's insurance fund paid for the owner.
+        #[serde(default)]
+        fund_charged: u64,
     },
     /// Condition not met: a conditional-perp position was removed because its
     /// branch lost. The position holder's reserved IM is released (effectively:
@@ -3863,8 +3866,11 @@ pub enum Event {
         size: u64,
         /// Payoff per share in micro-USDC ($1.00 = 1_000_000, $0.00 = 0).
         payoff_per_share: u64,
-        /// Signed cash delta applied to owner balance (micro-USDC).
+        /// Signed cash the position settled for (micro-USDC).
         cash_delta: i64,
+        /// Part of this loss the pool's insurance fund paid for the owner.
+        #[serde(default)]
+        fund_charged: u64,
     },
     /// No longer emitted: `PositionLiquidated` reports every liquidated
     /// position. Kept so stored history decodes.
@@ -4633,6 +4639,9 @@ pub enum Event {
         settlement_price: u64,
         branch_weight: u64,
         realized_pnl: i64,
+        /// Part of this loss the pool's insurance fund paid for the owner.
+        #[serde(default)]
+        fund_charged: u64,
     },
     /// `market` moved to `status`; the transaction's `ProposalExecuted` or
     /// `EmergencyActionExecuted` names who moved it.
@@ -4652,20 +4661,6 @@ pub enum Event {
         settlement_price: u64,
         realized_pnl: i64,
         deleveraged: u64,
-    },
-    /// Cash at the ends of the blocks immediately before and after resolution.
-    /// Settlement balances isolate this resolution from other cash changes in
-    /// either block. Emitted in `after_height`, not in the resolution block.
-    ResolutionBalanceSnapshot {
-        event_id: EventId,
-        owner: [u8; 20],
-        resolution_height: crate::resolution_balances::BalanceHeight,
-        before_height: crate::resolution_balances::BalanceHeight,
-        after_height: crate::resolution_balances::BalanceHeight,
-        balance_before: crate::resolution_balances::AccountCash,
-        balance_after: crate::resolution_balances::AccountCash,
-        settlement_balance_before: crate::resolution_balances::AccountCash,
-        settlement_balance_after: crate::resolution_balances::AccountCash,
     },
     /// The oracle policy certified `market`'s price in this block. Every
     /// policy market reports this or [`Self::OraclePriceUncertified`] once
