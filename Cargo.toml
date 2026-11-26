@@ -381,7 +381,86 @@ name = "proof-wire"
 # AccountFeeOverrideChange: the SetAccountFeeOverride fields but its signer,
 # in their order (SetAccountFeeOverride::into_change splits one off). No
 # existing bytes change -> MINOR.
-version = "13.0.0"
+#
+# 14.0.0 (BREAKING, against 13.0.0): the bridge vote model.
+# - Actions: ConfirmWithdrawalReceipt (0x22), FailWithdrawalReceipt (0x23),
+#   AuthorizeWithdrawal (0x24) and ClaimWithdrawalPayout (0x2E) are retired
+#   into RETIRED_ACTION_BYTES with their payloads, BridgeWithdrawalReceipt and
+#   OperatorReceiptProof. New VoteWithdrawalPaid (0x30), VoteDeposit (0x32),
+#   VotePauseBridge (0x33) and VoteWithdrawalPayoutDead (0x34).
+#   RecordWithdrawalPayout (0x31) names a Squads payout (vault,
+#   squads_transaction_index) and carries deployment_id, chain_id,
+#   registry_epoch and a 64-byte operator signature in place of the holder
+#   and Solana signature. Every bridge message is BRIDGE_VOTE_DOMAIN, a kind
+#   byte (BRIDGE_VOTE_KIND_*: 1 paid, 2 deposit, 4 payout dead, 5 payout
+#   record, 6 pause), the item's fields, then one shared tail: deployment_id,
+#   chain_id, registry_epoch and signed_at_ms. Every kind carries
+#   signed_at_ms (u64, after registry_epoch); any envelope signer may submit.
+# - Admin actions: PauseBridge (0x20), SetBridgePayoutConfig (0x21),
+#   SetDepositReceiptLimit (0x22) and SetWithdrawalPolicy (0x25), carrying
+#   BridgePayoutConfig, SetDepositReceiptLimit and WithdrawalPolicy.
+# - OperatorReceiptRegistry and SetOperatorReceiptRegistry drop
+#   operator_owners. The WithdrawalPayoutLease record is removed;
+#   WithdrawalPayoutRecord names the signing registry key as recorder.
+#   New stored records BridgePauseVote(s), WithdrawalMemberVote,
+#   WithdrawalVoteRecord, DepositMemberVote, DepositVoteRecord, PayoutVerdict,
+#   AgreedDeposit, ParkedDeposit, DepositHoldCause (window_full,
+#   over_per_receipt_max, limits_unset, over_window_cap, balance_overflow),
+#   ParkCause (over_per_receipt_max, over_window_cap, BalanceOverflow /
+#   balance_overflow for an agreed deposit the owner's balance cannot hold:
+#   a parked deposit's and AgreedDepositParked's cause) and BridgePauseState (Active
+#   { unpaused_at_ms } or Paused: the bridge's one pause row, at 0x74).
+# - Events: WithdrawalPayoutLeaseAcquired and WithdrawalAuthorized are
+#   removed; WithdrawalPayoutRecorded names recorder. New
+#   WithdrawalPaidVoteRecorded, DepositVoteRecorded, BridgeVoteConflict,
+#   DepositVoteHeld, BridgePauseAuthorized, BridgePayoutConfigSet,
+#   BridgePauseVoteRecorded, BridgePausedByVote,
+#   WithdrawalPayoutDeadVoteRecorded, WithdrawalPayoutCleared,
+#   WithdrawalPolicySet, DepositReceiptLimitSet, AgreedDepositQueued,
+#   AgreedDepositParked, AgreedDepositPassFailed and WithdrawalQuarantined.
+# - ExecError: WithdrawalPayoutLeaseActive (91), WithdrawalPayoutLeaseNotHeld
+#   (128) and WithdrawalPayoutRecordLimitReached (129) are retired, never
+#   reassigned. New BridgePaused (144), WithdrawalPayoutCleared (145),
+#   BridgeVoteInvalid (146), BridgeUnauthorizedOperator (147),
+#   BridgePayoutReportInvalid (148), WithdrawalQuarantined (149),
+#   WithdrawalPayoutSlotOccupied (150), DepositReceiptLimitExceeded (151),
+#   OwnerPendingWithdrawalsFull (153) and PayoutRecordedForAnotherWithdrawal
+#   (154); 152 is unassigned.
+# - Typed fields: the bridge actions, records, events, new ExecError variants
+#   and v2 views carry the bridge newtypes (WithdrawalId, RegistryEpoch,
+#   MicroUsdc, SolanaPubkey, DeploymentId, TxSignature, and the new
+#   OperatorKey and OperatorSignature) and SignatureThreshold for the roster
+#   threshold. The newtypes encode exactly as the bare values they replace
+#   (frozen vectors unchanged); the bridge module's identity, epoch and unit
+#   types now also build under `full`, with serde.
+# - Typed refusals: BridgeVoteInvalid carries a BridgeVoteRefusal and
+#   BridgePayoutReportInvalid a PayoutRecordRefusal (codes unchanged); both
+#   carry a SignedTimeRefusal (after_block, expired, before_unpause) for an
+#   out-of-bounds signed_at_ms, and PayoutRecordRefusal has
+#   ClearedPayoutLimitReached for a withdrawal past its cleared payouts;
+#   BridgeVoteConflict.reason is a BridgeVoteConflictReason
+#   (payout_voted_otherwise, deposit_observation_differs, and
+#   payout_voted_paid for a Dead vote that would reach the threshold on a
+#   payout another member voted Paid, on the event surface). WithdrawalPolicy, SetDepositReceiptLimit and BridgePayoutConfig
+#   gain validate(self) with WithdrawalPolicyError, DepositReceiptLimitError
+#   and BridgePayoutConfigError; the engine refuses them as
+#   InvalidAdminAction (61) with the typed error as the reason.
+# - query_v2 adds the bridge views: OperatorKey, OperatorSignature,
+#   TxSignature, DepositLocator, WithdrawalPaidVote (verdict: PayoutVerdict,
+#   paid or dead), DepositVote (both with the signed_at_ms the signature
+#   covers), WithdrawalPayoutReport,
+#   PendingWithdrawal(Page) (cleared_payouts, defaulted: the ClearedPayout
+#   (vault, squads_transaction_index) list a Dead threshold cleared, which a
+#   Paid vote may still name), PendingDeposit(Page) (next_cursor: a
+#   DepositCursor, the last scanned transfer identity, which the route takes
+#   back as the hex of solana_tx_sig, top_index and inner_index),
+#   AgreedDeposit, QueuedDeposit(Page), ParkedDeposit(Page) (cause:
+#   ParkCause, including balance_overflow), BridgeStatus (Active, Paused, or WithdrawalBacklog: an alert,
+#   never a refusal), BridgePayoutConfig, OperatorMember and
+#   OperatorRegistry. The existing
+#   Withdrawal view gains a trailing defaulted quarantined; a reader built
+#   before it skips the key, and a view without it decodes as false.
+version = "14.0.0"
 edition = "2021"
 
 [features]

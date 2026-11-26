@@ -6,8 +6,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::market_settings::MarketSettingsSequence;
 use crate::types::{
-    ClientTriggerGroupId, ClientTriggerId, EventId, FundingRate, MarketId, OrderId, PositionEpoch,
-    ProposalId, RegistryVersion, SignatureThreshold, TriggerSlippageBps,
+    ClientTriggerGroupId, ClientTriggerId, EventId, FundingRate, MarketId, MicroUsdc, OrderId,
+    PositionEpoch, ProposalId, RegistryEpoch, RegistryVersion, SignatureThreshold,
+    TriggerSlippageBps, WithdrawalId,
 };
 
 pub fn encode<T: Serialize>(view: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
@@ -319,6 +320,228 @@ pub struct Withdrawal {
     pub solana_destination: SolanaAddress,
     pub status: WithdrawalStatus,
     pub request_height: u64,
+    /// The bridge-vote upgrade quarantined this `Pending` withdrawal: it held
+    /// a payout record of the retired lease model, so it refuses payout
+    /// records until operators resolve it. Absent decodes as `false`.
+    #[serde(default)]
+    pub quarantined: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Bridge custody
+// ---------------------------------------------------------------------------
+
+/// A bridge operator's 32-byte ed25519 verification key: it signs the
+/// operator's votes, pause votes and payout records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperatorKey(#[serde(with = "serde_bytes")] pub [u8; 32]);
+
+/// A 64-byte ed25519 signature by an [`OperatorKey`] over one bridge message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OperatorSignature(#[serde(with = "serde_bytes")] pub [u8; 64]);
+
+/// A 64-byte Solana transaction signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TxSignature(#[serde(with = "serde_bytes")] pub [u8; 64]);
+
+/// Where inside one Solana transaction a USDC transfer sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositLocator {
+    pub top_index: u16,
+    pub inner_index: Option<u16>,
+}
+
+/// One member's vote on a pending withdrawal's payout, re-verifiable by readers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalPaidVote {
+    /// The member's ed25519 verification key.
+    pub voter: OperatorKey,
+    pub registry_epoch: RegistryEpoch,
+    /// What the member attests about the recorded payout.
+    pub verdict: PayoutVerdict,
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
+    /// The signing time the signature covers.
+    pub signed_at_ms: u64,
+    pub signature: OperatorSignature,
+}
+
+/// One member's vote on a pending deposit: the credit it observed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositVote {
+    /// The member's ed25519 verification key.
+    pub voter: OperatorKey,
+    pub registry_epoch: RegistryEpoch,
+    pub owner: Address,
+    pub amount_micro_usdc: MicroUsdc,
+    /// The signing time the signature covers.
+    pub signed_at_ms: u64,
+    pub signature: OperatorSignature,
+}
+
+/// The Squads payout a bridge operator recorded for a pending withdrawal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WithdrawalPayoutReport {
+    /// The registry key that signed the record.
+    pub recorder: OperatorKey,
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
+    pub registry_epoch: RegistryEpoch,
+    /// Engine block time of the record: members approve only after it, so
+    /// the payout's execute is never older.
+    pub recorded_at_ms: u64,
+}
+
+/// A pending withdrawal with everything a peer member needs to act on it:
+/// the record, the recorded payout proposal and the votes so far.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingWithdrawal {
+    pub withdrawal: Withdrawal,
+    pub payout: Option<WithdrawalPayoutReport>,
+    pub votes: Vec<WithdrawalPaidVote>,
+    /// Payouts a Dead threshold cleared; members still vote Paid on one that executed.
+    #[serde(default)]
+    pub cleared_payouts: Vec<ClearedPayout>,
+}
+
+/// A Squads payout a Dead threshold cleared from a withdrawal's slot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearedPayout {
+    pub vault: SolanaAddress,
+    pub squads_transaction_index: u32,
+}
+
+/// A pending deposit: its transfer identity and every member's vote.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDeposit {
+    pub solana_tx_sig: TxSignature,
+    pub locator: Option<DepositLocator>,
+    pub votes: Vec<DepositVote>,
+}
+
+/// One page of pending withdrawals; `next_cursor` is the last scanned id, absent once exhausted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingWithdrawalPage {
+    pub rows: Vec<PendingWithdrawal>,
+    pub next_cursor: Option<WithdrawalId>,
+}
+
+/// What a member attests about a withdrawal's recorded payout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PayoutVerdict {
+    Paid,
+    Dead,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a pending-deposits page resumes: the last scanned transfer
+/// identity. The route takes it back as the hex of `solana_tx_sig`
+/// followed by `top_index` and `inner_index` as two big-endian bytes each,
+/// `inner_index` `0xFFFF` when absent (the deposit vote message's identity
+/// bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositCursor {
+    pub solana_tx_sig: TxSignature,
+    pub locator: DepositLocator,
+}
+
+/// One page of pending deposits; `next_cursor` is the last scanned
+/// transfer identity, absent once exhausted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingDepositPage {
+    pub rows: Vec<PendingDeposit>,
+    pub next_cursor: Option<DepositCursor>,
+}
+
+/// A deposit the roster threshold agreed on whose credit is held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgreedDeposit {
+    pub owner: Address,
+    pub amount_micro_usdc: MicroUsdc,
+    pub solana_tx_sig: TxSignature,
+    pub locator: Option<DepositLocator>,
+    pub registry_epoch: RegistryEpoch,
+    pub agreed_height: u64,
+    pub agreed_at_ms: u64,
+}
+
+/// A queued agreed deposit and its place in the credit queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedDeposit {
+    pub sequence: u64,
+    pub deposit: AgreedDeposit,
+}
+
+/// Why an agreed deposit is parked: an amount no receipt window can admit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParkCause {
+    OverPerReceiptMax,
+    OverWindowCap,
+    BalanceOverflow,
+    #[serde(other)]
+    Unknown,
+}
+
+/// An agreed deposit no receipt window can admit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParkedDeposit {
+    pub deposit: AgreedDeposit,
+    pub cause: ParkCause,
+    pub parked_height: u64,
+}
+
+/// One page of the agreed-deposit credit queue, oldest first; `next_cursor`
+/// is the last scanned sequence, absent once exhausted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuedDepositPage {
+    pub rows: Vec<QueuedDeposit>,
+    pub next_cursor: Option<u64>,
+}
+
+/// One page of parked deposits by transfer identity; `next_cursor` is the
+/// last scanned raw store key, absent once exhausted.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParkedDepositPage {
+    pub rows: Vec<ParkedDeposit>,
+    pub next_cursor: Option<Vec<u8>>,
+}
+
+/// The bridge's state: paused, active with the pending withdrawal count at or
+/// above the alert level (an alert, never a refusal), or active.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BridgeStatus {
+    Active,
+    Paused,
+    WithdrawalBacklog,
+}
+
+/// The governed Squads payout vault and its rent collector: what every member
+/// checks the on-chain multisig against before proposing or approving.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgePayoutConfig {
+    pub payout_multisig: SolanaAddress,
+    pub ops_wallet: SolanaAddress,
+}
+
+/// One bridge operator in the operator receipt registry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorMember {
+    /// The operator's ed25519 key: it signs the operator's votes and payout
+    /// records.
+    pub key: OperatorKey,
+}
+
+/// The operator receipt registry at one epoch: the roster every payout gate
+/// and vote verifies against.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OperatorRegistry {
+    pub deployment_id: Hash32,
+    pub epoch: RegistryEpoch,
+    pub threshold: SignatureThreshold,
+    pub members: Vec<OperatorMember>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

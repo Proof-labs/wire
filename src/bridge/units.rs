@@ -1,5 +1,6 @@
 //! Micro-USDC scalar — the only money scalar in the bridge. Spec §Collateral.
 
+#[cfg(feature = "bridge")]
 use borsh::{BorshDeserialize, BorshSerialize};
 
 /// Why a [`MicroUsdc`] operation was refused.
@@ -15,9 +16,14 @@ pub enum UnitsError {
 }
 
 /// USDC in micro-USDC (1 USDC = 1_000_000). Inner `u64` private; no
-/// `Add`/`Sub` impls — checked arithmetic only.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
+/// `Add`/`Sub` impls — checked arithmetic only. Serde-transparent: it encodes
+/// as the bare `u64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bridge", derive(BorshSerialize, BorshDeserialize))]
+#[cfg_attr(
+    feature = "full",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
 )]
 pub struct MicroUsdc(u64);
 
@@ -86,6 +92,12 @@ impl MicroUsdc {
         percent: u8,
     ) -> Result<Self, UnitsError> {
         Ok(ceiling.min(liabilities.percent_floor(percent)?))
+    }
+}
+
+impl core::fmt::Display for MicroUsdc {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

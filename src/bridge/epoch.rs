@@ -1,5 +1,6 @@
 //! Registry epochs — versioning for every signer set. Spec §Signer-registry.
 
+#[cfg(feature = "bridge")]
 use borsh::{BorshDeserialize, BorshSerialize};
 
 /// Why an epoch transition was refused.
@@ -13,9 +14,13 @@ pub enum EpochError {
 }
 
 /// Monotonic signer-registry version. No decrement exists — a rollback is a
-/// new forward epoch.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, BorshSerialize, BorshDeserialize,
+/// new forward epoch. Serde-transparent: it encodes as the bare `u64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "bridge", derive(BorshSerialize, BorshDeserialize))]
+#[cfg_attr(
+    feature = "full",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(transparent)
 )]
 pub struct RegistryEpoch(u64);
 
@@ -46,6 +51,12 @@ impl RegistryEpoch {
             successor if successor == candidate => Ok(()),
             _ => Err(EpochError::NotConsecutive),
         }
+    }
+}
+
+impl core::fmt::Display for RegistryEpoch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 

@@ -63,9 +63,9 @@ spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 | 0x1F | `ApproveAdminAction`                | planned  |
 | 0x20 | `RejectAdminAction`                 | planned  |
 | 0x21 | `EmergencyAdminAction`              | planned  |
-| 0x22 | `ConfirmWithdrawalReceipt`          | engine-native |
-| 0x23 | `FailWithdrawalReceipt`             | engine-native |
-| 0x24 | `AuthorizeWithdrawal`               | engine-native |
+| 0x22 | `ConfirmWithdrawalReceipt`          | retired (wire 12: the vote model replaces the receipt path) |
+| 0x23 | `FailWithdrawalReceipt`             | retired (wire 12: the vote model replaces the receipt path) |
+| 0x24 | `AuthorizeWithdrawal`               | retired (wire 12: the vote model replaces the receipt path) |
 | 0x25 | `SetPositionTriggers`               | dormant behind compiled activation gate |
 | 0x26 | `CancelPositionTriggers`            | dormant behind compiled activation gate |
 | 0x27 | `ResolveEvent`                      | shipped  |
@@ -75,9 +75,13 @@ spelling derives from (`PlaceOrders`; JSON type `placeOrders`).
 | 0x2B | `ReservedRt01`                      | reserved |
 | 0x2C | `ReservedRt01`                      | reserved |
 | 0x2D | `SubmitOracleObservation`           | dormant behind oracle-policy gate |
-| 0x2E | `ClaimWithdrawalPayout`             | single-holder payout claim on a pending withdrawal |
+| 0x2E | `ClaimWithdrawalPayout`             | retired (wire 14: the payout slot is the only lock) |
 | 0x2F | `ExecuteTriggers`                   | internal, proposer-injected trigger candidates |
-| 0x31 | `RecordWithdrawalPayout`            | the lease holder's pre-broadcast report of its payout signature |
+| 0x30 | `VoteWithdrawalPaid`                | one operator-registry member's vote to settle a withdrawal as Paid; the engine aggregates to the threshold |
+| 0x31 | `RecordWithdrawalPayout`            | a bridge operator's record of its Squads vault payout proposal, signed by its registry key (wire 12 repurposed the payload from a Solana signature; wire 14 replaced the envelope-signed holder with the operator signature) |
+| 0x32 | `VoteDeposit`                       | one operator-registry member's vote to credit an observed deposit; the engine aggregates to the threshold |
+| 0x33 | `VotePauseBridge`                   | one operator-registry member's vote to pause the bridge; the threshold pauses |
+| 0x34 | `VoteWithdrawalPayoutDead`          | one operator-registry member's vote that the recorded payout is dead; the threshold clears the payout slot |
 | 0x35 | `PlaceOrders`                       | shipped  |
 | 0x36 | `CancelOrders`                      | shipped  |
 | 0x37 | `CancelClientOrders`                | shipped  |
@@ -136,11 +140,12 @@ are not outer transaction action bytes.
 | 0x1D | `VoidEvent`                       | governed; voids an event, settling every binary and conditional on it in cash at the quorum-set Yes price |
 | 0x1E | `SettleEvent`                     | governed; settles on the quorum's Yes or No a price event whose resolution window closed unresolved, or an event with no oracle rule from its settlement time |
 | 0x1F | `SetMarketStatus`                 | governed; moves a perpetual Trading to ReduceOnly, back, or ReduceOnly to Delisted (settles its positions at the last certified price and retires its oracle) |
-| 0x20 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
-| 0x21 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
-| 0x22 | reserved                         | held for the bridge vote model (exchange#1450); no arm, no behaviour |
+| 0x20 | `PauseBridge`                     | governed; sets the stored bridge halt flag — claims, payout reports and bridge votes refuse until `UnpauseBridge` (0x06) clears it. Tags 0x16-0x18 stay reserved for the partial-liquidation settings |
+| 0x21 | `SetBridgePayoutConfig`           | governed; writes the Squads payout vault and the ops rent wallet payout reports are checked against |
+| 0x22 | `SetDepositReceiptLimit`          | governed; writes the caps on vote-credited deposits (DEC-292), a ledger separate from `SetDepositLimit` |
 | 0x23 | `UpdateMarketFees`                | governed; `QuorumUpdateMarketFees`: `predecessor`, the `MarketSettingsSequence` the market was at when proposed (the v2 markets read serves it as `settings_sequence`), then `change`, a `MarketSettingsChange`: the outer `UpdateMarketFees` (0x10) payload without its `signer`, its other fields in the same order, since the quorum is the authorization. A proposal is refused with code 155 unless `predecessor` is the market's current sequence, and with code 9 (`UnknownMarket`) for a market that does not exist. Runs the checks of 0x10, and at execution fails with code 155 when the market's sequence has moved since the proposal. Every `UpdateMarketFees` that changes a setting, by a key (0x10) or by the quorum, moves the sequence up by one; `SetOracleGuards` does not. Vector `vectors/propose_update_market_fees.hex`: market 1, BTC on DevNet (`sz_decimals` 5), `max_open_interest` from 30,000 to 35,000 and every other field nil, so BTC keeps its other settings; `predecessor` 0, the sequence of a market with no settings change recorded |
 | 0x24 | `SetAccountFeeOverride`           | governed; `AccountFeeOverrideChange`: the outer `SetAccountFeeOverride` (0x13) payload without its `signer` (`account`, `taker_fee_bps`, `maker_fee_bps`, `seq`), its other fields in the same order, since the quorum is the authorization. Runs the checks of 0x13: a fee above 10,000 basis points that is not the revert sentinel `u32::MAX` is refused with code 42, and a `seq` at or below the account's stored one with code 43, both at proposal and again at execution, where another change may have taken the `seq`. Emits `AccountFeeOverrideSet` with no signer. `seq` only has to rise: by convention it is the proposal's time in milliseconds. Pending proposals for one account execute in `seq` order: once a higher `seq` executes, every pending lower one fails with code 43. Once the signer registry exists, the outer 0x13 is refused with code 70. Vector `vectors/propose_set_account_fee_override.hex`: account `0xDD…DD`, taker 3 and maker 0 basis points, `seq` 1 |
+| 0x25 | `SetWithdrawalPolicy`             | governed; writes the `WithdrawalPolicy` (`fee_micro_usdc`, `min_withdrawal_micro_usdc`) every later `WithdrawRequest` uses; a minimum below the fee is refused. Emits `WithdrawalPolicySet`. Frozen vector in `codec.rs` (`set_withdrawal_policy_wire_vector_frozen`): $1 fee, $2 minimum |
 
 The unmerged insurance prototype's withdrawal tag `0x14` and treasury-registry
 placeholder `0x13` were never activated. They are not compatibility assignments:
@@ -213,8 +218,6 @@ that gives it behaviour.
 |---|---|---|---|
 | Outer action bytes | `0x2A`–`0x2C` | `external_action_reservations` (no Rust arm) | parked |
 | Inner admin tags | `0x0B` | `AdminActionType` discriminant-only variant | parked |
-| Inner admin tags | `0x20`–`0x22` | ledger rows only, no discriminant | held for the bridge vote model (exchange#1450) |
-| State prefixes | `0x72`–`0x7F` | a comment in `exchange-core/src/keys.rs`, no `Prefix` variant | held for the bridge vote model (exchange#1450) |
 
 ## Process for adding a new byte
 
