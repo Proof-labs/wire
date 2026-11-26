@@ -42,6 +42,7 @@ fn decode_event(bytes: &[u8], event_type: &str) -> Result<(), String> {
 fn decode_response(bytes: &[u8], wire_type: &str) -> Result<(), String> {
     match wire_type {
         "account_info" => decode_as::<AccountInfo>(bytes).map(|_| ()),
+        "account_v2" => decode_as::<proof_wire::query_v2::Account>(bytes).map(|_| ()),
         "event_info" => decode_as::<EventInfo>(bytes).map(|_| ()),
         "market_config" => decode_as::<MarketConfig>(bytes).map(|_| ()),
         "position_brief" => decode_as::<PositionBrief>(bytes).map(|_| ()),

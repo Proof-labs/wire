@@ -1,5 +1,8 @@
 [package]
 name = "proof-wire"
+# Unreleased: v2 PositionSummary adds optional valuation_price and book_restricted
+# map keys (MINOR). Legacy AccountInfo/PositionBrief arrays are unchanged.
+#
 # Unreleased: LiquidationConfig gains a trailing fund_limits (FundLimits:
 # gross_bps and market_bps, each a FundLimitBps), defaulting to
 # FundLimits::INITIAL (10,000 and 5,000) when absent. Event::LiquidationConfigSet

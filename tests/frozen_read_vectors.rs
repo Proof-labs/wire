@@ -480,6 +480,39 @@ fn position_brief() -> PositionBrief {
     }
 }
 
+fn account_v2() -> query_v2::Account {
+    query_v2::Account {
+        balance: 1_000_000,
+        equity: 1_000_150,
+        total_mm: 27,
+        total_im: 55,
+        margin_ratio_bps: Some(370_425_925),
+        binding_scenario: Vec::new(),
+        fees_accrued: 0,
+        volume_30d_micro_usdc: 0,
+        cashout_equity: 1_000_090,
+        unpriced: Vec::new(),
+        totals_complete: true,
+        positions: vec![query_v2::PositionSummary {
+            market: 100,
+            side: query_v2::Side::Buy,
+            entry_price: 40,
+            size: 10,
+            position_epoch: Some(PositionEpoch(3)),
+            upnl_now: Some(150),
+            mm_now: 27,
+            im_now: 55,
+            pnl_if_fires: 150,
+            pnl_if_dies: 0,
+            funding_since: 0,
+            adl_score: 15_000_000,
+            valuation_price: Some(55),
+            book_restricted: Some(true),
+            stale: None,
+        }],
+    }
+}
+
 fn account_info() -> AccountInfo {
     AccountInfo {
         balance: 12_000_000_000,
@@ -576,6 +609,7 @@ fn every_event_vector_matches_its_fixture() {
 #[test]
 fn every_response_vector_matches_its_fixture() {
     assert_frozen("responses", "account_info", &account_info());
+    assert_frozen_v2("account_v2", &account_v2());
     assert_frozen("responses", "event_info", &event_info());
     assert_frozen("responses", "market_config", &market_config());
     assert_frozen("responses", "position_brief", &position_brief());
@@ -590,6 +624,7 @@ fn every_response_vector_matches_its_fixture() {
     assert_frozen_v2("insurance_fund_state", &fund_state());
     let names = [
         "account_info",
+        "account_v2",
         "event_info",
         "market_config",
         "position_brief",

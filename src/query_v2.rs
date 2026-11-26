@@ -576,6 +576,18 @@ pub struct PositionSummary {
     pub pnl_if_dies: i64,
     pub funding_since: i64,
     pub adl_score: i64,
+    /// Exact micro-USDC reference for current PnL and per-position margin.
+    /// A conditional's firing-scenario price may instead be strike-bounded.
+    /// For prediction binaries this is the firing payout, not a trading mark.
+    /// Absent on older responses.
+    #[serde(default)]
+    pub valuation_price: Option<u64>,
+    /// Whether this conditional book's thin-book restriction is active: takers
+    /// may only reduce and triggers are held. A market status of `ReduceOnly`
+    /// or `Halted` restricts trading separately and is not reflected here.
+    /// Absent for other market kinds and on older responses.
+    #[serde(default)]
+    pub book_restricted: Option<bool>,
     /// Why the market's live price is unusable, when the position is valued
     /// at its last accepted price instead.
     #[serde(default)]

@@ -391,6 +391,8 @@ fn account_views_round_trip() {
             pnl_if_dies: -3,
             funding_since: 0,
             adl_score: 0,
+            valuation_price: Some(12),
+            book_restricted: None,
             stale: Some(SettlementReferenceUnavailable::Stale),
         }],
         unpriced: vec![UnpricedPosition {
@@ -415,6 +417,8 @@ fn account_views_round_trip() {
         pnl_if_dies: 0,
         funding_since: 0,
         adl_score: 0,
+        valuation_price: Some(12),
+        book_restricted: None,
         stale: None,
     });
     round_trip(&FinancialState {
@@ -585,4 +589,68 @@ fn configuration_views_round_trip() {
         request_height: 4,
         quarantined: true,
     });
+}
+
+#[test]
+fn position_valuation_map_is_compatible_in_both_directions() {
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct LegacyPositionSummary {
+        market: MarketId,
+        side: Side,
+        entry_price: u64,
+        size: u64,
+        position_epoch: Option<PositionEpoch>,
+        upnl_now: Option<i64>,
+        mm_now: u64,
+        im_now: u64,
+        pnl_if_fires: i64,
+        pnl_if_dies: i64,
+        funding_since: i64,
+        adl_score: i64,
+    }
+    let legacy = LegacyPositionSummary {
+        market: 7,
+        side: Side::Buy,
+        entry_price: 10_000,
+        size: 1,
+        position_epoch: Some(PositionEpoch(3)),
+        upnl_now: Some(0),
+        mm_now: 5,
+        im_now: 10,
+        pnl_if_fires: 0,
+        pnl_if_dies: 0,
+        funding_since: -2,
+        adl_score: 0,
+    };
+    let old_bytes = encode(&legacy).expect("old position map encodes");
+    let mut current: PositionSummary = decode(&old_bytes).expect("new reader accepts old map");
+    assert_eq!(current.valuation_price, None, "missing price is not zero");
+    assert_eq!(
+        current.book_restricted, None,
+        "missing restriction is not false"
+    );
+    current.valuation_price = Some(10_001);
+    current.book_restricted = Some(true);
+    let new_bytes = encode(&current).expect("new position map encodes");
+    assert_eq!(
+        decode::<LegacyPositionSummary>(&new_bytes).expect("old reader ignores new keys"),
+        legacy
+    );
+    round_trip(&current);
+}
+
+#[test]
+fn legacy_position_array_cannot_be_extended() {
+    let bytes = hex::decode(include_str!("../../vectors/responses/position_brief.hex").trim())
+        .expect("frozen v1 position hex");
+    let _: crate::query::PositionBrief =
+        rmp_serde::from_slice(&bytes).expect("frozen position decodes");
+    let mut row: Vec<serde_json::Value> =
+        rmp_serde::from_slice(&bytes).expect("position is an array");
+    row.extend([serde_json::json!(10_001), serde_json::json!(true)]);
+    let extended = rmp_serde::to_vec(&row).expect("extended array encodes");
+    assert!(
+        rmp_serde::from_slice::<crate::query::PositionBrief>(&extended).is_err(),
+        "appending fields would break v1 readers"
+    );
 }
