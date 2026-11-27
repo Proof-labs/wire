@@ -1,5 +1,9 @@
 [package]
 name = "proof-wire"
+# Unreleased: additive wire change (the receipt-limit read). New
+# query_v2::DepositReceiptLimit, the /v2/bridge/receipt-limit view of the
+# stored SetDepositReceiptLimit caps. No existing bytes change -> MINOR.
+#
 # Unreleased: v2 PositionSummary adds optional valuation_price and book_restricted
 # map keys (MINOR). Legacy AccountInfo/PositionBrief arrays are unchanged.
 #

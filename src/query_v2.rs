@@ -526,6 +526,19 @@ pub struct BridgePayoutConfig {
     pub ops_wallet: SolanaAddress,
 }
 
+/// The governed caps on vote-credited deposits, as the last executed
+/// `SetDepositReceiptLimit` stored them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepositReceiptLimit {
+    /// Largest amount one vote-credited deposit may credit; `None` when off.
+    pub per_receipt_max_micro_usdc: Option<MicroUsdc>,
+    /// Most all vote-credited deposits together may add inside one rolling
+    /// window; `None` when off.
+    pub window_cap_micro_usdc: Option<MicroUsdc>,
+    /// The rolling window's length, fixed by the first set.
+    pub window_secs: u32,
+}
+
 /// One bridge operator in the operator receipt registry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorMember {
